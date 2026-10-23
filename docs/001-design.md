@@ -834,6 +834,11 @@ says so and exits 2. These checks come from `claude-guard-check`:
 - **Repository:**
   - `objects/pack` and `packed-refs` are read-only, as are `hooks` and
     `config` when they exist.
+  - When `extensions.worktreeConfig` is on, the shared `config.worktree` and
+    the current worktree's own are read-only too: git reads them, and
+    `atc maint` runs git outside the sandbox, where a setting such as
+    `gc.recentObjectsHook` would run a command. When it is off, git doesn't
+    read them and nothing is printed for them.
   - `objects` is writable.
   - `gc.auto` is `0`.
   - The worktree's parent directory is read-only.
@@ -845,12 +850,16 @@ says so and exits 2. These checks come from `claude-guard-check`:
   `runtime_dir`, `install_dir` and `python_dir` are not writable.
 - **Instructions and skills:** the account's instructions file and every
   entry in its skills directory, or the target when it is a link, are not
-  writable. This matters for an `agents-md-file` outside `conf_d`, which the
-  trust rules don't cover, and for links that atc didn't make.
+  writable, and neither is each skill's `SKILL.md`. This matters for an
+  `agents-md-file` outside `conf_d`, which the trust rules don't cover, and
+  for links that atc didn't make.
 
 A check that can't run is never a `PASS`. Outside a repository the repository
 checks are skipped with a plain note; a git failure other than "not a git
-repository" is a `FAIL`.
+repository" is a `FAIL`, and so is a skills directory that can't be listed.
+A path that is missing, or a link that leads nowhere, is checked for whether
+a session could create it: it passes only when the nearest existing directory
+above it isn't writable.
 
 It prints one `PASS` or `FAIL` line per check, and exits 0 when everything
 passes, 3 otherwise.
