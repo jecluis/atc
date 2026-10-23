@@ -166,6 +166,43 @@ def test_validate_config_reports_layer_warnings_once(
     assert len(result.warnings) == 1
 
 
+def test_validate_sources_checks_the_template_syntax_of_every_unit(
+    tmp_path: Path,
+) -> None:
+    conf_d = make_source(
+        tmp_path / "conf.d",
+        {
+            "conf/good.json": unit({"model": "{{vars.anything}}"}),
+            "conf/bad.json": unit({"env": {"A": "{{oops"}}),
+            "conf/key.json": unit({"env": {"{{k}}": "v"}}),
+        },
+    )
+
+    result = validate_sources(discover(conf_d, uid=UID), lax=False)
+
+    assert sorted(result.errors) == [
+        "bad.json: /env/A: malformed reference in '{{oops'; write {{name}}, with "
+        + "lowercase letters, digits, '_' and '.', and no spaces",
+        "key.json: /env/{{k}}: object keys are never substituted",
+    ]
+
+
+def test_validate_config_checks_the_template_syntax_of_a_unit_no_layer_reaches(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/langs/unused.json": unit({"env": {"A": "{{oops"}}),
+        },
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    (error,) = result.errors
+    assert error.startswith("langs/unused.json: /env/A: malformed reference")
+
+
 def test_validate_config_reports_a_template_error_in_an_account_layer(
     build_context: ContextBuilder,
 ) -> None:

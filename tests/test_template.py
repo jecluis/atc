@@ -4,7 +4,7 @@ import pytest
 
 from atc.errors import TemplateError
 from atc.jsonval import JsonObject
-from atc.template import VarValue, expand
+from atc.template import VarValue, check_syntax, expand
 
 V: dict[str, VarValue] = {
     "home": "/h",
@@ -103,3 +103,18 @@ def test_a_key_with_braces_in_a_removed_element_is_an_error() -> None:
 
     with pytest.raises(TemplateError, match=r"^u: /a/0/\{\{home\}\}: .*key"):
         _ = expand(settings, V, origin="u")
+
+
+@pytest.mark.parametrize("text", ["{{ home }}", "{{Home}}", "{{home", "a{{b"])
+def test_check_syntax_finds_malformed_references_without_variables(text: str) -> None:
+    with pytest.raises(TemplateError, match=r"^u: /a/0/b: malformed reference"):
+        check_syntax({"a": [{"b": text}]}, origin="u")
+
+
+def test_check_syntax_refuses_a_key_with_braces() -> None:
+    with pytest.raises(TemplateError, match=r"^u: /a/\{\{x\}\}: object keys"):
+        check_syntax({"a": {"{{x}}": 1}}, origin="u")
+
+
+def test_check_syntax_takes_any_well_formed_reference() -> None:
+    check_syntax({"a": ["{{nope}}", {"b": "x{{list.ref}}y"}], "c": 1}, origin="u")

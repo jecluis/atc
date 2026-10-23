@@ -553,6 +553,8 @@ into other sources. It reports every problem it finds, not only the first:
 - an import that is malformed, missing, outside its source's `conf/`, or
   circular
 - values of different types for the same setting
+- a malformed reference (see Templates), or an object key that contains `{{`,
+  in any unit, including one that no account or project uses
 
 When the machine registry exists, it also builds the settings of every account,
 as `atc show account` does, and of every project, as `atc show project` does,

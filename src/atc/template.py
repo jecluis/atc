@@ -40,6 +40,22 @@ def expand(
     return _Expander(variables, origin).mapping(settings, {}, "")
 
 
+def check_syntax(settings: JsonObject, *, origin: str) -> None:
+    """
+    Check the form of the references in ``settings``, needing no variables.
+
+    Every ``{{`` in a string must start a reference that is well formed, and no
+    object key may contain ``{{``. Whether a reference names a variable is not
+    checked, nor where a list reference is. ``origin`` names the unit for the
+    error message, which also gives the JSON pointer of the value at fault.
+
+    Raises:
+        TemplateError: a reference is malformed, or a key contains ``{{``.
+
+    """
+    _Expander({}, origin).check(settings, "")
+
+
 @final
 class _Expander:
     def __init__(self, variables: Mapping[str, VarValue], origin: str) -> None:
@@ -118,13 +134,34 @@ class _Expander:
                 pass
         return found
 
-    def _substitute(self, text: str, bound: Mapping[str, str], pointer: str) -> str:
+    def check(self, value: JsonValue, pointer: str) -> None:
+        """Check the form of the references in ``value``, and its keys."""
+        match value:
+            case str():
+                self._well_formed(value, pointer)
+            case dict():
+                for key, member in value.items():
+                    here = f"{pointer}/{_escape(key)}"
+                    if "{{" in key:
+                        raise self._error(here, "object keys are never substituted")
+                    self.check(member, here)
+            case list():
+                for index, element in enumerate(value):
+                    self.check(element, f"{pointer}/{index}")
+            case _:
+                pass
+
+    def _well_formed(self, text: str, pointer: str) -> None:
+        """Refuse a ``{{`` in ``text`` that does not start a reference."""
         starts = {match.start() for match in REFERENCE.finditer(text)}
         for opening in _OPENING.finditer(text):
             if opening.start() not in starts:
                 raise self._error(
                     pointer, f"malformed reference in '{text}'; {_SYNTAX}"
                 )
+
+    def _substitute(self, text: str, bound: Mapping[str, str], pointer: str) -> str:
+        self._well_formed(text, pointer)
 
         def replace(match: re.Match[str]) -> str:
             name = match[1]
