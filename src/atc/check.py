@@ -183,6 +183,7 @@ def run_checks(
     registry: Registry,
     dirs: Dirs,
     install_dir: Path,
+    python_dir: Path,
     home: Path,
     env: Mapping[str, str],
 ) -> Report:
@@ -190,15 +191,17 @@ def run_checks(
     Check the protections of the session whose environment is ``env``.
 
     In order: the repository the process is in, the accounts' credentials,
-    atc's own directories and ``install_dir``, and what the current account's
-    instructions file and skills lead to. A repository check that git cannot
-    make fails, and one that does not apply, outside a repository, is a note.
+    atc's own directories, ``install_dir`` and ``python_dir``, which are atc's
+    environment and the Python installation it is built on, and what the
+    current account's instructions file and skills lead to. A repository check
+    that git cannot make fails, and one that does not apply, outside a
+    repository, is a note.
     """
     account = current_account(registry, env, home)
     parts = [
         _repository(probe),
         _accounts(probe, registry, account, home, env),
-        _atc_itself(probe, dirs, install_dir),
+        _atc_itself(probe, dirs, install_dir, python_dir),
         _instructions_and_skills(probe, account, home),
     ]
     return Report(
@@ -313,13 +316,16 @@ def _unidentified(env: Mapping[str, str]) -> str:
     )
 
 
-def _atc_itself(probe: Probe, dirs: Dirs, install_dir: Path) -> Report:
+def _atc_itself(
+    probe: Probe, dirs: Dirs, install_dir: Path, python_dir: Path
+) -> Report:
     named = (
         ("configuration", dirs.config_dir),
         ("config sources", dirs.conf_d),
         ("state", dirs.state_dir),
         ("runtime", dirs.runtime_dir),
         ("install", install_dir),
+        ("Python", python_dir),
     )
     return Report(
         tuple(

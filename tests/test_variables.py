@@ -75,6 +75,7 @@ def test_an_account_layer_has_every_variable_but_the_source_and_project_ones(
         "atc.state_dir": str(ctx.dirs.state_dir),
         "atc.runtime_dir": str(ctx.dirs.runtime_dir),
         "atc.install_dir": str(ctx.install_dir),
+        "atc.python_dir": str(ctx.python_dir),
         "vars.scratch_root": "/mnt/s",
         "account.name": "bravo",
         "account.agent": "claude",
@@ -205,6 +206,17 @@ def test_install_dir_comes_from_the_context(build_context: ContextBuilder) -> No
     assert layer_variables(ctx, account)["atc.install_dir"] == sys.prefix
     moved = dataclasses.replace(ctx, install_dir=Path("/opt/atc"))
     assert layer_variables(moved, account)["atc.install_dir"] == "/opt/atc"
+
+
+def test_python_dir_is_the_resolved_base_prefix(build_context: ContextBuilder) -> None:
+    ctx = build_context({"conf/a.json": unit()})
+    account = ctx.registry.account("personal")
+
+    assert layer_variables(ctx, account)["atc.python_dir"] == str(
+        Path(sys.base_prefix).resolve()
+    )
+    moved = dataclasses.replace(ctx, python_dir=Path("/opt/python"))
+    assert layer_variables(moved, account)["atc.python_dir"] == "/opt/python"
 
 
 def test_atc_directories_follow_xdg(

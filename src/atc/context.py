@@ -15,7 +15,8 @@ class BuildContext:
     """
     The registry and the config sources, with the directories they came from.
 
-    ``install_dir`` is the Python environment atc runs from.
+    ``install_dir`` is the Python environment atc runs from, and ``python_dir``
+    the Python installation that environment is built on.
     """
 
     registry: Registry
@@ -23,11 +24,22 @@ class BuildContext:
     dirs: Dirs
     home: Path
     install_dir: Path
+    python_dir: Path
 
 
 def current_install_dir() -> Path:
     """Return the Python environment this process runs from."""
     return Path(sys.prefix)
+
+
+def current_python_dir() -> Path:
+    """
+    Return the Python installation this process's environment is built on.
+
+    Symbolic links are resolved. Outside a virtual environment it is the
+    environment itself.
+    """
+    return Path(sys.base_prefix).resolve()
 
 
 def load_context(
@@ -56,4 +68,5 @@ def load_context(
         dirs=dirs,
         home=home,
         install_dir=current_install_dir(),
+        python_dir=current_python_dir(),
     )

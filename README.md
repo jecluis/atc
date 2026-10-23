@@ -17,12 +17,21 @@ The rest is being built step by step.
 ## Install
 
 ```sh
-uv tool install ./atc
+UV_LINK_MODE=copy uv tool install ./atc
 ```
 
 Run this from a commit you have reviewed, and never with `--editable`: an
 editable install runs the code in the working checkout, which sessions can
-edit, and atc's code decides every session's protections.
+edit, and atc's code decides every session's protections. `UV_LINK_MODE=copy`
+makes the installed files copies, not hard links into uv's cache, which
+sessions may be allowed to write.
+
+atc's code also includes the Python installation its environment is built on,
+which for uv is one of its managed interpreters. Keep sessions from writing
+either one: deny `{{atc.install_dir}}` and `{{atc.python_dir}}` in
+`sandbox.filesystem.denyWrite`, and `Edit(/{{atc.install_dir}}/**)` and
+`Edit(/{{atc.python_dir}}/**)` in `permissions.deny` (see Templates). `atc check`
+verifies that a session cannot write them.
 
 ## Configuration
 
@@ -297,6 +306,7 @@ variable as it is.
 | `home` | string | Your home directory. |
 | `atc.config_dir`, `atc.conf_d`, `atc.state_dir`, `atc.runtime_dir` | string | The directories atc uses: its configuration, its config sources, its state, and its locks. |
 | `atc.install_dir` | string | The Python environment atc runs from. |
+| `atc.python_dir` | string | The Python installation that environment is built on, with symbolic links resolved. For uv, one of its managed interpreters under `~/.local/share/uv/python`. The same as `atc.install_dir` when atc does not run in a virtual environment. |
 | `source.name` | string | The name of the source that contains the unit. Empty with a single source. |
 | `source.root`, `source.conf`, `source.assets` | string | That source's directory, its `conf/` and its `assets/`. |
 | `sources.<name>.root`, `.conf`, `.assets` | string | The same for any source, by name. Only with several sources. |
@@ -1058,8 +1068,8 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   that is unset. If none matches, a check fails and every account counts as
   another one.
 - **atc itself:** atc's configuration directory, its `conf.d` of config sources,
-  its state and runtime directories, and the directory atc is installed in,
-  cannot be written.
+  its state and runtime directories, the directory atc is installed in, and the
+  Python installation it runs on (`atc.python_dir`), cannot be written.
 - **Instructions and skills:** what the account's instructions file and every
   entry of its skills directory lead to cannot be written. That is a link's
   target, or the entry itself when it is a file or a directory. This includes

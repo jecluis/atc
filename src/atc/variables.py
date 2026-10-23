@@ -28,6 +28,7 @@ def layer_variables(
         "atc.state_dir": str(ctx.dirs.state_dir),
         "atc.runtime_dir": str(ctx.dirs.runtime_dir),
         "atc.install_dir": str(ctx.install_dir),
+        "atc.python_dir": str(ctx.python_dir),
     }
     for source in ctx.sources.items:
         if source.name:

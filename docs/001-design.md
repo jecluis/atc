@@ -458,6 +458,7 @@ is cloned:
 | `home`                                                             | str  | The user's home directory                                                                   |
 | `atc.config_dir`, `atc.conf_d`, `atc.state_dir`, `atc.runtime_dir` | str  | §4                                                                                          |
 | `atc.install_dir`                                                  | str  | The environment atc runs from (Python's `sys.prefix`)                                       |
+| `atc.python_dir`                                                   | str  | The Python installation that environment is built on (`sys.base_prefix`, links resolved)    |
 | `source.name`                                                      | str  | The name of the source that contains the unit. Empty in the single layout                   |
 | `source.root`, `source.conf`, `source.assets`                      | str  | That source's directory, its `conf/` and its `assets/`                                      |
 | `sources.<name>.root`, `.conf`, `.assets`                          | str  | The same for any named source (multi layout)                                                |
@@ -841,7 +842,7 @@ says so and exits 2. These checks come from `claude-guard-check`:
     from `ATC_ACCOUNT`, otherwise from the backend's environment.
   - Every peer's `dir` and `files` are unreadable.
 - **atc itself:** `config_dir` (and so `conf_d`), `state_dir`,
-  `runtime_dir` and `install_dir` are not writable.
+  `runtime_dir`, `install_dir` and `python_dir` are not writable.
 - **Instructions and skills:** the account's instructions file and every
   entry in its skills directory, or the target when it is a link, are not
   writable. This matters for an `agents-md-file` outside `conf_d`, which the
@@ -1030,7 +1031,14 @@ personal asset (§3). It can go once atc is the only way sessions start.
    `//` absolute paths (F15), for Claude's file tools, which follow permission
    rules rather than the sandbox. `{{atc.install_dir}}` gets the same, because
    it holds atc's own code: the personal account's sandbox allows writes to
-   uv's tool directory, where `uv tool install` puts it.
+   uv's tool directory, where `uv tool install` puts it. So does
+   `{{atc.python_dir}}`, the interpreter that environment is built on, which
+   for uv is a managed one under `~/.local/share/uv/python`, also writable in
+   that sandbox: a `sitecustomize.py` or an edited stdlib module there would
+   run in every later `atc`, outside the sandbox. Outside a virtual
+   environment the two are the same path, and the duplicate entries are
+   harmless. atc is installed with `UV_LINK_MODE=copy`, so its files are not
+   hard links into uv's cache, which sessions can write.
 3. **The lock and the repository list are read-only to sessions.** A session
    can't release its own lock or edit the list that maintenance works from.
 4. **Hooks and the statusline run outside the sandbox.** They run only from a

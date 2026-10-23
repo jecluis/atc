@@ -9,7 +9,7 @@ import rich_click
 from atc import exitcodes
 from atc.check import RealProbe, Report, in_sandbox, run_checks
 from atc.cli.options import HELP_OPTIONS, current_dirs
-from atc.context import current_install_dir
+from atc.context import current_install_dir, current_python_dir
 from atc.registry import REGISTRY_FILE, load_registry
 from atc.ui import Ui
 
@@ -29,8 +29,8 @@ def check() -> None:
       off, and the directory above the worktree cannot be written
     - the session's own account's credentials, and every other account's
       directory and files, cannot be read
-    - atc's configuration, config sources, state and runtime directories and
-      its installation cannot be written
+    - atc's configuration, config sources, state and runtime directories, its
+      installation and the Python installation it runs on cannot be written
     - the files that the account's instructions file and every entry of its
       skills directory lead to cannot be written
 
@@ -54,6 +54,7 @@ def check() -> None:
         registry=registry,
         dirs=dirs,
         install_dir=current_install_dir(),
+        python_dir=current_python_dir(),
         home=home,
         env=os.environ,
     )

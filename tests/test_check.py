@@ -42,7 +42,7 @@ TOP_LEVEL = ("rev-parse", "--show-toplevel")
 GC_AUTO = ("config", "--get", "gc.auto")
 NOT_IN_A_REPOSITORY = "not in a git repository, so the repository checks are skipped"
 REPOSITORY_CHECKS = 7
-PROTECTED = 17
+PROTECTED = 18
 """How many checks a session in a repository, in the `personal` account, makes."""
 
 
@@ -106,6 +106,10 @@ class World:
         return self.home / "tools" / "atc"
 
     @property
+    def python_dir(self) -> Path:
+        return self.home / "python" / "cpython"
+
+    @property
     def personal(self) -> Path:
         return self.registry.account("personal").dir
 
@@ -119,6 +123,7 @@ class World:
             registry=self.registry,
             dirs=self.dirs,
             install_dir=self.install_dir,
+            python_dir=self.python_dir,
             home=self.home,
             env=self.env,
         )
@@ -183,6 +188,7 @@ def test_the_checks_come_in_the_order_of_the_sections(world: World) -> None:
         "configuration directory",
         "config sources directory",
         "install directory",
+        "Python directory",
         "CLAUDE.md",
         "grill-me",
     )
@@ -392,6 +398,38 @@ def test_a_writable_install_dir_fails(world: World) -> None:
 
     assert failures(world.run()) == [
         f"atc's install directory {world.install_dir} is not writable"
+    ]
+
+
+def test_a_writable_python_dir_fails(world: World) -> None:
+    world.probe.writable_paths.add(world.python_dir)
+
+    assert failures(world.run()) == [
+        f"atc's Python directory {world.python_dir} is not writable"
+    ]
+
+
+def test_a_python_dir_that_is_the_install_dir_passes_and_fails_alike(
+    world: World,
+) -> None:
+    def run() -> Report:
+        return run_checks(
+            world.probe,
+            registry=world.registry,
+            dirs=world.dirs,
+            install_dir=world.install_dir,
+            python_dir=world.install_dir,
+            home=world.home,
+            env=world.env,
+        )
+
+    assert failures(run()) == []
+    assert len(run().results) == PROTECTED
+
+    world.probe.writable_paths.add(world.install_dir)
+    assert failures(run()) == [
+        f"atc's install directory {world.install_dir} is not writable",
+        f"atc's Python directory {world.install_dir} is not writable",
     ]
 
 
@@ -675,6 +713,8 @@ def test_a_protected_session_exits_0_with_a_pass_line_per_check(
     assert all(line.startswith("PASS  ") for line in lines)
     assert f"PASS  {world.git_dir}/objects/pack is read-only" in lines
     assert f"PASS  atc's install directory {sys.prefix} is not writable" in lines
+    python = Path(sys.base_prefix).resolve()
+    assert f"PASS  atc's Python directory {python} is not writable" in lines
 
 
 def test_a_failed_check_exits_3(
