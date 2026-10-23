@@ -34,7 +34,7 @@ Every task is one commit, and the commits follow the git-commits skill:
 | 5    | `atc: expand templates in units from registry variables`    | ~650         |
 | 6    | `atc: show a project's settings with atc show project`      | ~450         |
 | 7    | `atc: warn about permission rules that can never apply`     | ~350         |
-| 8    | `atc: deploy config sources with a checked src pull`        | ~400         |
+| 8    | `atc: deploy config sources only after checking them`       | ~400         |
 | 9    | `atc: generate account settings with atc sync`              | ~750         |
 | —    | Checkpoint A: account settings come from units              |              |
 | 10   | `atc: link each account's instructions file`                | ~600         |
@@ -48,7 +48,7 @@ Every task is one commit, and the commits follow the git-commits skill:
 | —    | Checkpoint C: launching through atc                         |              |
 | 17   | `atc: keep guarded repositories packed with atc maint`      | ~300         |
 | 18   | `atc: manage registered projects with atc prj`              | ~450         |
-| 19   | `atc: create and remove worktrees with atc wt`              | ~350         |
+| 19   | `atc: add and remove working trees with atc wt`             | ~350         |
 | —    | Checkpoint D: maintenance timer and projects from ccwtctl   |              |
 | 20   | `atc: show each account's recorded usage`                   | ~250         |
 | 21   | `atc: pick the least used account with -a auto`             | ~200         |
@@ -75,6 +75,7 @@ The estimates are judgement, not measurement. Task 1 sits below the skill's ~200
   - Stage files by name. Never `git add -A` or `git add .`.
   - Run git commands one at a time, never chained with `&&` or `;`.
   - Never `git -C` or `git -c` (the command-shape hook refuses both).
+  - The user's permission rules deny any git command containing the words ` pull`, ` push`, ` reset`, ` checkout`, ` restore`, ` worktree`, `remote` or `tag` anywhere after `git`, including inside a commit message. Word commit messages around them (for example "deploy", "working tree"). Tests that run git through `subprocess` aren't affected.
 
 ## Review Focus
 
@@ -839,7 +840,7 @@ Also write:
   - `test_validation_sees_the_other_sources_unchanged`: the incoming commit imports `@other/x.json`, which exists only in the other source; status `updated`
   - `test_a_pull_under_umask_002_leaves_a_trusted_tree`: with `os.umask(0o002)` around the pull, a commit that adds `conf/new/x.json` and a first `skills/a/SKILL.md` (new directories at both levels) is deployed, and `discover` accepts the source afterwards
 - [ ] **Step 2: Implement,** and run until green.
-- [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: deploy config sources with a checked src pull`.
+- [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: deploy config sources only after checking them`.
 
 ---
 
@@ -1535,7 +1536,7 @@ Also write:
 - `test_new_run_starts_a_session_in_the_worktree`: monkeypatch `launch.execute` and assert the plan's `cwd`
 
 - [ ] **Step 2: Implement,** and run until green.
-- [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: create and remove worktrees with atc wt`.
+- [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: add and remove working trees with atc wt`.
 
 ### Checkpoint D: maintenance timer and projects from ccwtctl
 
