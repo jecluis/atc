@@ -517,9 +517,10 @@ names both units and both rules, and leaves the fix to you.
 
 - **What is checked:**
   - the account layer on its own, in `atc sync` and `atc show account`
-  - the account layer together with the project layer and the session
-    entries, as Claude Code will see them, in `atc show project` and
-    `atc run --print`
+  - the account layer together with the project layer, in
+    `atc show project`
+  - the account layer together with the project layer, the session entries
+    and your `--settings`, as Claude Code will see them, in `atc run --print`
   - every account layer and every project with each account it allows, in
     `atc src check` (and so in `src pull`)
 - **What "covers" means.** Matching is deliberately conservative: it can miss
@@ -1049,7 +1050,12 @@ personal asset (§3). It can go once atc is the only way sessions start.
    harmless. atc is installed with `UV_LINK_MODE=copy`, so its files are not
    hard links into uv's cache, which sessions can write.
 3. **The lock and the repository list are read-only to sessions.** A session
-   can't release its own lock or edit the list that maintenance works from.
+   can't edit the list that maintenance works from, or take the lock file
+   away. It can release its own lock, though: it inherits the descriptor that
+   holds it, and `flock -u` on that descriptor drops the lock, after which
+   maintenance may pack under it. The lock keeps maintenance away from a
+   session that leaves it alone; it doesn't defend against one that sets out
+   to release it.
 4. **Hooks and the statusline run outside the sandbox.** They run only from a
    source's `assets/`, under the trust rules in §6: no links, owned by you, not
    group- or world-writable. This replaces today's statusline symlink into the
