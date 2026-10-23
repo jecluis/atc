@@ -205,7 +205,10 @@ projects:
 - **Parser:** `ruamel.yaml` in safe mode with YAML 1.2. Unlike PyYAML, it
   keeps `no`, `on` and `off` as strings, and it rejects duplicate keys.
 - **Accepted value types:** only JSON types. A YAML timestamp or any other
-  non-JSON value is an error that tells you to quote it.
+  non-JSON value is an error that tells you to quote it. An alias for a list
+  or a mapping is an error too, since expanding aliases of aliases grows
+  without bound, and so is a merge key (`<<`), which JSON has no form of.
+  `SKILL.md` front matter is read the same way.
 - **Validation:** pydantic models with `extra="forbid"` and strict types. A
   misspelled key is an error, not something silently ignored.
 - **Paths:** a leading `~` is expanded. Every path must be absolute after
@@ -223,7 +226,12 @@ projects:
     effect.
 - **Writes:** `atc prj add`, `atc prj rm` and the `atc skills` commands that
   change a selection edit the file with ruamel's round-trip mode, so comments
-  and key order survive.
+  and key order survive. When `machine.yaml` is a symbolic link, as into a
+  dotfiles repository, the file it leads to is replaced and the link stays.
+  That file must be as far out of sessions' reach as `config_dir`: a session
+  that could edit the registry could point `agents.claude.bin` at a program
+  that runs outside the sandbox, or widen the sandbox through `vars`.
+  `atc check` verifies it (§10.7).
 
 ## 6. Config sources
 
@@ -624,9 +632,15 @@ a known command. A typo is an error; it never starts a session.
      everything under them, skipping symbolic links, since git applies the
      umask to what the merge writes. If that fails, the source is reported
      as failed, naming the path.
+  5. Show what was deployed, for review, on stderr: `git log --oneline
+     old..new`, at most 20 commits and then a count of the rest, and
+     `git diff --stat old..new -- conf assets skills`. The upstream can be the
+     clone sessions commit in, and a commit that weakens a unit, a hook or a
+     skill passes every check.
 
   A source that fails is left as it was, and its problems are shown. Sources
-  that aren't git clones are skipped, with a note.
+  that aren't git clones are skipped, with a note. A unit that can't be read,
+  in one source, never stops the others from being updated.
 
 Adding a source is a plain `git clone` (§6). An `atc src add` can come later
 if it turns out to be useful.
@@ -675,7 +689,10 @@ never trusted.
     `<state_dir>/sync/<account>/backups/<UTC timestamp>-settings.json`,
     keeping the last ten.
   - Replaces the file atomically (a temporary file in the same directory,
-    then a rename) and keeps its permissions.
+    then a rename) and keeps its permissions. When `settings.json` is a
+    symbolic link, the file it leads to is replaced, from a temporary file in
+    its own directory, and the link stays. That file must be as far out of
+    sessions' reach as `config_dir`, and `atc check` verifies it (§10.7).
 
 #### Instructions file
 
@@ -705,6 +722,9 @@ the way `last` does for settings.
 - **Entries nobody asked for:** entries in the skills directory that are
   neither selected nor recorded are never touched. That covers Claude Code's
   own entries (F12) and skills installed by hand.
+- **A linked skills directory:** a skills directory that is itself a symbolic
+  link is an error for that account. atc doesn't follow it, so it never makes
+  links wherever it leads.
 - **No dangling links:** a wanted target must exist, otherwise it is a
   configuration error for that account.
 - **Backups** of replaced regular files go to the same `backups/` directory
@@ -800,7 +820,13 @@ warnings, here and in `sync` and `run`.
   `NAME` defaults to the current project.
 - `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]`:
   adds a project to `machine.yaml`.
-  - `REPO` defaults to the current repository's top level.
+  - `REPO` defaults to the current directory. What is stored is the
+    repository's main worktree, found from `git rev-parse --git-common-dir`,
+    whichever worktree `REPO` is in: the common directory's parent, or the
+    common directory itself for a bare repository. Removing a linked worktree
+    then never leaves the project without its repository. When the common
+    directory's parent isn't a checkout of the repository, as for a
+    submodule, the top level of `REPO` is stored.
   - The repository and branch are checked first.
   - If no source contains `projects/<NAME>.json`, atc warns.
 - `atc prj rm NAME`: removes the registry entry. Nothing else is touched.
@@ -820,8 +846,13 @@ them.
   - **`--run`:** changes into the new worktree and continues as `atc run`.
 - `atc wt ls`: the project's worktrees from `git worktree list --porcelain`,
   with their branches.
-- `atc wt rm NAME [--force]`: `git worktree remove`. Git refuses a dirty
-  worktree unless `--force` is given. The branch is never deleted.
+- `atc wt rm NAME [--force]`: `git worktree remove`. Without `--force` a
+  removal that would lose work is refused: git refuses a dirty worktree, and
+  atc one whose `HEAD` is detached at a commit no branch contains, or where a
+  rebase, merge, cherry-pick, revert or bisect is in progress. Ignored files
+  are not refused, since build output would make that refuse almost always;
+  the help says plainly that they are deleted. The project's own `repo` is
+  never removed. The branch is never deleted.
 
 Worktree directories should sit outside every sandbox `allowWrite` entry, so a
 session can't remove its own worktree. `atc check` tests this (§10.7).
@@ -848,10 +879,12 @@ says so and exits 2. These checks come from `claude-guard-check`:
     from `ATC_ACCOUNT`, otherwise from the backend's environment.
   - Every peer's `dir` and `files` are unreadable.
 - **atc itself:** `config_dir` (and so `conf_d`), `state_dir`,
-  `runtime_dir`, `install_dir` and `python_dir` are not writable.
-- **Instructions and skills:** the account's instructions file and every
-  entry in its skills directory, or the target when it is a link, are not
-  writable, and neither is each skill's `SKILL.md`. This matters for an
+  `runtime_dir`, `install_dir` and `python_dir` are not writable, and
+  neither is `machine.yaml`, checked where it leads when it is a link.
+- **Settings, instructions and skills:** the account's `settings.json`,
+  checked where it leads when it is a link, is not writable. Nor are the
+  account's instructions file and every entry in its skills directory, or the
+  target when it is a link, nor each skill's `SKILL.md`. This matters for an
   `agents-md-file` outside `conf_d`, which the trust rules don't cover, and
   for links that atc didn't make.
 
