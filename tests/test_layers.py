@@ -1,0 +1,136 @@
+"""Building the account layer, and the policy on what a layer may set."""
+
+import pytest
+
+from atc import layers
+from atc.errors import PathError, PolicyError
+from atc.jsonval import JsonObject
+from atc.layers import build_account_layer, check_policy
+from tests.conftest import ContextBuilder
+from tests.helpers import unit
+
+
+def test_account_layer_merges_the_account_unit_and_its_imports(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(
+                {"model": "opus"}, imports=["common/base.json"]
+            ),
+            "conf/common/base.json": unit({"model": "sonnet", "theme": "dark"}),
+        }
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.kind == "account"
+    assert layer.settings == {"model": "opus", "theme": "dark"}
+    assert layer.warnings == ()
+
+
+def test_the_registry_can_name_another_account_unit(
+    build_context: ContextBuilder,
+) -> None:
+    registry = """\
+        version: 1
+        accounts:
+          personal: {dir: ~/.claude, unit: "@bravo/accounts/x.json"}
+        """
+    ctx = build_context(
+        {
+            "bravo/conf/accounts/x.json": unit({"model": "opus"}),
+            "personal/conf/accounts/x.json": unit(),
+        },
+        registry,
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.settings == {"model": "opus"}
+
+
+def test_a_missing_account_unit_is_an_error(build_context: ContextBuilder) -> None:
+    ctx = build_context({"conf/other.json": unit()})
+
+    with pytest.raises(PathError, match=r"accounts/personal\.json.*no such unit"):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
+def test_auto_memory_directory_is_refused_in_the_account_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"autoMemoryDirectory": "/m"})}
+    )
+
+    with pytest.raises(PolicyError) as caught:
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert str(caught.value) == (
+        "accounts/personal.json: /autoMemoryDirectory is not allowed in the "
+        "account layer"
+    )
+
+
+def test_policy_names_the_imported_unit_that_set_the_key(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(imports=["common/memory.json"]),
+            "conf/common/memory.json": unit({"autoMemoryDirectory": "/m"}),
+        }
+    )
+
+    with pytest.raises(PolicyError, match=r"^common/memory\.json: /autoMemory"):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
+def test_policy_is_checked_before_unknown_keys(build_context: ContextBuilder) -> None:
+    # Unknown keys are errors without `lax`, so checking them first would raise
+    # a UnitError instead.
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(
+                {"autoMemoryDirectory": "/m", "permisions": {}}
+            )
+        }
+    )
+
+    with pytest.raises(PolicyError):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
+def test_lax_reports_unknown_keys_as_layer_warnings(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context({"conf/accounts/personal.json": unit({"permisions": {}})})
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=True)
+
+    assert layer.settings == {"permisions": {}}
+    assert len(layer.warnings) == 1
+    assert "permisions" in layer.warnings[0]
+
+
+def test_check_policy_refuses_a_key_only_in_the_layers_it_names() -> None:
+    settings: JsonObject = {"autoMemoryDirectory": "/m"}
+
+    with pytest.raises(PolicyError, match=r"x\.json: /autoMemoryDirectory"):
+        check_policy(settings, "account", "x.json")
+    check_policy(settings, "project", "x.json")
+    check_policy(settings, "session", "x.json")
+    check_policy({"model": "opus"}, "account", "x.json")
+
+
+def test_a_policy_pointer_reaches_into_nested_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(layers, "POLICY", {"/a/b": frozenset({"project"})})
+
+    check_policy({"a": {"c": 1}}, "project", "x.json")
+    check_policy({"a": 1}, "project", "x.json")
+    check_policy({"a": {"b": 1}}, "account", "x.json")
+    with pytest.raises(PolicyError, match=r"x\.json: /a/b is not allowed"):
+        check_policy({"a": {"b": 1}}, "project", "x.json")

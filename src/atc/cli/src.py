@@ -10,9 +10,14 @@ from rich.table import Table
 from rich.text import Text
 
 from atc import exitcodes
-from atc.cli.options import conf_d_option, current_dirs, load_sources
+from atc.cli.options import (
+    conf_d_option,
+    current_dirs,
+    load_build_context,
+    load_sources,
+)
 from atc.git import git_or_none
-from atc.registry import REGISTRY_FILE, load_registry
+from atc.registry import REGISTRY_FILE
 from atc.sources import SOURCE_DIRS, Source, Sources
 from atc.ui import Ui
 from atc.validate import Validation, validate_config, validate_sources
@@ -51,18 +56,20 @@ def check(conf_d: Path | None) -> None:
     other sources, and reports every problem found rather than only the first:
     malformed units, unknown settings keys, missing or circular imports, and
     values of conflicting types. When the machine registry (machine.yaml in
-    atc's configuration directory) exists, it also checks that every account's
-    unit exists. Prints a summary line when all is well and exits with status 1
-    otherwise.
+    atc's configuration directory) exists, it also builds the settings of every
+    account, which finds accounts whose unit is missing and units that set a
+    key their layer does not allow. Prints a summary line when all is well and
+    exits with status 1 otherwise.
     """
     ui = Ui.default()
-    found = load_sources(conf_d)
     registry_file = current_dirs().config_dir / REGISTRY_FILE
     result: Validation
     if registry_file.exists():
-        registry = load_registry(registry_file, Path.home())
-        result = validate_config(found, registry, lax=False)
+        ctx = load_build_context(conf_d)
+        found = ctx.sources
+        result = validate_config(ctx, lax=False)
     else:
+        found = load_sources(conf_d)
         result = validate_sources(found, lax=False)
         ui.warning(f"{registry_file}: not found, so the accounts were not checked")
     for warning in result.warnings:

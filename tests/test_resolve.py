@@ -310,3 +310,73 @@ def test_a_missing_cross_source_import_names_importer_and_reference(
         match=re.escape("@bravo/x.json: imports '@personal/nowhere.json'"),
     ):
         _ = run(sources, "x.json")
+
+
+def test_a_transform_sees_each_unit_once_with_its_own_settings(
+    tmp_path: Path,
+) -> None:
+    sources = single(
+        tmp_path / "conf.d",
+        {
+            "base.json": unit({"model": "sonnet"}),
+            "a.json": unit({"theme": "dark"}, imports=["base.json"]),
+            "b.json": unit({"outputStyle": "x"}, imports=["base.json"]),
+        },
+    )
+    seen: list[tuple[str, JsonObject]] = []
+
+    def record(found: Located, settings: JsonObject) -> JsonObject:
+        seen.append((found.display, settings))
+        return settings
+
+    _ = resolve(
+        sources, located(sources, "a.json", "b.json"), lax=False, transform=record
+    )
+
+    assert seen == [
+        ("base.json", {"model": "sonnet"}),
+        ("a.json", {"theme": "dark"}),
+        ("b.json", {"outputStyle": "x"}),
+    ]
+
+
+def test_what_a_transform_returns_is_what_gets_merged(tmp_path: Path) -> None:
+    sources = single(
+        tmp_path / "conf.d",
+        {
+            "base.json": unit({"model": "sonnet"}),
+            "top.json": unit(imports=["base.json"]),
+        },
+    )
+
+    def replace(found: Located, settings: JsonObject) -> JsonObject:
+        return {"model": found.display} if settings else settings
+
+    resolved = resolve(
+        sources, located(sources, "top.json"), lax=False, transform=replace
+    )
+
+    assert resolved.settings == {"model": "base.json"}
+
+
+def test_a_transform_runs_before_the_key_check(tmp_path: Path) -> None:
+    sources = single(tmp_path / "conf.d", {"a.json": unit({"permisions": {}})})
+
+    def drop_everything(_found: Located, _settings: JsonObject) -> JsonObject:
+        return {}
+
+    resolved = resolve(
+        sources, located(sources, "a.json"), lax=False, transform=drop_everything
+    )
+
+    assert resolved.settings == {}
+
+
+def test_an_error_from_a_transform_stops_the_resolution(tmp_path: Path) -> None:
+    sources = single(tmp_path / "conf.d", {"a.json": unit({"model": "opus"})})
+
+    def refuse(found: Located, _settings: JsonObject) -> JsonObject:
+        raise UnitError(f"{found.display}: refused")
+
+    with pytest.raises(UnitError, match=r"a\.json: refused"):
+        _ = resolve(sources, located(sources, "a.json"), lax=False, transform=refuse)

@@ -1,6 +1,6 @@
 """Resolution of an import graph into a single settings mapping."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import final
@@ -11,6 +11,14 @@ from atc.merge import merge_objects
 from atc.refs import Located, resolve_import
 from atc.sources import Sources
 from atc.unit import load_unit, unknown_settings_keys
+
+type UnitTransform = Callable[[Located, JsonObject], JsonObject]
+"""
+Rewrites or checks one unit's settings as it is merged.
+
+It gets the unit and its ``settings`` and returns the settings to merge, or
+raises to refuse the unit.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +35,13 @@ class Resolution:
     warnings: tuple[str, ...]
 
 
-def resolve(sources: Sources, roots: Sequence[Located], *, lax: bool) -> Resolution:
+def resolve(
+    sources: Sources,
+    roots: Sequence[Located],
+    *,
+    lax: bool,
+    transform: UnitTransform | None = None,
+) -> Resolution:
     """
     Merge the units ``roots``, following their imports.
 
@@ -42,6 +56,8 @@ def resolve(sources: Sources, roots: Sequence[Located], *, lax: bool) -> Resolut
     already had — and a warning records that its later position had no effect.
 
     Set ``lax`` to report unknown settings keys as warnings instead of errors.
+    ``transform``, if given, is applied to each unit's settings before they are
+    checked for unknown keys and merged.
 
     Raises:
         PathError: an import is malformed or names a unit that is missing.
@@ -50,7 +66,7 @@ def resolve(sources: Sources, roots: Sequence[Located], *, lax: bool) -> Resolut
         MergeError: two units give the same setting values of differing types.
 
     """
-    walker = _Walker(sources, lax=lax)
+    walker = _Walker(sources, lax=lax, transform=transform)
     for root in roots:
         walker.request(root)
     return Resolution(settings=walker.settings, warnings=tuple(walker.warnings))
@@ -60,9 +76,12 @@ def resolve(sources: Sources, roots: Sequence[Located], *, lax: bool) -> Resolut
 class _Walker:
     """Depth-first traversal of the import graph, accumulating merged settings."""
 
-    def __init__(self, sources: Sources, *, lax: bool) -> None:
+    def __init__(
+        self, sources: Sources, *, lax: bool, transform: UnitTransform | None
+    ) -> None:
         self._sources = sources
         self._lax = lax
+        self._transform = transform
         self._done: set[Path] = set()
         self._active: dict[Path, Located] = {}
         self.settings: JsonObject = {}
@@ -117,9 +136,12 @@ class _Walker:
                 raise PathError(f"{unit.display}: {exc}") from exc
             self.visit(target, reference, importer=unit)
 
-        self._check_keys(unit, loaded.settings)
+        settings = loaded.settings
+        if self._transform is not None:
+            settings = self._transform(unit, settings)
+        self._check_keys(unit, settings)
         try:
-            self.settings = merge_objects(self.settings, loaded.settings)
+            self.settings = merge_objects(self.settings, settings)
         except MergeError as exc:
             raise MergeError(f"{unit.display}: {exc}") from exc
 

@@ -35,3 +35,7 @@ class GitError(ConfigError):
 
 class RegistryError(ConfigError):
     """The machine registry is unreadable, invalid, or has no such account."""
+
+
+class PolicyError(ConfigError):
+    """A unit sets a key that the layer being built does not allow."""

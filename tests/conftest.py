@@ -9,10 +9,11 @@ from typing import Protocol
 
 import pytest
 
+from atc.context import BuildContext, load_context
 from atc.jsonval import JsonObject
 from atc.paths import Dirs, dirs_from_env
 from atc.registry import REGISTRY_FILE
-from tests.helpers import MINIMAL_REGISTRY, make_source
+from tests.helpers import MINIMAL_REGISTRY, UID, make_source
 
 type UnitWriter = Callable[[str, JsonObject], Path]
 type RegistryWriter = Callable[[str], Path]
@@ -21,6 +22,12 @@ type Files = Mapping[str, str | JsonObject]
 
 class ConfigWriter(Protocol):
     def __call__(self, files: Files, registry: str = MINIMAL_REGISTRY) -> None: ...
+
+
+class ContextBuilder(Protocol):
+    def __call__(
+        self, files: Files, registry: str = MINIMAL_REGISTRY
+    ) -> BuildContext: ...
 
 
 # Variables that change what git or rich do, whatever the machine running
@@ -124,3 +131,14 @@ def configure(dirs: Dirs, write_registry: RegistryWriter) -> ConfigWriter:
         _ = write_registry(registry)
 
     return write
+
+
+@pytest.fixture
+def build_context(configure: ConfigWriter, home: Path) -> ContextBuilder:
+    """Set up as :func:`configure` does, then load it."""
+
+    def build(files: Files, registry: str = MINIMAL_REGISTRY) -> BuildContext:
+        configure(files, registry)
+        return load_context(env=os.environ, home=home, uid=UID, conf_d=None)
+
+    return build

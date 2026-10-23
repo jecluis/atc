@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 
+from atc.context import BuildContext
 from atc.errors import ConfigError
+from atc.layers import build_account_layer
 from atc.refs import locate
-from atc.registry import Registry, account_unit
 from atc.resolve import resolve
 from atc.sources import Sources
 
@@ -51,22 +52,26 @@ def validate_sources(sources: Sources, *, lax: bool) -> Validation:
     return Validation(units=units, errors=tuple(errors), warnings=tuple(warnings))
 
 
-def validate_config(sources: Sources, registry: Registry, *, lax: bool) -> Validation:
+def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     """
-    Check every unit in the sources, then that every account has its unit.
+    Check every unit in the sources, then every account's layer.
 
-    An account's unit is missing when no source has it, and ambiguous when
-    several do. All problems are collected, once each. Set ``lax`` to report
-    unknown settings keys as warnings instead of errors.
+    Building an account layer finds the account's unit, which must exist, and
+    checks each unit it merges against the policy for the layer. All problems
+    are collected, once each. Set ``lax`` to report unknown settings keys as
+    warnings instead of errors.
     """
-    checked = validate_sources(sources, lax=lax)
+    checked = validate_sources(ctx.sources, lax=lax)
     errors = dict.fromkeys(checked.errors)
-    warnings = dict.fromkeys((*checked.warnings, *registry.warnings))
-    for account in registry.accounts.values():
+    warnings = dict.fromkeys(checked.warnings)
+    warnings.update(dict.fromkeys(ctx.registry.warnings))
+    for account in ctx.registry.accounts.values():
         try:
-            _ = account_unit(sources, registry, account)
+            layer = build_account_layer(ctx, account, lax=lax)
         except ConfigError as exc:
             errors[str(exc)] = None
+        else:
+            warnings.update(dict.fromkeys(layer.warnings))
     return Validation(
         units=checked.units, errors=tuple(errors), warnings=tuple(warnings)
     )

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from atc.context import BuildContext, load_context
 from atc.paths import Dirs, dirs_from_env
 from atc.sources import Sources, discover
 
@@ -31,6 +32,14 @@ conf_d_option = click.option(
 """The ``--conf-d DIR`` option, passed to the command as ``conf_d: Path | None``."""
 
 
+lax_option = click.option(
+    "--lax",
+    is_flag=True,
+    help="Report settings keys Claude Code does not define as warnings, not errors.",
+)
+"""The ``--lax`` flag, passed to the command as ``lax: bool``."""
+
+
 def current_dirs() -> Dirs:
     """Work out the directories atc uses from this process's environment."""
     return dirs_from_env(os.environ, Path.home())
@@ -40,3 +49,10 @@ def load_sources(conf_d: Path | None) -> Sources:
     """Discover the sources in ``conf_d``, or in the default directory if ``None``."""
     directory = conf_d if conf_d is not None else current_dirs().conf_d
     return discover(directory, uid=os.getuid())
+
+
+def load_build_context(conf_d: Path | None) -> BuildContext:
+    """Load the registry and the sources in ``conf_d``, or the default directory."""
+    return load_context(
+        env=os.environ, home=Path.home(), uid=os.getuid(), conf_d=conf_d
+    )

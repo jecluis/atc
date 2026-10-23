@@ -7,7 +7,7 @@ import click
 import rich_click
 
 from atc import exitcodes
-from atc.cli.build import build
+from atc.cli.show import show
 from atc.cli.src import src
 from atc.errors import ConfigError
 from atc.ui import Ui
@@ -21,7 +21,7 @@ def app() -> None:
     """Start coding agents in the right account, with shared settings."""
 
 
-app.add_command(build)
+app.add_command(show)
 app.add_command(src)
 
 

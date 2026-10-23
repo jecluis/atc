@@ -2,12 +2,9 @@
 
 from pathlib import Path
 
-from atc.jsonval import JsonObject
-from atc.paths import Dirs
-from atc.registry import REGISTRY_FILE, load_registry
 from atc.sources import discover
-from atc.validate import Validation, validate_config, validate_sources
-from tests.conftest import ConfigWriter
+from atc.validate import validate_config, validate_sources
+from tests.conftest import ContextBuilder
 from tests.helpers import UID, make_source, unit
 
 
@@ -111,55 +108,57 @@ TWO_ACCOUNTS = """\
 """
 
 
-def check_config(
-    dirs: Dirs, home: Path, configure: ConfigWriter, files: dict[str, JsonObject]
-) -> Validation:
-    configure(files, TWO_ACCOUNTS)
-    return validate_config(
-        discover(dirs.conf_d, uid=UID),
-        load_registry(dirs.config_dir / REGISTRY_FILE, home),
-        lax=False,
+def test_validate_config_reports_every_account_that_fails(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"autoMemoryDirectory": "/m"})},
+        TWO_ACCOUNTS,
     )
 
-
-def test_validate_config_passes_when_every_account_has_its_unit(
-    dirs: Dirs, home: Path, configure: ConfigWriter
-) -> None:
-    result = check_config(
-        dirs,
-        home,
-        configure,
-        {"conf/accounts/personal.json": unit(), "conf/profiles/work.json": unit()},
-    )
-
-    assert (result.units, result.errors, result.warnings) == (2, (), ())
-
-
-def test_validate_config_reports_every_account_whose_unit_is_missing(
-    dirs: Dirs, home: Path, configure: ConfigWriter
-) -> None:
-    result = check_config(dirs, home, configure, {"conf/other.json": unit()})
+    result = validate_config(ctx, lax=False)
 
     assert len(result.errors) == 2
-    assert "account 'personal'" in result.errors[0]
+    assert "accounts/personal.json: /autoMemoryDirectory" in result.errors[0]
     assert "account 'work'" in result.errors[1]
     assert "profiles/work.json" in result.errors[1]
 
 
 def test_validate_config_keeps_the_errors_of_the_sources(
-    dirs: Dirs, home: Path, configure: ConfigWriter
+    build_context: ContextBuilder,
 ) -> None:
-    result = check_config(
-        dirs,
-        home,
-        configure,
+    ctx = build_context(
         {
             "conf/accounts/personal.json": unit(),
             "conf/profiles/work.json": unit(),
             "conf/stray.json": unit(imports=["gone.json"]),
         },
+        TWO_ACCOUNTS,
     )
+
+    result = validate_config(ctx, lax=False)
 
     assert result.units == 3
     assert len(result.errors) == 1
     assert "gone.json" in result.errors[0]
+
+
+def test_validate_config_gives_a_problem_in_both_checks_once(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context({"conf/accounts/personal.json": unit(imports=["gone.json"])})
+
+    result = validate_config(ctx, lax=False)
+
+    assert len(result.errors) == 1
+
+
+def test_validate_config_reports_layer_warnings_once(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context({"conf/accounts/personal.json": unit({"permisions": {}})})
+
+    result = validate_config(ctx, lax=True)
+
+    assert result.errors == ()
+    assert len(result.warnings) == 1

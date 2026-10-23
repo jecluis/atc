@@ -7,8 +7,8 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc build`, `atc src ls` and `atc src check`. The
-rest is being built step by step.
+Today the tool implements `atc show account`, `atc src ls` and `atc src check`.
+The rest is being built step by step.
 
 ## Install
 
@@ -116,13 +116,12 @@ of Claude Code settings and can import other units:
 | `version` | Required, and must be `2`. A unit with `"version": 1` is refused: change the number. |
 | `description` | Optional note for people. atc ignores it. |
 | `imports` | Optional list of unit references, merged before this unit's own `settings`. |
-| `settings` | Optional fragment of `settings.local.json`. Its top-level keys must be ones Claude Code defines (`atc build --lax` accepts others with a warning). |
+| `settings` | Optional fragment of `settings.local.json`. Its top-level keys must be ones Claude Code defines (`atc show account --lax` accepts others with a warning). |
 
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
 
-**References.** An import, a `UNIT` given to `atc build`, and an account's `unit`
-in the registry are each one of:
+**References.** An import, and an account's `unit` in the registry, is one of:
 
 - `path/to/unit.json`: a path relative to the `conf/` of the same source.
 - `@name/path/to/unit.json`: a path relative to the `conf/` of the source
@@ -132,8 +131,8 @@ A reference must be relative, must spell out the `.json` extension, and must
 stay inside the `conf/` of its source, links included. In an import, a
 reference without `@` always means the unit's own source.
 
-Outside a unit, as on the command line or in the registry, a reference without
-`@` is looked up in every source, and exactly one must contain it. If none does the unit does not
+Outside a unit, as in the registry, a reference without `@` is looked up in
+every source, and exactly one must contain it. If none does the unit does not
 exist, and if several do you are asked to add an `@name/` prefix. With a single
 source, or with names that never collide, the prefix is never needed.
 
@@ -178,10 +177,15 @@ into other sources. It reports every problem it finds, not only the first:
   circular
 - values of different types for the same setting
 
-When the machine registry exists, it also checks that every account's unit
-exists: an account whose unit is missing, or is in several sources, is an
-error. Without a registry, only the units are checked, with a warning saying
-so.
+When the machine registry exists, it also builds the settings of every account,
+as `atc show account` does, and reports:
+
+- an account whose unit does not exist, or exists in several sources
+- a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
+  refused in an account's settings, because the value is the memory directory
+  itself and every project would share it
+
+Without a registry, only the units are checked, with a warning saying so.
 
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
 it prints each problem, once, and exits `1`. Everything goes to standard
@@ -192,22 +196,22 @@ stops the check with that error.
 | --- | --- |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
 
-### `atc build UNIT... [--conf-d DIR] [--lax]`
+### `atc show account NAME [--conf-d DIR] [--lax]`
 
-Merges the named units, together with everything they import, and writes the
-resulting `settings.local.json` to standard output. Several units can be named
-at once. Each is a unit reference as described under Units, for example
-`langs/rust.json` or `@work/langs/rust.json`, and they are merged left to
-right, except that a unit an earlier one already imported keeps the position it
-had.
+Builds the settings of the account `NAME`, one of the accounts in the machine
+registry, and writes them to standard output as JSON. They are the account's
+unit merged together with everything it imports, as described under Units, and
+every unit is checked against what the account's settings may contain.
+
+The output has sorted keys and a trailing newline, and is the same every time
+for the same configuration. On a terminal it is coloured. Redirected, it is
+plain JSON, so it is safe to pipe. Warnings and errors go to standard error. An
+unknown `NAME` is an error that lists the accounts there are.
 
 | Option | Effect |
 | --- | --- |
-| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
-
-Only the merged JSON goes to standard output, so it is safe to redirect or
-pipe. Warnings and errors go to standard error.
 
 ### Output and exit status
 
@@ -222,7 +226,7 @@ config source or git, and `2` for a problem with the command line.
 From the repository root:
 
 ```sh
-uv run --directory atc atc build --help   # run atc from the working tree
+uv run --directory atc atc show --help    # run atc from the working tree
 ./atc/check-and-fix.sh                    # format, lint, type check, test
 ./atc/check-and-fix.sh --check            # verify without changing anything
 ```
