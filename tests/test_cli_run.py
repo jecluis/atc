@@ -11,11 +11,11 @@ import pytest
 from atc import launch
 from atc.cli import main
 from atc.exitcodes import CONFIG, OK, USAGE
-from atc.jsonval import JsonObject, canonical
+from atc.jsonval import JsonObject, canonical, dumps
 from atc.launch import LaunchPlan
 from atc.paths import Dirs
 from tests.conftest import ConfigWriter
-from tests.helpers import StopError, git_repo, make_source, unit
+from tests.helpers import StopError, git_repo, guarded, make_source, unit
 
 FILES = {
     "conf/accounts/personal.json": unit({}),
@@ -62,11 +62,12 @@ def wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def executed(monkeypatch: pytest.MonkeyPatch) -> list[LaunchPlan]:
+def executed(monkeypatch: pytest.MonkeyPatch, dirs: Dirs) -> list[LaunchPlan]:
     """Stand in for ``execute``: record the plan and stop the command."""
     plans: list[LaunchPlan] = []
 
-    def record(plan: LaunchPlan) -> NoReturn:
+    def record(plan: LaunchPlan, given: Dirs) -> NoReturn:
+        assert given == dirs
         plans.append(plan)
         raise StopError
 
@@ -148,6 +149,7 @@ def test_run_has_its_own_help(
     for option in (
         "--account",
         "--settings",
+        "--no-guard",
         "--print",
         "--quiet",
         "--lax",
@@ -230,7 +232,7 @@ def test_print_shows_the_plan_and_does_not_execute(
     capsys: pytest.CaptureFixture[str],
     dirs: Dirs,
 ) -> None:
-    def execute(plan: LaunchPlan) -> NoReturn:
+    def execute(plan: LaunchPlan, _dirs: Dirs) -> NoReturn:
         pytest.fail(f"--print executed {plan.argv}")
 
     monkeypatch.setattr(launch, "execute", execute)
@@ -250,8 +252,42 @@ def test_print_shows_the_plan_and_does_not_execute(
     assert f"ATC_STATE_DIR={dirs.state_dir}" in out
     assert "ATC_FOO" in out
     assert "CLAUDE_CONFIG_DIR=" in out
+    assert "GIT_CONFIG_COUNT=2" in out
     assert f"{agent} --settings" in out
-    assert out.endswith('{\n  "model": "opus"\n}\n')
+    assert out.endswith(dumps(guarded(repo, {"model": "opus"})))
+    assert not dirs.state_dir.exists()
+    assert not dirs.runtime_dir.exists()
+
+
+def test_print_says_whether_the_guard_is_on(
+    repo: Path,
+    configure: ConfigWriter,
+    agent: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(
+        FILES,
+        REGISTRY.format(agent=agent, repo=repo).replace(
+            "account: bravo}", "account: bravo, snapshot: backups}"
+        ),
+    )
+
+    assert main(["--print"]) == OK
+    outside = capsys.readouterr()
+    monkeypatch.chdir(repo)
+    assert main(["--print"]) == OK
+    inside = capsys.readouterr()
+    assert main(["--print", "--no-guard"]) == OK
+    unguarded = capsys.readouterr()
+
+    assert "guard: off (not in a repository)" in outside.out
+    assert "snapshot" not in outside.out
+    assert "guard: on" in inside.out
+    assert "snapshot: backups" in inside.out
+    assert "guard: off (--no-guard)" in unguarded.out
+    assert "snapshot: backups" in unguarded.out
+    assert unguarded.err.startswith("warning: --no-guard: ")
 
 
 def test_print_outside_a_project_says_so(capsys: pytest.CaptureFixture[str]) -> None:
@@ -300,7 +336,7 @@ def test_the_announcement_names_the_project_and_account(
 
     _ = start(executed, [])
 
-    assert capsys.readouterr().err == "atc: project bar · account bravo\n"
+    assert capsys.readouterr().err == "atc: project bar · account bravo · guard on\n"
 
 
 def test_the_announcement_outside_a_project(
@@ -308,7 +344,26 @@ def test_the_announcement_outside_a_project(
 ) -> None:
     _ = start(executed, ["-a", "personal"])
 
-    assert capsys.readouterr().err == f"atc: project {DASH} · account personal\n"
+    assert capsys.readouterr().err == (
+        f"atc: project {DASH} · account personal · guard off (not in a repository)\n"
+    )
+
+
+def test_the_announcement_says_when_the_guard_was_turned_off(
+    repo: Path,
+    executed: list[LaunchPlan],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(repo)
+
+    plan = start(executed, ["--no-guard"])
+
+    assert not plan.guarded
+    assert plan.fragment == {}
+    err = capsys.readouterr().err
+    assert err.startswith("warning: --no-guard: ")
+    assert err.endswith("atc: project bar · account bravo · guard off (--no-guard)\n")
 
 
 def test_quiet_turns_the_announcement_off(
@@ -385,7 +440,9 @@ def test_warnings_from_the_registry_are_printed(
 
     err = capsys.readouterr().err
     assert err.startswith("warning: ")
-    assert err.endswith(f"atc: project {DASH} · account personal\n")
+    assert err.endswith(
+        f"atc: project {DASH} · account personal · guard off (not in a repository)\n"
+    )
 
 
 def test_dash_h_is_help_for_the_group_and_for_run(
@@ -445,7 +502,7 @@ def test_a_registered_repository_git_cannot_read_is_a_warning(
     assert plan.project is None
     assert err.startswith("warning: ")
     assert "project 'bar'" in err
-    assert err.endswith(f"atc: project {DASH} · account personal\n")
+    assert err.endswith(f"atc: project {DASH} · account personal · guard on\n")
 
 
 class ProjectConfigurer(Protocol):
@@ -471,18 +528,20 @@ def configure_project(
 
 
 def test_the_projects_settings_start_the_session(
-    executed: list[LaunchPlan], configure_project: ProjectConfigurer
+    repo: Path, executed: list[LaunchPlan], configure_project: ProjectConfigurer
 ) -> None:
     configure_project(unit({"model": "sonnet", "theme": "dark"}))
 
     plan = start(executed, ["--settings", '{"model": "opus"}'])
 
-    assert plan.fragment == {"model": "opus", "theme": "dark"}
+    assert plan.fragment == guarded(repo, {"model": "opus", "theme": "dark"})
     assert plan.argv[1:3] == ["--settings", canonical(plan.fragment)]
 
 
 def test_print_shows_the_projects_settings_in_the_fragment(
-    configure_project: ProjectConfigurer, capsys: pytest.CaptureFixture[str]
+    repo: Path,
+    configure_project: ProjectConfigurer,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     configure_project(unit({"env": {"WHO": "{{account.name}}"}}))
 
@@ -490,7 +549,7 @@ def test_print_shows_the_projects_settings_in_the_fragment(
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert captured.out.endswith('{\n  "env": {\n    "WHO": "bravo"\n  }\n}\n')
+    assert captured.out.endswith(dumps(guarded(repo, {"env": {"WHO": "bravo"}})))
 
 
 def test_a_project_layer_that_cannot_be_built_is_a_config_error(
@@ -508,6 +567,7 @@ def test_a_project_layer_that_cannot_be_built_is_a_config_error(
 
 
 def test_lax_turns_unknown_project_keys_into_warnings(
+    repo: Path,
     executed: list[LaunchPlan],
     configure_project: ProjectConfigurer,
     capsys: pytest.CaptureFixture[str],
@@ -520,10 +580,10 @@ def test_lax_turns_unknown_project_keys_into_warnings(
 
     plan = start(executed, ["--lax"])
 
-    assert plan.fragment == {"modle": "opus"}
+    assert plan.fragment == guarded(repo, {"modle": "opus"})
     assert capsys.readouterr().err == (
         "warning: projects/bar.json: unknown settings key(s): modle\n"
-        "atc: project bar · account bravo\n"
+        "atc: project bar · account bravo · guard on\n"
     )
 
 
@@ -572,10 +632,11 @@ def test_a_launch_says_nothing_about_rules(
     plan = start(executed, [])
 
     assert plan.rule_warnings == ()
-    assert capsys.readouterr().err == "atc: project bar · account bravo\n"
+    assert capsys.readouterr().err == "atc: project bar · account bravo · guard on\n"
 
 
 def test_a_broken_account_unit_stops_neither_print_nor_a_launch(
+    repo: Path,
     executed: list[LaunchPlan],
     configure_project: ProjectConfigurer,
     capsys: pytest.CaptureFixture[str],
@@ -586,8 +647,8 @@ def test_a_broken_account_unit_stops_neither_print_nor_a_launch(
 
     plan = start(executed, [])
 
-    assert plan.fragment == {"model": "opus"}
-    assert capsys.readouterr().err == "atc: project bar · account bravo\n"
+    assert plan.fragment == guarded(repo, {"model": "opus"})
+    assert capsys.readouterr().err == "atc: project bar · account bravo · guard on\n"
     assert main(["--print"]) == OK
     captured = capsys.readouterr()
     skipped = "warning: rule check skipped for the account layer: "
@@ -596,4 +657,4 @@ def test_a_broken_account_unit_stops_neither_print_nor_a_launch(
     )
     assert captured.err.count("warning:") == 1
     assert "argv: " in captured.out
-    assert captured.out.endswith('{\n  "model": "opus"\n}\n')
+    assert captured.out.endswith(dumps(plan.fragment))

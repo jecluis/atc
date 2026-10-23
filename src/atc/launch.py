@@ -9,7 +9,7 @@ from typing import NoReturn
 
 import click
 
-from atc import git
+from atc import git, guard
 from atc.backends import backend_for
 from atc.context import BuildContext
 from atc.errors import ConfigError, GitError, RegistryError, UnitError
@@ -20,10 +20,18 @@ from atc.layers import (
     merge_fragment,
     session_layer,
 )
+from atc.paths import Dirs
 from atc.registry import Account, Project, Registry, choose_account
 from atc.rules import RuleWarning, dead_rules
+from atc.ui import Ui
 
 SETTINGS_OPTION = "--settings"
+SESSION_ENTRIES = "session entries"
+"""What names the settings atc adds for a guarded session, in messages."""
+NO_GUARD_WARNING = (
+    "--no-guard: the repository's packed history is not write-protected in this "
+    "session, and repository maintenance can run while it is open"
+)
 ENV_PREFIX = "ATC_"
 """Every variable that starts with this is atc's, and is replaced or removed."""
 
@@ -42,6 +50,14 @@ class LaunchPlan:
     for one that is removed. ``warnings`` are problems that did not stop atc.
     ``rule_warnings`` are the permission rules that can never apply, found only
     when the plan was made to explain itself.
+
+    ``guarded`` says the session protects the repository's packed history: the
+    fragment and the environment already hold what that takes, and
+    :func:`execute` registers the repository and holds its lock. It is false
+    outside a repository, and with ``no_guard``. ``protected`` are the paths of
+    that history that existed when the fragment was made. ``snapshot`` is the
+    snapper config of the project, whether or not the session is guarded: the
+    snapshot is made just before the agent starts.
     """
 
     cwd: Path
@@ -54,6 +70,9 @@ class LaunchPlan:
     argv: list[str]
     warnings: tuple[str, ...]
     rule_warnings: tuple[RuleWarning, ...]
+    guarded: bool
+    protected: tuple[Path, ...]
+    snapshot: str | None
 
 
 def find_project(
@@ -131,16 +150,23 @@ def plan_launch(
     git_common_dir: Callable[[Path], Path | None] = git.common_dir,
     lax: bool,
     explain: bool,
+    no_guard: bool,
 ) -> LaunchPlan:
     """
     Plan how to start the agent in ``cwd``, with the environment ``env``.
 
     The account is ``account`` if given, else the project's, else the default.
     The settings for the session are those of the project's unit, if it has
-    one, with ``settings`` merged over them. ``agent_args`` go to the agent.
-    ``self_path`` is atc's own executable, which the agent's binary must not
-    be. ``which`` finds a binary on ``PATH``. Set ``lax`` to report unknown
-    settings keys in the project's units as warnings instead of errors.
+    one, then the agent's entries that protect the repository's packed history,
+    then ``settings``, each merged over the ones before. ``agent_args`` go to
+    the agent. ``self_path`` is atc's own executable, which the agent's binary
+    must not be. ``which`` finds a binary on ``PATH``. Set ``lax`` to report
+    unknown settings keys in the project's units as warnings instead of errors.
+
+    Inside a repository the session is guarded: it gets those entries, and git's
+    automatic gc is turned off in its environment. Set ``no_guard`` to leave
+    both out, with a warning. Outside a repository there is nothing to guard.
+    The plan has the project's snapshot config either way.
 
     Set ``explain`` to find the rules that can never apply, in the account's
     settings, the project's and ``settings`` together. Only then is the
@@ -157,7 +183,8 @@ def plan_launch(
             unit sets one that its layer must not.
         MergeError: ``settings`` give a key another type than the project does.
         ConfigError: the agent's binary is not found, or is atc, or a unit of
-            the project cannot be built.
+            the project cannot be built, or ``env`` has a ``GIT_CONFIG_COUNT``
+            that is not a number.
 
     """
     _refuse_settings(agent_args)
@@ -169,20 +196,30 @@ def plan_launch(
         ctx.registry, common, git_common_dir=git_common_dir, warn=warnings.append
     )
     chosen = choose_account(ctx.registry, project, account)
+    backend = backend_for(chosen.agent, ctx.home)
     project_layer = (
         None if project is None else build_project_layer(ctx, project, chosen, lax=lax)
     )
-    layers = [layer for layer in (project_layer, session) if layer is not None]
+    entries = None
+    protected: tuple[Path, ...] = ()
+    if common is not None and not no_guard:
+        protected = guard.protected_paths(common)
+        entries = session_layer(backend.session_fragment(common), SESSION_ENTRIES)
+    layers = [layer for layer in (project_layer, entries, session) if layer is not None]
     fragment = merge_fragment(layers)
     warnings.extend(warning for layer in layers for warning in layer.warnings)
+    if common is not None and no_guard:
+        warnings.append(NO_GUARD_WARNING)
     checked = layers
     if explain:
         try:
             checked = [build_account_layer(ctx, chosen, lax=lax), *layers]
         except ConfigError as exc:
             warnings.append(f"rule check skipped for the account layer: {exc}")
-    backend = backend_for(chosen.agent, ctx.home)
     selected = backend.environment(chosen, _atc_environment(env, ctx, chosen, project))
+    guarded = entries is not None
+    if guarded:
+        selected = guard.with_gc_disabled(selected)
     binary = _agent_binary(ctx.registry, chosen.agent, self_path, which)
     return LaunchPlan(
         cwd=cwd,
@@ -195,21 +232,65 @@ def plan_launch(
         argv=backend.argv(binary, fragment, agent_args),
         warnings=tuple(warnings),
         rule_warnings=dead_rules(checked) if explain else (),
+        guarded=guarded,
+        protected=protected,
+        snapshot=None if project is None else project.snapshot,
     )
 
 
-def execute(plan: LaunchPlan) -> NoReturn:
+def execute(
+    plan: LaunchPlan,
+    dirs: Dirs,
+    *,
+    run_snapshot: Callable[[Sequence[str]], int] = guard.run_command,
+) -> NoReturn:
     """
     Replace atc with the agent, started as ``plan`` says.
 
+    A guarded plan first adds its repository to the list in ``dirs.state_dir``,
+    then takes a shared lock on it. The lock stays with the agent, and with every
+    process the agent starts. If packed history appeared while the lock was
+    awaited, a warning says the session does not protect it. Then, guarded or
+    not, the snapshot is made if the plan has one. A lock or a snapshot that
+    cannot be had is a warning, and the agent starts anyway. ``run_snapshot``
+    runs the snapshot command.
+
     Raises:
-        ConfigError: the agent cannot be started.
+        ConfigError: the repository cannot be added to the list, or the agent
+            cannot be started.
 
     """
+    ui = Ui.default()
+    if plan.guarded and plan.common_dir is not None:
+        _prepare_guard(plan, plan.common_dir, dirs, ui)
+    if plan.snapshot is not None:
+        warning = guard.take_snapshot(plan.snapshot, plan.cwd, run=run_snapshot)
+        if warning is not None:
+            ui.warning(warning)
     try:
         os.execvpe(plan.argv[0], plan.argv, plan.env)  # noqa: S606 - the planned agent
     except OSError as exc:
         raise ConfigError(f"cannot start {plan.argv[0]}: {exc}") from exc
+
+
+def _prepare_guard(plan: LaunchPlan, common: Path, dirs: Dirs, ui: Ui) -> None:
+    """Register the repository and take its lock, warning through ``ui``."""
+    try:
+        guard.register_repo(dirs, common)
+    except OSError as exc:
+        raise ConfigError(f"cannot register {common}: {exc}") from exc
+    # The descriptor is not closed: it stays open through the exec, with the lock.
+    _, warning = guard.open_session_lock(dirs, common)
+    if warning is not None:
+        ui.warning(warning)
+    appeared = [p for p in guard.protected_paths(common) if p not in plan.protected]
+    if appeared:
+        names = ", ".join(str(path) for path in appeared)
+        message = (
+            f"packed history appeared while atc was starting: {names}; this "
+            "session starts with it not protected, so restart it to protect it"
+        )
+        ui.warning(message)
 
 
 def _refuse_settings(agent_args: Sequence[str]) -> None:

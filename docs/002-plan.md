@@ -1319,8 +1319,8 @@ The design's `run` is split across Tasks 13–15, so each commit stays inside th
   - `{"sandbox": {"filesystem": {"denyWrite": [str(p), ...]}}, "permissions": {"deny": ["Edit(/" + str(p) + "/**)" for directories, "Edit(/" + str(p) + ")" for files]}}`
 - **`launch`:**
   - `LaunchPlan` gains `guarded: bool` and `snapshot: str | None`.
-  - `plan_launch(..., no_guard: bool)`. Inside a repository and without `no_guard`, it sets `guarded=True`, adds the session fragment between the project layer and your `--settings`, applies `with_gc_disabled`, and sets `snapshot` to the project's `snapshot`. `--no-guard` inside a repository adds a warning.
-  - `execute(plan: LaunchPlan, dirs: Dirs) -> NoReturn`. The signature gains `dirs`. When guarded, it registers the repository, opens the lock, then takes the snapshot, printing any warnings, then execs.
+  - `plan_launch(..., no_guard: bool)`. Inside a repository and without `no_guard`, it sets `guarded=True`, adds the session fragment between the project layer and your `--settings`, and applies `with_gc_disabled`. `snapshot` is the project's `snapshot` whenever there is a project, guarded or not (§10.3 step 8 is its own step). `--no-guard` inside a repository adds a warning.
+  - `execute(plan: LaunchPlan, dirs: Dirs) -> NoReturn`. The signature gains `dirs`. When guarded, it registers the repository and opens the lock (then re-checks the protected paths and warns if more exist now); then it takes the snapshot if the plan has one, printing any warnings, then execs.
 - **CLI:** the announcement says `guard on`, `guard off (--no-guard)` or `guard off (not in a repository)`.
 
 - [ ] **Step 1: Write the failing tests:**

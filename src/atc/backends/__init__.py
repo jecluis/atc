@@ -59,6 +59,15 @@ class Backend(Protocol):
         """
         ...
 
+    def session_fragment(self, common_dir: Path) -> JsonObject:
+        """
+        Return the settings that protect the repository's packed history.
+
+        ``common_dir`` is the repository's git directory. The result is empty
+        when there is nothing in it to protect yet.
+        """
+        ...
+
     def render(self, settings: JsonObject) -> str:
         """Return ``settings`` as the text of that file."""
         ...

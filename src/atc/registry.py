@@ -56,6 +56,7 @@ class _ProjectModel(_Model):
     account: str | None = None
     accounts: list[str] | None = None
     unit: str | None = None
+    snapshot: str | None = Field(default=None, min_length=1)
     vars: dict[str, str] = Field(default_factory=dict)
 
 
@@ -120,7 +121,8 @@ class Project:
     on it; ``None`` means every account. ``unit`` is the unit reference that its
     settings are built from, and ``unit_is_default`` says whether the registry
     left it to the default, ``projects/<name>.json``. ``vars`` are its own
-    variables.
+    variables. ``snapshot`` is the snapper config to snapshot before each
+    session; ``None`` means no snapshot.
     """
 
     name: str
@@ -130,6 +132,7 @@ class Project:
     unit: str
     unit_is_default: bool
     vars: Mapping[str, str]
+    snapshot: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,6 +482,7 @@ def _build_project(
         unit=entry.unit if entry.unit is not None else f"projects/{name}.json",
         unit_is_default=entry.unit is None,
         vars=dict(entry.vars),
+        snapshot=entry.snapshot,
     )
 
 

@@ -176,3 +176,23 @@ def test_argv_leaves_out_settings_for_an_empty_fragment(home: Path) -> None:
         "/bin/claude",
         "a prompt",
     ]
+
+
+def test_session_fragment_uses_absolute_edit_rules(home: Path, tmp_path: Path) -> None:
+    common = tmp_path / "repo" / ".git"
+    pack = common / "objects" / "pack"
+    refs = common / "packed-refs"
+    common.mkdir(parents=True)
+    backend = ClaudeBackend(home)
+    assert backend.session_fragment(common) == {}
+    pack.mkdir(parents=True)
+    _ = refs.write_text("", encoding="utf-8")
+
+    fragment = backend.session_fragment(common)
+
+    assert fragment == {
+        "sandbox": {"filesystem": {"denyWrite": [str(pack), str(refs)]}},
+        "permissions": {
+            "deny": [f"Edit(//{str(pack)[1:]}/**)", f"Edit(//{str(refs)[1:]})"]
+        },
+    }

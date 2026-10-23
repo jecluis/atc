@@ -513,6 +513,27 @@ def test_project_unit_defaults_and_is_marked_default(
     assert (other.unit, other.unit_is_default) == ("@c/p/x.json", False)
 
 
+def test_a_project_can_name_a_snapshot_config(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, snapshot: bravo") + "      x: {repo: /x}\n"
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.projects["bar"].snapshot == "bravo"
+    assert registry.projects["x"].snapshot is None
+
+
+@pytest.mark.parametrize("snapshot", ["1", "''"])
+def test_a_snapshot_must_be_a_non_empty_string(
+    write_registry: RegistryWriter, home: Path, snapshot: str
+) -> None:
+    text = with_project(f"repo: /r, snapshot: {snapshot}")
+
+    with pytest.raises(RegistryError, match=r"/projects/bar/snapshot"):
+        _ = load_registry(write_registry(text), home)
+
+
 @pytest.mark.parametrize("name", ["Bar", "-a", "a.b"])
 def test_project_names_that_break_the_rule_are_refused(
     write_registry: RegistryWriter, home: Path, name: str

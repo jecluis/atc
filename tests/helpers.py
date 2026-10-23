@@ -1,5 +1,6 @@
 """Builders shared by the test modules."""
 
+import fcntl
 import json
 import os
 from collections.abc import Mapping, Sequence
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from atc.git import run_git
 from atc.jsonval import JsonObject
+from atc.merge import merge_objects
 from atc.unit import UNIT_VERSION
 
 UID = os.getuid()
@@ -149,3 +151,29 @@ def skill_files(*names: str) -> dict[str, str | JsonObject]:
 
 class StopError(Exception):
     """Raised by a test's stand-in for a call that never returns."""
+
+
+def is_locked(path: Path) -> bool:
+    """Say whether a second descriptor on ``path`` is refused an exclusive ``flock``."""
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(descriptor)
+    return False
+
+
+def packed_history(repo: Path) -> JsonObject:
+    """Build the session entries for a new repository: only ``objects/pack`` exists."""
+    pack = repo / ".git" / "objects" / "pack"
+    return {
+        "sandbox": {"filesystem": {"denyWrite": [str(pack)]}},
+        "permissions": {"deny": ["Edit(/" + str(pack) + "/**)"]},
+    }
+
+
+def guarded(repo: Path, fragment: JsonObject) -> JsonObject:
+    """``fragment`` with the session entries for ``repo`` added."""
+    return merge_objects(fragment, packed_history(repo))

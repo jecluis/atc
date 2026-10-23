@@ -59,8 +59,19 @@ class _RunCommand(rich_click.RichCommand):
     metavar="FILE|JSON",
     help=(
         "Settings for this session only: the path of a JSON file, or JSON text "
-        "that starts with {. They win over the project's settings. They are not "
-        "templates, and cannot set sandbox.allowUnsandboxedCommands."
+        "that starts with {. They win over the project's settings, but cannot "
+        "remove the entries that protect the repository's packed history. They "
+        "are not templates, and cannot set sandbox.allowUnsandboxedCommands."
+    ),
+)
+@click.option(
+    "--no-guard",
+    is_flag=True,
+    help=(
+        "Do not protect the repository's packed history in this session: leave "
+        "out the write protection of objects/pack and packed-refs, the setting "
+        "that turns git's automatic gc off, the session lock and the repository "
+        "list. Inside a repository, a warning says so."
     ),
 )
 @click.option(
@@ -73,7 +84,7 @@ class _RunCommand(rich_click.RichCommand):
     "-q",
     "--quiet",
     is_flag=True,
-    help="Do not print the line that names the project and the account.",
+    help="Do not print the line that names the project, the account and the guard.",
 )
 @conf_d_option
 @lax_option
@@ -82,6 +93,7 @@ def run(
     ctx: click.Context,
     account_name: str | None,
     settings_arg: str | None,
+    no_guard: bool,
     show_plan: bool,
     quiet: bool,
     conf_d: Path | None,
@@ -96,8 +108,8 @@ def run(
     registry's default. atc then replaces itself with the account's agent,
     started with that account's configuration directory and with ATC_ACCOUNT,
     ATC_PROJECT and ATC_STATE_DIR set. Any other ATC_ variable it was started
-    with is dropped. It prints one line on standard error naming the project
-    and the account.
+    with is dropped. It prints one line on standard error naming the project,
+    the account and whether the session is guarded.
 
     The agent is given the project's settings, if the project has a unit, as
     its --settings, with the ones given to atc merged over them. The account's
@@ -107,6 +119,13 @@ def run(
     whether it is the account's, the project's or one given with --settings. If
     the account's settings cannot be built, a warning says why and the other
     rules are still checked.
+
+    Inside a git repository the session is guarded. The agent cannot write to
+    the repository's objects/pack and packed-refs, git's automatic gc is turned
+    off, the repository is listed for maintenance, and a shared lock on it is
+    held until the agent and everything it started have exited. --no-guard
+    leaves all of that out. Guarded or not, the project's snapshot, if it has
+    one, is taken just before the agent starts.
 
     Everything after -- is for the agent, so a --settings there is refused: the
     agent takes only one, and it would replace the one atc passes. Give
@@ -131,6 +150,7 @@ def run(
         self_path=_self_path(),
         lax=lax,
         explain=show_plan,
+        no_guard=no_guard,
     )
 
     ui = Ui.default()
@@ -143,8 +163,13 @@ def run(
         return
     if not quiet:
         project = ABSENT if plan.project is None else plan.project.name
-        ui.info(f"atc: project {project} · account {plan.account.name}")
-    launch.execute(plan)
+        parts = [
+            f"project {project}",
+            f"account {plan.account.name}",
+            f"guard {_guard_state(plan)}",
+        ]
+        ui.info("atc: " + " · ".join(parts))
+    launch.execute(plan, build.dirs)
 
 
 def _self_path() -> Path:
@@ -156,17 +181,30 @@ def _self_path() -> Path:
     return Path(name if found is None else found)
 
 
+def _guard_state(plan: LaunchPlan) -> str:
+    """Say whether the plan's session is guarded, and if not, why."""
+    if plan.guarded:
+        return "on"
+    if plan.common_dir is None:
+        return "off (not in a repository)"
+    return "off (--no-guard)"
+
+
 def _show(ui: Ui, plan: LaunchPlan) -> None:
     """Write the plan as a tree, followed by the fragment as JSON."""
     project = ABSENT if plan.project is None else plan.project.name
     repository = ABSENT if plan.common_dir is None else str(plan.common_dir)
     account = plan.account
     tree = Tree(Text("atc run"))
-    for line in (
+    lines = [
         f"repository: {repository}",
         f"project: {project}",
         f"account: {account.name} ({account.agent}, {account.dir})",
-    ):
+        f"guard: {_guard_state(plan)}",
+    ]
+    if plan.snapshot is not None:
+        lines.append(f"snapshot: {plan.snapshot}")
+    for line in lines:
         _ = tree.add(Text(line))
     environment = tree.add(
         Text("environment" if plan.env_changes else "environment: unchanged")

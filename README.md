@@ -101,6 +101,7 @@ projects:
     repo: ~/src/bar
     account: work
     accounts: [work, personal]
+    snapshot: work
     vars:
       team: ci
 ```
@@ -123,6 +124,7 @@ projects:
 | `projects.<name>.account` | no | The account the project uses by default. Defaults to `default-account`. |
 | `projects.<name>.accounts` | no | The accounts allowed to work on the project. When set, it must name at least one and include the project's account: `account`, or `default-account` when the project sets none. Defaults to every account. |
 | `projects.<name>.unit` | no | The unit the project's settings are built from, as a unit reference (see Units). Defaults to `projects/<name>.json`. When that default does not exist, the project has no settings of its own. |
+| `projects.<name>.snapshot` | no | The name of a snapper config. `atc run` takes a snapshot with it before each session in the project (see The guard). Defaults to no snapshot. |
 | `projects.<name>.vars` | no | Variables for this project's units, as `{{project.vars.<name>}}`. |
 
 No other keys are accepted yet, and a misspelled key is an error. The rules:
@@ -308,7 +310,7 @@ unknown-reference error.
 Run `atc --help`, or `--help` after any command, for the options. `-h` means
 `--help` too.
 
-### `atc [run] [-a ACCOUNT] [--settings FILE|JSON] [--print] [-q] [--lax] [--conf-d DIR] [-- AGENT-ARGS]...`
+### `atc [run] [-a ACCOUNT] [--settings FILE|JSON] [--no-guard] [--print] [-q] [--lax] [--conf-d DIR] [-- AGENT-ARGS]...`
 
 Starts the agent in the right account, replacing atc with it. It works out:
 
@@ -332,12 +334,13 @@ Starts the agent in the right account, replacing atc with it. It works out:
 Before it replaces itself, atc prints one line on standard error:
 
 ```
-atc: project bar · account bravo
+atc: project bar · account bravo · guard on
 ```
 
-It says `project –` outside a registered project. `-q` leaves the line out.
-Nothing else from atc appears once the agent has started, and the agent's exit
-status is the command's.
+It says `project –` outside a registered project. The guard is `on`, `off
+(--no-guard)` or `off (not in a repository)` (see The guard). `-q` leaves the
+line out. Nothing else from atc appears once the agent has started, and the
+agent's exit status is the command's.
 
 **`atc` with no command.** `atc` with no arguments, or with a first argument
 that starts with `-`, is `atc run`; this includes `--`. `atc -- --resume x`
@@ -370,24 +373,27 @@ the one atc passes. Give `--settings` to `atc`, before `--`.
 | `ATC_PROJECT` | The project's name. Removed outside a registered project. |
 | `ATC_STATE_DIR` | atc's state directory. |
 | `CLAUDE_CONFIG_DIR` | The account's directory. Removed for `~/.claude`, the directory Claude Code uses when the variable is not set. |
+| `GIT_CONFIG_*` | In a guarded session: `gc.auto=0` and `maintenance.auto=false`, added after any entries already set (see The guard). |
 
 Every other `ATC_` variable is removed, so a session started from inside another
 one never inherits the outer one's values.
 
 **Settings.** The agent is started as `claude --settings '<settings as JSON>' …`.
-The settings are one document, made of two layers, the second winning over the
-first by the merge rules that `atc show` uses:
+The settings are one document, made of three layers, each winning over the ones
+before it by the merge rules that `atc show` uses:
 
 1. **The project's settings,** built as `atc show project` builds them, for the
    account that was chosen. A project with no unit contributes nothing, and a
    session outside a registered project has no project settings. If they cannot
    be built, for instance because a unit sets a key the project's settings must
    not, atc stops with exit status `1` and the agent does not start.
-2. **Your `--settings`,** read as strict JSON. They are not templates, and must
+2. **The session entries** that guard the repository, in a guarded session (see
+   The guard).
+3. **Your `--settings`,** read as strict JSON. They are not templates, and must
    not set `sandbox.allowUnsandboxedCommands`. A key that has one type in the
    project's settings and another in yours is an error.
 
-When both are empty there is no `--settings` argument.
+When all are empty there is no `--settings` argument.
 
 atc does not build the account's settings to start a session. The agent reads
 them from the account's directory, where `atc sync` wrote them, so a unit that
@@ -396,12 +402,69 @@ them, to check the permission rules (see Rule warnings). If they cannot be
 built, a warning says why, only the project's rules and those of your
 `--settings` are checked, and the plan is printed all the same.
 
+#### The guard
+
+Claude Code's sandbox lets a session write to the repository's `.git`, because
+commits need it. For a linked worktree that is the main repository's shared
+`.git`. Commits never write to `objects/pack` or `packed-refs`, though, and
+those two hold everything git has packed: almost all of the history and most
+branches. Inside a git repository, atc therefore guards the session:
+
+- **Write protection.** Each of `objects/pack` and `packed-refs` in the shared
+  `.git` that exists gets a `sandbox.filesystem.denyWrite` entry, which holds
+  commands, and a rule in `permissions.deny`, which holds Claude's file tools:
+  `Edit(//<path>/**)` for the directory and `Edit(//<path>)` for the file. A
+  path that does not exist yet is left out, since the sandbox would put a
+  read-only placeholder where it is. These are the session entries, merged
+  after the project's settings and before yours, so `--settings` cannot take
+  them away.
+- **No automatic gc.** `GIT_CONFIG_*` turns off `gc.auto` and
+  `maintenance.auto` for the session, since git can no longer write packs. The
+  two entries are added after any that atc's own environment has.
+- **Repository list.** The shared `.git` is added to `<state_dir>/repos`, one
+  path per line, if it is not there. The list tells maintenance which
+  repositories to keep packed. The list, and any directory atc makes for it or
+  for the lock, is readable and writable by you alone.
+- **Lock.** atc takes a shared `flock` on `<runtime_dir>/<key>.lock`, where
+  `<key>` is the first 16 hex digits of the SHA-256 of the shared `.git`'s path
+  and `<runtime_dir>` is `atc` in `$XDG_RUNTIME_DIR`, or `/run/user/<uid>/atc`
+  when that is not set to an absolute path. The agent and everything it starts
+  inherit the lock, so it lasts until the last of those processes exits, and
+  maintenance, which needs the lock exclusively, never rewrites `packed-refs`
+  under a running session. atc waits up to 60 seconds for it. If maintenance
+  is still running by then, or the lock file cannot be made, atc warns and
+  starts the agent without the lock. If `objects/pack` or `packed-refs` only
+  appeared while atc waited, so the session entries could not name it, atc
+  warns that the session starts with it unprotected; restart the session to
+  protect it.
+
+**Fetching.** A `git fetch` inside a guarded session that brings 100 objects or
+more fails: git keeps what such a fetch brings as a pack in `objects/pack`, which
+the session cannot write. A smaller fetch is unpacked into loose objects and
+works. Fetch from your own terminal, outside the session, or start the session
+with `--no-guard`. atc does not raise git's `transfer.unpackLimit` for the
+session instead, because that would apply to every git command in it, clones of
+other repositories included.
+
+The repository is listed and the lock taken just before the agent starts. If
+the list cannot be written, atc stops with exit status `1`. Outside a git
+repository there is nothing to guard, and the announcement says `guard off (not
+in a repository)`. `--no-guard` leaves out all of the above and warns that the
+session is not protected; the announcement then says `guard off (--no-guard)`.
+
+**Snapshot.** When the project has a `snapshot`, atc runs
+`snapper -c <snapshot> create --cleanup-algorithm number --description "atc: <directory>"`
+just before the agent starts, after the steps of the guard, with `<directory>`
+the current directory. It does so whether or not the session is guarded. If
+snapper fails or is not installed, atc warns and starts the agent anyway.
+
 | Option | Effect |
 | --- | --- |
 | `-a`, `--account ACCOUNT` | Use `ACCOUNT` instead of the project's own account. |
-| `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. They win over the project's settings. |
-| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, the changes to the environment, the command, and the settings as JSON. Warnings about permission rules that never apply go to standard error. |
-| `-q`, `--quiet` | Leave out the line that names the project and the account. |
+| `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. They win over the project's settings, and are added to the session entries without being able to remove them. |
+| `--no-guard` | Do not guard the repository's packed history in this session: no session entries, no gc override, no lock and no listing in the repository list. A warning says so inside a git repository. The project's snapshot is still made. |
+| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, whether the session is guarded, the snapshot if there is one, the changes to the environment, the command, and the settings as JSON. Nothing is listed, locked or snapshotted. Warnings about permission rules that never apply go to standard error. |
+| `-q`, `--quiet` | Leave out the line that names the project, the account and the guard. |
 | `--lax` | Report settings keys Claude Code does not define in the project's units, and under `--print` in the account's unit too, as warnings rather than errors. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--print`. |
 

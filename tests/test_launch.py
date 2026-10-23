@@ -2,14 +2,14 @@
 
 import os
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import NoReturn
 
 import click
 import pytest
 
-from atc import git
+from atc import git, guard
 from atc.context import BuildContext
 from atc.errors import (
     ConfigError,
@@ -28,8 +28,17 @@ from atc.launch import (
     plan_launch,
     read_settings_arg,
 )
+from atc.paths import Dirs
 from tests.conftest import ContextBuilder
-from tests.helpers import StopError, git_repo, make_source, unit
+from tests.helpers import (
+    StopError,
+    git_repo,
+    guarded,
+    is_locked,
+    make_source,
+    packed_history,
+    unit,
+)
 
 CLAUDE = "/opt/agents/claude"
 ATC = Path("/opt/bin/atc")
@@ -40,10 +49,14 @@ REBASE = "Bash(git rebase:*)"
 PUSH = "Bash(git push:*)"
 
 
-def registry_text(repo: Path | None = None, *, top: str = "") -> str:
+def registry_text(
+    repo: Path | None = None, *, top: str = "", snapshot: str | None = None
+) -> str:
     projects = (
         f"projects:\n  bar:\n    repo: {repo}\n    account: bravo\n" if repo else ""
     )
+    if repo and snapshot:
+        projects += f"    snapshot: {snapshot}\n"
     return (
         f"{top}version: 1\n"
         "default-account: personal\n"
@@ -70,6 +83,7 @@ def plan(
     git_common_dir: Callable[[Path], Path | None] = git.common_dir,
     lax: bool = False,
     explain: bool = False,
+    no_guard: bool = False,
 ) -> LaunchPlan:
     return plan_launch(
         ctx,
@@ -83,11 +97,16 @@ def plan(
         git_common_dir=git_common_dir,
         lax=lax,
         explain=explain,
+        no_guard=no_guard,
     )
 
 
 def ignore(_message: str) -> None:
     """Take a warning that the test does not look at."""
+
+
+def refuse_to_run(command: Sequence[str]) -> int:
+    raise AssertionError(f"a test ran {command}")
 
 
 @pytest.fixture
@@ -153,6 +172,7 @@ def test_a_linked_worktree_finds_its_project(
     assert result.project is not None
     assert result.project.name == "bar"
     assert result.common_dir == repo / ".git"
+    assert result.fragment == packed_history(repo)
 
 
 def test_a_project_registered_by_its_worktree_matches_the_main_checkout(
@@ -402,6 +422,7 @@ def test_a_configured_binary_that_resolves_to_atc_is_refused_by_path(
             self_path=atc,
             lax=False,
             explain=False,
+            no_guard=False,
         )
 
 
@@ -429,6 +450,7 @@ def test_a_configured_binary_found_on_path_that_is_atc_is_refused(
             self_path=atc,
             lax=False,
             explain=False,
+            no_guard=False,
         )
 
 
@@ -512,7 +534,7 @@ def test_fragment_order_is_project_then_your_settings(
     ctx = build_context({**FILES, PROJECT: unit(project)}, registry_text(repo))
     settings: JsonObject = {"model": "opus", "permissions": {"allow": ["Edit"]}}
 
-    result = plan(ctx, repo, settings=settings)
+    result = plan(ctx, repo, settings=settings, no_guard=True)
 
     assert result.fragment == {
         "model": "opus",
@@ -522,14 +544,48 @@ def test_fragment_order_is_project_then_your_settings(
     assert result.argv == [CLAUDE, "--settings", canonical(result.fragment)]
 
 
+def test_session_entries_sit_between_the_project_layer_and_your_settings(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    project: JsonObject = {"permissions": {"deny": ["Bash(rm:*)"]}}
+    ctx = build_context({**FILES, PROJECT: unit(project)}, registry_text(repo))
+    settings: JsonObject = {"model": "opus", "permissions": {"deny": ["Bash(sudo:*)"]}}
+    pack = repo / ".git" / "objects" / "pack"
+
+    result = plan(ctx, repo, settings=settings)
+
+    assert result.fragment == {
+        "model": "opus",
+        "sandbox": {"filesystem": {"denyWrite": [str(pack)]}},
+        "permissions": {
+            "deny": ["Bash(rm:*)", "Edit(/" + str(pack) + "/**)", "Bash(sudo:*)"]
+        },
+    }
+    assert result.argv == [CLAUDE, "--settings", canonical(result.fragment)]
+
+
+def test_your_settings_cannot_remove_the_session_entries(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    settings: JsonObject = {
+        "permissions": {"deny": []},
+        "sandbox": {"filesystem": {"denyWrite": []}},
+    }
+
+    result = plan(ctx, repo, settings=settings)
+
+    assert result.fragment == packed_history(repo)
+
+
 def test_the_project_layer_is_built_for_the_account_that_is_chosen(
     build_context: ContextBuilder, repo: Path
 ) -> None:
     unit_with_account = unit({"env": {"WHO": "{{account.name}}"}})
     ctx = build_context({PROJECT: unit_with_account}, registry_text(repo))
 
-    assert plan(ctx, repo).fragment == {"env": {"WHO": "bravo"}}
-    assert plan(ctx, repo, account="personal").fragment == {"env": {"WHO": "personal"}}
+    assert plan(ctx, repo).fragment["env"] == {"WHO": "bravo"}
+    assert plan(ctx, repo, account="personal").fragment["env"] == {"WHO": "personal"}
 
 
 def test_a_project_without_a_unit_contributes_nothing(
@@ -540,10 +596,14 @@ def test_a_project_without_a_unit_contributes_nothing(
     inside = plan(ctx, repo)
 
     assert inside.project is not None
-    assert inside.fragment == {}
+    assert inside.fragment == packed_history(repo)
     assert inside.warnings == ()
-    assert inside.argv == [CLAUDE]
-    assert plan(ctx, repo, settings={"model": "opus"}).fragment == {"model": "opus"}
+    assert plan(ctx, repo, settings={"model": "opus"}).fragment == guarded(
+        repo, {"model": "opus"}
+    )
+    unprotected = plan(ctx, repo, no_guard=True)
+    assert unprotected.fragment == {}
+    assert unprotected.argv == [CLAUDE]
 
 
 def test_outside_a_project_there_is_no_project_layer(
@@ -582,7 +642,7 @@ def test_lax_turns_unknown_project_keys_into_warnings(
         _ = plan(ctx, repo)
     result = plan(ctx, repo, lax=True)
 
-    assert result.fragment == {"modle": "opus"}
+    assert result.fragment == guarded(repo, {"modle": "opus"})
     assert result.warnings == ("projects/bar.json: unknown settings key(s): modle",)
 
 
@@ -605,7 +665,8 @@ def test_rule_warnings_are_computed_only_when_explaining(
             f"deny {REBASE} (accounts/bravo.json) takes precedence"
         )
     ]
-    assert explained.fragment == quiet.fragment == {"permissions": {"allow": [REBASE]}}
+    assert explained.fragment == quiet.fragment
+    assert quiet.fragment == guarded(repo, {"permissions": {"allow": [REBASE]}})
     assert explained.warnings == quiet.warnings == ()
 
 
@@ -664,7 +725,7 @@ def test_a_broken_account_unit_does_not_block_a_plain_launch(
     result = plan(ctx, repo)
     explained = plan(ctx, repo, explain=True)
 
-    assert result.fragment == explained.fragment == {"model": "opus"}
+    assert result.fragment == explained.fragment == guarded(repo, {"model": "opus"})
     assert result.warnings == ()
     assert result.rule_warnings == ()
     assert len(explained.warnings) == 1
@@ -800,7 +861,10 @@ def test_read_settings_arg_wants_an_object(tmp_path: Path) -> None:
 
 
 def test_execute_replaces_the_process_with_the_planned_command(
-    build_context: ContextBuilder, plain: Path, monkeypatch: pytest.MonkeyPatch
+    build_context: ContextBuilder,
+    plain: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ctx = build_context(FILES, registry_text())
     result = plan(ctx, plain, env={"A": "1"}, agent_args=["--resume"])
@@ -813,13 +877,16 @@ def test_execute_replaces_the_process_with_the_planned_command(
     monkeypatch.setattr(os, "execvpe", execvpe)
 
     with pytest.raises(StopError):
-        execute(result)
+        execute(result, dirs)
 
     assert calls == [(CLAUDE, [CLAUDE, "--resume"], result.env)]
 
 
 def test_execute_reports_a_binary_that_cannot_be_started(
-    build_context: ContextBuilder, plain: Path, monkeypatch: pytest.MonkeyPatch
+    build_context: ContextBuilder,
+    plain: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ctx = build_context(FILES, registry_text())
     result = plan(ctx, plain)
@@ -830,4 +897,317 @@ def test_execute_reports_a_binary_that_cannot_be_started(
     monkeypatch.setattr(os, "execvpe", execvpe)
 
     with pytest.raises(ConfigError, match=rf"cannot start {CLAUDE}: .*denied"):
-        execute(result)
+        execute(result, dirs)
+
+
+def test_a_guarded_plan_turns_gc_off_after_the_environments_own_settings(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "user.name",
+        "GIT_CONFIG_VALUE_0": "x",
+    }
+
+    result = plan(ctx, repo, env=env)
+
+    assert result.guarded
+    assert result.env_changes["GIT_CONFIG_COUNT"] == "3"
+    assert result.env_changes["GIT_CONFIG_KEY_1"] == "gc.auto"
+    assert result.env_changes["GIT_CONFIG_KEY_2"] == "maintenance.auto"
+    assert "GIT_CONFIG_KEY_0" not in result.env_changes
+
+
+def test_a_count_git_would_refuse_stops_a_guarded_plan_only(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    env = {"GIT_CONFIG_COUNT": "many"}
+
+    with pytest.raises(ConfigError, match="GIT_CONFIG_COUNT"):
+        _ = plan(ctx, repo, env=env)
+    assert plan(ctx, repo, env=env, no_guard=True).env["GIT_CONFIG_COUNT"] == "many"
+
+
+def test_no_guard_leaves_out_entries_gc_and_lock_and_warns(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+
+    result = plan(ctx, repo, no_guard=True)
+
+    assert not result.guarded
+    assert result.fragment == {}
+    assert result.argv == [CLAUDE]
+    assert not any(name.startswith("GIT_CONFIG") for name in result.env)
+    assert len(result.warnings) == 1
+    assert result.warnings[0].startswith("--no-guard: ")
+    assert "packed history" in result.warnings[0]
+
+    def execvpe(_file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        raise StopError
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=lambda _command: 0)
+    assert not dirs.state_dir.exists()
+    assert not dirs.runtime_dir.exists()
+
+
+def test_no_guard_still_takes_the_projects_snapshot(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+    result = plan(ctx, repo, no_guard=True)
+    commands: list[list[str]] = []
+
+    def snapshot(command: Sequence[str]) -> int:
+        commands.append(list(command))
+        return 0
+
+    def execvpe(_file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        raise StopError
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=snapshot)
+
+    assert result.snapshot == "bravo"
+    assert [(command[2], command[-1]) for command in commands] == [
+        ("bravo", f"atc: {repo}")
+    ]
+
+
+def test_outside_a_repository_is_unguarded_without_a_warning(
+    build_context: ContextBuilder,
+    plain: Path,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+
+    def execvpe(_file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        raise StopError
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+    for no_guard in (False, True):
+        result = plan(ctx, plain, no_guard=no_guard)
+
+        assert not result.guarded
+        assert result.snapshot is None
+        assert result.fragment == {}
+        assert result.warnings == ()
+        assert not any(name.startswith("GIT_CONFIG") for name in result.env)
+        with pytest.raises(StopError):
+            execute(result, dirs, run_snapshot=refuse_to_run)
+    assert not dirs.state_dir.exists()
+    assert not dirs.runtime_dir.exists()
+
+
+def test_the_projects_snapshot_goes_in_the_plan(
+    build_context: ContextBuilder, tmp_path: Path, repo: Path
+) -> None:
+    other = git_repo(make_source(tmp_path / "other", {"README": "y"}))
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+
+    assert plan(ctx, repo).snapshot == "bravo"
+    assert plan(ctx, repo, no_guard=True).snapshot == "bravo"
+    assert plan(ctx, repo, account="personal").snapshot == "bravo"
+    assert plan(ctx, other).snapshot is None
+
+
+def test_the_session_entries_are_checked_with_the_rules_that_can_not_apply(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    rule = "Edit(/" + str(repo / ".git" / "objects" / "pack") + "/**)"
+    settings: JsonObject = {"permissions": {"allow": [rule]}}
+
+    result = plan(ctx, repo, settings=settings, explain=True)
+
+    dead = f"allow {rule} (--settings) never applies: "
+    assert [warning.message() for warning in result.rule_warnings] == [
+        dead + f"deny {rule} (session entries) takes precedence"
+    ]
+
+
+@pytest.fixture
+def lock_fds(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[int]]:
+    """Record the session locks that ``execute`` opens, and close them afterwards."""
+    opened: list[int] = []
+    real = guard.open_session_lock
+
+    def record(
+        dirs: Dirs, common: Path, *, timeout: float = 60.0
+    ) -> tuple[int | None, str | None]:
+        descriptor, warning = real(dirs, common, timeout=timeout)
+        if descriptor is not None:
+            opened.append(descriptor)
+        return descriptor, warning
+
+    monkeypatch.setattr(guard, "open_session_lock", record)
+    yield opened
+    for descriptor in opened:
+        os.close(descriptor)
+
+
+def test_a_guarded_session_registers_locks_and_snapshots_before_it_starts(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    lock_fds: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+    result = plan(ctx, repo)
+    common = repo / ".git"
+    lock = dirs.runtime_dir / f"{guard.repo_key(common)}.lock"
+    events: list[str] = []
+
+    def snapshot(command: Sequence[str]) -> int:
+        events.append("snapshot")
+        assert (command[2], command[-1]) == ("bravo", f"atc: {repo}")
+        assert (dirs.state_dir / "repos").read_text(encoding="utf-8") == f"{common}\n"
+        assert is_locked(lock)
+        return 0
+
+    def execvpe(file: str, args: list[str], env: Mapping[str, str]) -> NoReturn:
+        events.append("exec")
+        assert (file, args, env) == (CLAUDE, result.argv, result.env)
+        assert is_locked(lock)
+        assert os.get_inheritable(lock_fds[0])
+        raise StopError
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=snapshot)
+
+    assert events == ["snapshot", "exec"]
+    assert len(lock_fds) == 1
+    assert capsys.readouterr().err == ""
+
+
+def test_the_agent_starts_after_a_failed_snapshot(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    lock_fds: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
+    result = plan(ctx, repo)
+    started: list[str] = []
+
+    def execvpe(file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        started.append(file)
+        raise StopError
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=lambda _command: 1)
+
+    assert started == [CLAUDE]
+    assert len(lock_fds) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("warning: snapper snapshot failed")
+    assert err.count("warning:") == 1
+
+
+def test_a_lock_that_cannot_be_taken_warns_and_continues(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    result = plan(ctx, repo)
+    started: list[str] = []
+
+    def no_lock(
+        _dirs: Dirs, _common: Path, *, timeout: float = 60.0
+    ) -> tuple[int | None, str | None]:
+        return None, f"the lock is not held for {timeout:g} seconds"
+
+    def execvpe(file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        started.append(file)
+        raise StopError
+
+    monkeypatch.setattr(guard, "open_session_lock", no_lock)
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=refuse_to_run)
+
+    assert started == [CLAUDE]
+    assert capsys.readouterr().err == "warning: the lock is not held for 60 seconds\n"
+
+
+def test_packed_history_that_appears_while_waiting_for_the_lock_is_a_warning(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    result = plan(ctx, repo)
+    refs = repo / ".git" / "packed-refs"
+    started: list[str] = []
+
+    def maintenance_ends(
+        _dirs: Dirs, _common: Path, *, _timeout: float = 60.0
+    ) -> tuple[int | None, str | None]:
+        _ = refs.write_text("", encoding="utf-8")
+        return None, None
+
+    def execvpe(file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        started.append(file)
+        raise StopError
+
+    monkeypatch.setattr(guard, "open_session_lock", maintenance_ends)
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(StopError):
+        execute(result, dirs, run_snapshot=refuse_to_run)
+
+    assert started == [CLAUDE]
+    err = capsys.readouterr().err
+    assert err.startswith("warning: ")
+    assert str(refs) in err
+    assert "not protected" in err
+    assert "restart" in err
+    assert err.count("warning:") == 1
+
+
+def test_a_repository_list_that_cannot_be_written_is_a_config_error(
+    build_context: ContextBuilder,
+    repo: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+    result = plan(ctx, repo)
+    dirs.state_dir.parent.mkdir(parents=True, exist_ok=True)
+    _ = dirs.state_dir.write_text("not a directory", encoding="utf-8")
+
+    def execvpe(_file: str, _args: list[str], _env: Mapping[str, str]) -> NoReturn:
+        raise AssertionError("the agent started without the repository registered")
+
+    monkeypatch.setattr(os, "execvpe", execvpe)
+
+    with pytest.raises(ConfigError, match=rf"cannot register.*{dirs.state_dir}"):
+        execute(result, dirs, run_snapshot=refuse_to_run)
