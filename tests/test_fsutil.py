@@ -53,6 +53,37 @@ def test_atomic_write_makes_a_new_file_private_by_default(work: Path) -> None:
     assert mode(work / "other.json") == 0o640
 
 
+def test_atomic_write_writes_through_a_symbolic_link_and_keeps_it(
+    work: Path,
+) -> None:
+    dotfiles = work / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "machine.yaml"
+    _ = real.write_text("old")
+    real.chmod(0o640)
+    link = work / "machine.yaml"
+    link.symlink_to(Path("dotfiles") / "machine.yaml")
+
+    atomic_write(link, "new")
+
+    assert link.readlink() == Path("dotfiles") / "machine.yaml"
+    assert real.read_text() == "new"
+    assert mode(real) == 0o640
+    assert sorted(p.name for p in work.iterdir()) == ["dotfiles", "machine.yaml"]
+    assert list(dotfiles.iterdir()) == [real]
+
+
+def test_atomic_write_through_a_dangling_link_makes_its_target(work: Path) -> None:
+    link = work / "settings.json"
+    link.symlink_to(work / "real.json")
+
+    atomic_write(link, "new")
+
+    assert link.is_symlink()
+    assert (work / "real.json").read_text() == "new"
+    assert mode(work / "real.json") == 0o600
+
+
 def test_atomic_write_leaves_no_temporary_file_on_failure(work: Path) -> None:
     target = work / "settings.json"
     target.mkdir()

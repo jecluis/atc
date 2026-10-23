@@ -14,20 +14,23 @@ def atomic_write(path: Path, text: str, *, default_mode: int = 0o600) -> None:
 
     The text goes to a temporary file in the same directory, which is flushed to
     disk and then renamed over ``path``, so a reader sees the old file or the new
-    one and never half of either. The new file has the permissions of the one it
-    replaces, or ``default_mode`` when there is none. Nothing is left behind if
-    the write fails.
+    one and never half of either. When ``path`` is a symbolic link, such as one
+    into a dotfiles repository, the file it leads to is the one replaced, in its
+    own directory, and the link stays. The new file has the permissions of the
+    one it replaces, or ``default_mode`` when there is none. Nothing is left
+    behind if the write fails.
 
     Raises:
         OSError: the file cannot be written.
 
     """
+    target = path.resolve() if path.is_symlink() else path
     try:
-        mode = stat.S_IMODE(path.stat().st_mode)
+        mode = stat.S_IMODE(target.stat().st_mode)
     except FileNotFoundError:
         mode = default_mode
     descriptor, name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
     )
     temporary = Path(name)
     try:
@@ -36,7 +39,7 @@ def atomic_write(path: Path, text: str, *, default_mode: int = 0o600) -> None:
             file.flush()
             os.fsync(file.fileno())
         temporary.chmod(mode)
-        _ = temporary.replace(path)
+        _ = temporary.replace(target)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

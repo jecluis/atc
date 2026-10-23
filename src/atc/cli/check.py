@@ -32,9 +32,11 @@ def check() -> None:
     - the session's own account's credentials, and every other account's
       directory and files, cannot be read
     - atc's configuration, config sources, state and runtime directories, its
-      installation and the Python installation it runs on cannot be written
-    - the files that the account's instructions file and every entry of its
-      skills directory lead to cannot be written, nor can each skill's SKILL.md
+      installation and the Python installation it runs on cannot be written,
+      nor can machine.yaml, where it leads when it is a link
+    - the account's settings.json cannot be written, where it leads when it is
+      a link, nor can the files that its instructions file and every entry of
+      its skills directory lead to, nor each skill's SKILL.md
 
     A path that is missing passes only if a session could not create it: if the
     nearest directory above it that exists cannot be written. A check that does

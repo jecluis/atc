@@ -276,6 +276,23 @@ def test_add_then_rm_round_trips_the_selection(
     assert f"personal: notes: {machine.sources}/skills/notes → (none) (changed)" in out
 
 
+def test_add_edits_a_registry_that_is_a_symbolic_link_through_it(
+    configure: ConfigWriter, machine: Machine, tmp_path: Path
+) -> None:
+    configure(FRESH, registry("skills: [review]", top=HEADER))
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "machine.yaml"
+    _ = machine.path.replace(real)
+    machine.path.symlink_to(real)
+
+    assert main(["skills", "add", "personal", "notes"]) == OK
+
+    assert machine.path.readlink() == real
+    assert machine.selected == ("review", "notes")
+    assert real.read_text(encoding="utf-8").startswith(HEADER)
+
+
 def test_add_and_rm_leave_the_accounts_settings_alone(
     configure: ConfigWriter, machine: Machine
 ) -> None:

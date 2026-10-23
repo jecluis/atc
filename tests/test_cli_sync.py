@@ -229,6 +229,26 @@ def test_a_live_number_too_large_for_json_is_not_valid_json(
     assert live.read_text() == '{"cleanupPeriodDays": 1e400}'
 
 
+def test_a_settings_file_that_is_a_symbolic_link_is_written_through_it(
+    configure: ConfigWriter, home: Path, dirs: Dirs, tmp_path: Path
+) -> None:
+    live = set_up(configure, home)
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "claude-settings.json"
+    _ = real.write_text(dumps({"model": "x"}))
+    real.chmod(0o644)
+    live.symlink_to(real)
+
+    assert main(["sync", "--take-over"]) == OK
+
+    assert live.readlink() == real
+    assert json.loads(real.read_text()) == SETTINGS
+    assert stat.S_IMODE(real.stat().st_mode) == 0o644
+    (copy,) = state(dirs).backups_dir.iterdir()
+    assert json.loads(copy.read_text()) == {"model": "x"}
+
+
 def test_take_over_backs_up_and_writes(
     configure: ConfigWriter,
     home: Path,

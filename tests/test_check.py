@@ -57,7 +57,7 @@ CONFIG_WORKTREE = (
 )
 NOT_IN_A_REPOSITORY = "not in a git repository, so the repository checks are skipped"
 REPOSITORY_CHECKS = 7
-PROTECTED = 19
+PROTECTED = 21
 """How many checks a session in a repository, in the `personal` account, makes."""
 
 
@@ -181,6 +181,8 @@ def make_world(home: Path, dirs: Dirs, registry: Registry) -> World:
             dirs.conf_d / "assets" / "AGENTS.md",
             dirs.conf_d / "skills" / "grill-me",
             dirs.conf_d / "skills" / "grill-me" / "SKILL.md",
+            dirs.config_dir / "machine.yaml",
+            personal / "settings.json",
         },
         answers={
             TOP_LEVEL: str(git_dir.parent),
@@ -233,6 +235,8 @@ def test_the_checks_come_in_the_order_of_the_sections(world: World) -> None:
         "config sources directory",
         "install directory",
         "Python directory",
+        "atc's registry",
+        "the account's settings",
         "CLAUDE.md",
         "grill-me",
     )
@@ -542,6 +546,47 @@ def test_a_python_dir_that_is_the_install_dir_passes_and_fails_alike(
         f"atc's install directory {world.install_dir} is not writable",
         f"atc's Python directory {world.install_dir} is not writable",
     ]
+
+
+def linked_file(world: World, which: str) -> tuple[Path, str]:
+    """Give the registry or the account's settings file, and how checks name it."""
+    if which == "registry":
+        path = world.dirs.config_dir / "machine.yaml"
+        return path, f"atc's registry {path}"
+    path = world.personal / "settings.json"
+    return path, f"the account's settings {path}"
+
+
+@pytest.mark.parametrize("which", ["registry", "settings"])
+def test_a_read_only_registry_or_settings_file_passes(world: World, which: str) -> None:
+    path, subject = linked_file(world, which)
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert CheckResult(True, f"{subject} is not writable") in report.results
+
+    world.probe.writable_paths.add(path)
+    assert failures(world.run()) == [f"{subject} is not writable"]
+
+
+@pytest.mark.parametrize("which", ["registry", "settings"])
+def test_a_registry_or_settings_file_is_checked_where_its_link_leads(
+    world: World, which: str
+) -> None:
+    path, subject = linked_file(world, which)
+    target = world.home / "dotfiles" / path.name
+    world.probe.links[path] = target
+    world.probe.existing.add(target)
+    where = f"(a link to {target})"
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert CheckResult(True, f"{subject} is not writable {where}") in report.results
+
+    world.probe.writable_paths.add(target)
+    assert failures(world.run()) == [f"{subject} is not writable {where}"]
 
 
 def test_a_writable_instructions_target_fails(world: World) -> None:

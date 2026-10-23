@@ -14,7 +14,7 @@ from atc.git import common_dir as git_common_dir
 from atc.git import run_git
 from atc.paths import Dirs
 from atc.refs import SKILL_FILE
-from atc.registry import Account, Registry, normalize_path
+from atc.registry import REGISTRY_FILE, Account, Registry, normalize_path
 
 ACCOUNT_VARIABLE = "ATC_ACCOUNT"
 """The variable that names the account a session was started in."""
@@ -219,10 +219,11 @@ def run_checks(
 
     In order: the repository the process is in, the accounts' credentials,
     atc's own directories, ``install_dir`` and ``python_dir``, which are atc's
-    environment and the Python installation it is built on, and what the
-    current account's instructions file and skills lead to. A repository check
-    that git cannot make fails, and one that does not apply, outside a
-    repository, is a note.
+    environment and the Python installation it is built on, and the registry,
+    and then the current account's settings file and what its instructions
+    file and skills lead to. The registry and the settings file are checked
+    where a link leads. A repository check that git cannot make fails, and one
+    that does not apply, outside a repository, is a note.
     """
     account = current_account(registry, env, home)
     parts = [
@@ -451,31 +452,47 @@ def _atc_itself(
         ("install", install_dir),
         ("Python", python_dir),
     )
+    registry = dirs.config_dir / REGISTRY_FILE
     return Report(
-        tuple(
-            _cannot_write(probe, path, f"atc's {label} directory {path}")
-            for label, path in named
+        (
+            *(
+                _cannot_write(probe, path, f"atc's {label} directory {path}")
+                for label, path in named
+            ),
+            _linked_file(probe, registry, f"atc's registry {registry}"),
         )
     )
+
+
+def _linked_file(probe: Probe, path: Path, subject: str) -> CheckResult:
+    """Check ``path`` as :func:`_cannot_write` does, naming where a link leads."""
+    link = probe.readlink(path)
+    where = "" if link is None else f"a link to {path.parent / link}"
+    return _cannot_write(probe, path, subject, where=where)
 
 
 def _instructions_and_skills(
     probe: Probe, account: Account | None, home: Path
 ) -> Report:
     """
-    Check what the account's instructions file and every skill entry lead to.
+    Check the account's settings, instructions file and every skill entry.
 
-    That is the target of a link, or the entry itself when it is a file or a
+    The settings file is checked where a link leads. For the others it is
+    the target of a link, or the entry itself when it is a file or a
     directory, and for a skill that is there, its ``SKILL.md`` as well. An
     instructions file that is not there is not checked. A skills directory that
     is there but cannot be listed fails.
     """
     if account is None:
-        note = "no account for this session: instructions and skills checks are skipped"
+        note = (
+            "no account for this session: settings, instructions and skills checks "
+            + "are skipped"
+        )
         return Report((), (note,))
     backend = backend_for(account.agent, home)
+    settings = backend.settings_file(account)
     skills = backend.skills_dir(account)
-    results: list[CheckResult] = []
+    results = [_linked_file(probe, settings, f"the account's settings {settings}")]
     try:
         listed = probe.entries(skills)
     except OSError as exc:

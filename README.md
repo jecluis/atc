@@ -83,6 +83,11 @@ before it deploys it.
 `machine.yaml`, in atc's configuration directory next to `conf.d/`, holds what
 is specific to this machine: which accounts exist and where each one lives. It
 belongs to no config source, so it never lands in a git repository by accident.
+It may be a symbolic link, into a dotfiles repository for example: the commands
+that edit it write the file the link leads to, and the link stays. That file must
+then be as far out of sessions' reach as atc's configuration directory, since a
+session that could edit the registry could change the agent's command or widen
+the sandbox; `atc check` verifies that a session cannot write it.
 
 ```yaml
 version: 1
@@ -979,7 +984,11 @@ were skipped or whose front matter looks wrong (see Skills), once each.
 `<state_dir>/sync/ACCOUNT/backups/<UTC time>-settings.json`, such as
 `20261023T120000Z-settings.json`, and keeps the last ten. It then replaces the file
 in one step, from a temporary file in the same directory, and keeps the file's
-permissions. A new file is readable by you alone. The last settings are kept in
+permissions. A new file is readable by you alone. When `settings.json` is a
+symbolic link, the file it leads to is the one replaced, from a temporary file in
+that file's directory, and the link stays. That file must then be as far out of
+sessions' reach as atc's configuration directory; `atc check` verifies that a
+session cannot write it. The last settings are kept in
 `<state_dir>/sync/ACCOUNT/settings.json`. `<state_dir>` is `~/.local/state/atc`, or
 `atc` in `$XDG_STATE_HOME` when that is an absolute path. Backups and records
 are readable by you alone, because settings can hold secrets.
@@ -1081,11 +1090,14 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   another one.
 - **atc itself:** atc's configuration directory, its `conf.d` of config sources,
   its state and runtime directories, the directory atc is installed in, and the
-  Python installation it runs on (`atc.python_dir`), cannot be written.
-- **Instructions and skills:** what the account's instructions file and every
-  entry of its skills directory lead to cannot be written. That is a link's
-  target, or the entry itself when it is a file or a directory, and for each
-  skill, its `SKILL.md` too. This includes links that `atc sync` did not make.
+  Python installation it runs on (`atc.python_dir`), cannot be written, and
+  neither can `machine.yaml`, or the file it leads to when it is a link.
+- **Settings, instructions and skills:** the account's `settings.json`, or the
+  file it leads to when it is a link, cannot be written, and neither can what the
+  account's instructions file and every entry of its skills directory lead to.
+  That is a link's target, or the entry itself when it is a file or a directory,
+  and for each skill, its `SKILL.md` too. This includes links that `atc sync`
+  did not make.
 
 A path that is missing, or a link that leads nowhere, is no reason to pass: a
 session could create what is not there. Such a check passes only when the
