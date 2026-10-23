@@ -8,7 +8,8 @@ shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
 Today the tool implements `atc run`, `atc sync`, `atc check`, `atc maint`,
-`atc show account`, `atc show project`, `atc skills ls`, `atc skills pick`,
+`atc show account`, `atc show project`, `atc prj ls`, `atc prj show`,
+`atc prj add`, `atc prj rm`, `atc skills ls`, `atc skills pick`,
 `atc skills add`, `atc skills rm`, `atc src ls`, `atc src check` and
 `atc src pull`.
 The rest is being built step by step.
@@ -100,6 +101,8 @@ accounts:
 projects:
   bar:
     repo: ~/src/bar
+    worktrees: ~/src/wt/bar
+    branch-from: main
     account: work
     accounts: [work, personal]
     snapshot: work
@@ -122,6 +125,8 @@ projects:
 | `accounts.<name>.skills` | no | The skills to link into the account, as skill references (see Skills). Defaults to none. |
 | `accounts.<name>.vars` | no | Variables for this account's units, as `{{account.vars.<name>}}`. |
 | `projects.<name>.repo` | yes | A checkout of the project's repository. |
+| `projects.<name>.worktrees` | no | The directory the project's worktrees are made in, as a path like a `dir`. Defaults to none. |
+| `projects.<name>.branch-from` | no | The branch that new branches of the project start from. Defaults to `main`. |
 | `projects.<name>.account` | no | The account the project uses by default. Defaults to `default-account`. |
 | `projects.<name>.accounts` | no | The accounts allowed to work on the project. When set, it must name at least one and include the project's account: `account`, or `default-account` when the project sets none. Defaults to every account. |
 | `projects.<name>.unit` | no | The unit the project's settings are built from, as a unit reference (see Units). Defaults to `projects/<name>.json`. When that default does not exist, the project has no settings of its own. |
@@ -144,8 +149,8 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
 - A project's `accounts` cannot be empty, and must include the account the
   project uses by default: its `account`, or `default-account` when it sets
   none.
-- A `repo` is a path like a `dir`: a leading `~` is expanded and it must then
-  be absolute.
+- A `repo` and a `worktrees` are paths like a `dir`: a leading `~` is expanded
+  and it must then be absolute.
 - An `agents-md-file` that starts with `/` or `~` is a path, treated like a
   `dir`. Anything else is an asset reference.
 - An account that sets both `agents-md-file` and `use-default-agents-md: true`
@@ -731,6 +736,67 @@ output and the exit status are the same as without the check.
 | `-a`, `--account ACCOUNT` | Build the settings for `ACCOUNT` instead of the project's own. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
+
+### `atc prj ls`
+
+Lists the projects of the machine registry as a table, one row per project, in
+the order of the file: its name, its repository, its account and its worktrees
+directory, which is `-` when it has none. The account is the one the project
+uses by default: its `account`, or else `default-account`. The table goes to
+standard output. With no projects it prints no table, and says so on standard
+error.
+
+### `atc prj show [NAME]`
+
+Shows one project: its entry in the machine registry, with the defaults filled
+in (the account, the unit, `branch-from`), as labelled lines, and below them a
+table of its worktrees as git lists them: the path, the branch (`(detached)` when
+`HEAD` is not on a branch) and the first 7 characters of the commit. A bare
+repository is not itself a worktree and is left out. If git cannot list the
+worktrees, a warning says why and the lines are still shown.
+
+`NAME` is a project of the registry. Without it, the project is the one the
+current directory is in, whether in the main checkout or in a worktree, as for
+`atc run`. Outside every registered project that is a usage error, exit status
+`2`. An unknown `NAME` is an error that lists the projects there are.
+
+### `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]`
+
+Adds the project `NAME` to the machine registry. `REPO` is a checkout of the
+project's repository, the main one, a worktree or a bare repository, and
+defaults to the current directory. What is written as `repo` is the top level of
+its working tree, or `REPO` itself for a bare repository. Before anything is
+written it checks that `REPO` is a git repository that no project has yet, and
+that the branch `BRANCH` exists in it, as `refs/heads/BRANCH`, so `main~1` or a
+tag is refused. `BRANCH` is `--from`, or `main` when that is not given. A failed
+check is an error that exits `1`.
+
+The entry goes after the others in `machine.yaml`, as `repo`, then `worktrees`,
+`branch-from` and `account` for the options that were given. Paths are written
+as absolute paths. The rest of the file stays as it was, comments included. The
+new file is checked as the registry always is, and when it is not valid, because
+`NAME` is not a valid name, `NAME` is registered already or `ACCOUNT` is not an
+account, the file is left alone and the error exits `1`.
+
+If no config source has `projects/NAME.json`, a warning says so: the project then
+has no settings of its own until one exists. It is still added.
+
+| Option | Effect |
+| --- | --- |
+| `--worktrees DIR` | Sets `worktrees`: the directory the project's worktrees are made in. It need not exist. |
+| `--from BRANCH` | Sets `branch-from`: the branch new branches start from. |
+| `-a`, `--account ACCOUNT` | Sets `account`: the account the project uses by default. |
+
+### `atc prj rm NAME`
+
+Removes the project `NAME` from the machine registry. What goes is its entry,
+comments inside it included, and the comment lines directly above it, at the
+same indentation as its key and with no blank line between, which describe it.
+Everything else in the file stays as it was: other comments, a comment indented
+deeper that follows the entry before, and blank lines. Nothing else is touched:
+not the repository, not its worktrees, and not `projects/NAME.json` in the config
+sources. An unknown `NAME` is an error that lists the projects there are, and the
+file is left alone.
 
 ### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 

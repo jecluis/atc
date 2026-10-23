@@ -10,10 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from atc.errors import PathError, RegistryError, WriteError
 from atc.fsutil import atomic_write
-from atc.jsonval import JsonValue
+from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located, resolve_registry
 from atc.sources import Sources
-from atc.yamlval import load_yaml, parse_yaml, set_in_text
+from atc.yamlval import delete_in_text, load_yaml, parse_yaml, set_in_text
 
 REGISTRY_VERSION = 1
 REGISTRY_FILE = "machine.yaml"
@@ -22,6 +22,8 @@ DEFAULT_AGENTS_MD = "AGENTS.md"
 """The asset that ``default-agents-md`` names when the registry says nothing."""
 DEFAULT_GC_HOURS = 24
 """The hours between full ``git gc`` runs when the registry says nothing."""
+DEFAULT_BRANCH_FROM = "main"
+"""The branch new branches start from when a project says nothing."""
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _VARIABLE_NAME = re.compile(r"[a-z][a-z0-9_]*")
@@ -55,6 +57,8 @@ class _AgentModel(_Model):
 
 class _ProjectModel(_Model):
     repo: str
+    worktrees: str | None = None
+    branch_from: str = Field(default=DEFAULT_BRANCH_FROM, min_length=1)
     account: str | None = None
     accounts: list[str] | None = None
     unit: str | None = None
@@ -129,7 +133,9 @@ class Project:
     settings are built from, and ``unit_is_default`` says whether the registry
     left it to the default, ``projects/<name>.json``. ``vars`` are its own
     variables. ``snapshot`` is the snapper config to snapshot before each
-    session; ``None`` means no snapshot.
+    session; ``None`` means no snapshot. ``worktrees`` is the directory its
+    worktrees are made in, absolute and normalized; ``None`` means the registry
+    names none. ``branch_from`` is the branch that new branches start from.
     """
 
     name: str
@@ -140,6 +146,8 @@ class Project:
     unit_is_default: bool
     vars: Mapping[str, str]
     snapshot: str | None = None
+    worktrees: Path | None = None
+    branch_from: str = DEFAULT_BRANCH_FROM
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,13 +252,67 @@ def set_skills(path: Path, home: Path, account: str, refs: Sequence[str]) -> Reg
         WriteError: the file cannot be written.
 
     """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise RegistryError(f"{path}: cannot be read: {exc}") from exc
+    text = _read_text(path)
     _ = parse_registry(text, path, home).account(account)
     selection: list[JsonValue] = [*refs]
     edited = set_in_text(text, ["accounts", account, "skills"], selection)
+    return _write_checked(path, home, edited)
+
+
+def add_project(path: Path, home: Path, name: str, fields: JsonObject) -> Registry:
+    """
+    Add the project ``name``, set up by ``fields``, to the registry file ``path``.
+
+    ``fields`` are the keys of the project as the file spells them, such as
+    ``repo`` and ``branch-from``. The file is edited and replaced as
+    :func:`set_skills` does, and the new entry goes after the others. Returns the
+    registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or already has a project of that name. The
+            file is as it was.
+        WriteError: the file cannot be written.
+
+    """
+    text = _read_text(path)
+    if name in parse_registry(text, path, home).projects:
+        message = f"{path}: /projects/{name}: a project of that name exists already"
+        raise RegistryError(message)
+    edited = set_in_text(text, ["projects", name], fields)
+    return _write_checked(path, home, edited)
+
+
+def remove_project(path: Path, home: Path, name: str) -> Registry:
+    """
+    Remove the project ``name`` from the registry file ``path``.
+
+    The file is edited and replaced as :func:`set_skills` does. Returns the
+    registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or has no such project. The file is as it
+            was.
+        WriteError: the file cannot be written.
+
+    """
+    text = _read_text(path)
+    _ = parse_registry(text, path, home).project(name)
+    edited = delete_in_text(text, ["projects", name])
+    return _write_checked(path, home, edited)
+
+
+def _read_text(path: Path) -> str:
+    """Read the registry file ``path``."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RegistryError(f"{path}: cannot be read: {exc}") from exc
+
+
+def _write_checked(path: Path, home: Path, edited: str) -> Registry:
+    """Replace the registry file ``path`` with ``edited``, if it is a valid registry."""
     registry = parse_registry(edited, path, home)
     try:
         atomic_write(path, edited)
@@ -478,6 +540,12 @@ def _build_project(
         repo = normalize_path(entry.repo, home)
     except RegistryError as exc:
         raise RegistryError(f"{origin}: {pointer}/repo: {exc}") from exc
+    worktrees = None
+    if entry.worktrees is not None:
+        try:
+            worktrees = normalize_path(entry.worktrees, home)
+        except RegistryError as exc:
+            raise RegistryError(f"{origin}: {pointer}/worktrees: {exc}") from exc
     _check_variables(entry.vars, f"{pointer}/vars", origin)
     if entry.account is not None:
         _check_account(entry.account, accounts, f"{pointer}/account", origin)
@@ -494,6 +562,8 @@ def _build_project(
         unit_is_default=entry.unit is None,
         vars=dict(entry.vars),
         snapshot=entry.snapshot,
+        worktrees=worktrees,
+        branch_from=entry.branch_from,
     )
 
 

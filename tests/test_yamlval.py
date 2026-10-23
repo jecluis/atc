@@ -8,7 +8,7 @@ import pytest
 from atc import yamlval
 from atc.errors import RegistryError
 from atc.jsonval import JsonValue
-from atc.yamlval import load_yaml, parse_yaml, set_in_text
+from atc.yamlval import delete_in_text, load_yaml, parse_yaml, set_in_text
 
 
 def test_an_unquoted_timestamp_is_refused() -> None:
@@ -348,3 +348,253 @@ def test_a_mapping_created_at_the_end_of_the_document_keeps_the_last_comment_las
     changed = set_in_text("a: 1  # one\n\n# fin\n", ["b", "c"], 2)
 
     assert changed == "a: 1  # one\nb:\n  c: 2\n\n# fin\n"
+
+
+PROJECTS = """\
+# the registry
+version: 1
+
+projects:
+  # the first
+  a:  # about a
+    repo: /a  # a's repo
+
+    # a's account
+    account: x
+
+  # the second
+  b: {repo: /b}  # b is flat
+
+  # the third
+  c:
+    repo: /c
+
+# the end
+other: 1  # one
+"""
+
+
+def test_delete_in_text_drops_the_comment_block_directly_above_the_entry() -> None:
+    changed = delete_in_text(PROJECTS, ["projects", "b"])
+
+    assert changed == PROJECTS.replace(
+        "  # the second\n  b: {repo: /b}  # b is flat\n\n", ""
+    )
+
+
+def test_delete_in_text_gives_the_last_entrys_following_lines_to_the_one_before() -> (
+    None
+):
+    changed = delete_in_text(PROJECTS, ["projects", "c"])
+
+    assert changed == PROJECTS.replace("  # the third\n  c:\n    repo: /c\n\n", "")
+
+
+def test_delete_in_text_drops_the_comments_inside_the_entry_and_on_its_key() -> None:
+    changed = delete_in_text(PROJECTS, ["projects", "a"])
+
+    gone = (
+        "  # the first\n  a:  # about a\n    repo: /a  # a's repo\n\n"
+        "    # a's account\n    account: x\n\n"
+    )
+    assert changed == PROJECTS.replace(gone, "")
+    assert parse_yaml(changed, "t") == {
+        "version": 1,
+        "projects": {"b": {"repo": "/b"}, "c": {"repo": "/c"}},
+        "other": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "keys", "expected"),
+    [
+        (  # the lines above the entry are the entry's, however many
+            "p:\n  a: 1\n  # about b\n  # more\n  b: 2\n  c: 3\n",
+            ["p", "b"],
+            "p:\n  a: 1\n  c: 3\n",
+        ),
+        (  # what is above the next entry is not
+            "p:\n  a: 1  # one\n  # about b\n  b: 2\n  # about c\n  c: 3\n",
+            ["p", "b"],
+            "p:\n  a: 1  # one\n  # about c\n  c: 3\n",
+        ),
+        (  # a blank line cuts the comment off from the entry
+            "p:\n  a: 1\n\n  # about b\n\n  b: 2\n  c: 3\n",
+            ["p", "b"],
+            "p:\n  a: 1\n\n  # about b\n\n  c: 3\n",
+        ),
+        (  # the first entry has them in the mapping's own comments
+            "p:\n  # about a\n  a: 1\n  # about b\n  b: 2\n",
+            ["p", "a"],
+            "p:\n  # about b\n  b: 2\n",
+        ),
+        (
+            "p:\n  # first\n\n  # about a\n  a: 1\n  b: 2\n",
+            ["p", "a"],
+            "p:\n  # first\n\n  b: 2\n",
+        ),
+        (  # a deeper comment belongs to the entry before
+            (
+                "p:\n  a:\n    repo: /a\n    # about a's repo\n  b:\n    repo: /b\n"
+                "  c: 1\n"
+            ),
+            ["p", "b"],
+            "p:\n  a:\n    repo: /a\n    # about a's repo\n  c: 1\n",
+        ),
+        (  # so does one after a list item
+            "p:\n  a:\n    xs:\n      - 1\n      # inner\n  b: 1\n",
+            ["p", "b"],
+            "p:\n  a:\n    xs:\n      - 1\n      # inner\n",
+        ),
+        (  # the block stops at the first line that is deeper
+            "p:\n  a:\n    repo: /a\n    # deep\n  # about b\n  b: 2\n",
+            ["p", "b"],
+            "p:\n  a:\n    repo: /a\n    # deep\n",
+        ),
+        (  # and at one that is shallower, also for the first entry
+            "p:\n# shallow\n  a: 1\n  b: 2\n",
+            ["p", "a"],
+            "p:\n# shallow\n  b: 2\n",
+        ),
+        (  # the first entry's lines are kept by ruamel one by one
+            "p:\n  # one\n  # two\n  a: 1\n  b: 2\n",
+            ["p", "a"],
+            "p:\n  b: 2\n",
+        ),
+        (
+            "p:\n  # one\n\n  # two\n  a: 1\n  b: 2\n",
+            ["p", "a"],
+            "p:\n  # one\n\n  b: 2\n",
+        ),
+        (  # the only entry
+            "p:\n  # about a\n  a: 1\n\nq: 1\n",
+            ["p", "a"],
+            "p: {}\n\nq: 1\n",
+        ),
+        (  # a top-level entry
+            "# top\n\n# about a\na: 1  # one\n# about b\nb: 2\n",
+            ["a"],
+            "# top\n\n# about b\nb: 2\n",
+        ),
+    ],
+)
+def test_delete_in_text_takes_only_the_comments_that_describe_the_entry(
+    text: str, keys: list[str], expected: str
+) -> None:
+    assert delete_in_text(text, keys) == expected
+
+
+def test_delete_in_text_keeps_the_lines_after_the_first_entry() -> None:
+    text = "projects:\n  a:\n    repo: /a\n\n  # next\n  b: 1\n"
+
+    assert delete_in_text(text, ["projects", "a"]) == "projects:\n  # next\n  b: 1\n"
+
+
+def test_deleting_the_only_entry_leaves_an_empty_mapping_and_the_lines_after_it() -> (
+    None
+):
+    text = "projects:  # mine\n  a:\n    repo: /a  # one\n\n# the end\nb: 1\n"
+
+    changed = delete_in_text(text, ["projects", "a"])
+
+    assert changed == "projects: {} # mine\n\n# the end\nb: 1\n"
+
+
+def test_deleting_the_only_entry_keeps_a_comment_a_blank_line_cuts_off_from_it() -> (
+    None
+):
+    text = "projects:\n  # none\n\n  a:\n    repo: /a\n\n# the end\nb: 1\n"
+
+    changed = delete_in_text(text, ["projects", "a"])
+
+    assert changed == "projects: {}\n# none\n\n# the end\nb: 1\n"
+
+
+def test_delete_in_text_refuses_an_edit_that_would_lose_a_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_ending(_holder: Sized, _key: str) -> None:
+        """Stand for a ruamel that no longer shows where an entry's comments are."""
+
+    monkeypatch.setattr(yamlval, "_ending", no_ending)
+
+    with pytest.raises(RegistryError, match=r"/projects/b: .*lose.* # the third"):
+        _ = delete_in_text(PROJECTS, ["projects", "b"])
+
+
+@pytest.mark.parametrize(
+    ("keys", "message"),
+    [
+        (["projects", "ghost"], "/projects/ghost: no such entry"),
+        (["ghost", "a"], "/ghost/a: no such entry"),
+        (["version", "a"], "/version: is not a mapping"),
+    ],
+)
+def test_delete_in_text_refuses_what_is_not_there(
+    keys: list[str], message: str
+) -> None:
+    with pytest.raises(RegistryError, match=message):
+        _ = delete_in_text(PROJECTS, keys)
+
+
+def test_delete_in_text_needs_a_key() -> None:
+    with pytest.raises(ValueError, match="at least one key"):
+        _ = delete_in_text("a: 1\n", [])
+
+
+def test_set_in_text_fills_an_empty_mapping_in_block_style() -> None:
+    text = "projects: {}\n\n# next section\nmaint: 1\n"
+
+    changed = set_in_text(text, ["projects", "a"], 1)
+
+    assert changed == "projects:\n  a: 1\n\n# next section\nmaint: 1\n"
+
+
+def test_the_lines_after_an_empty_mapping_stay_below_the_entry_it_gets() -> None:
+    text = "x:\n  projects: {}  # none yet\n\n  # next\n  maint: 1\n"
+
+    changed = set_in_text(text, ["x", "projects", "a"], 1)
+
+    assert changed == (
+        "x:\n  projects:     # none yet\n    a: 1\n\n  # next\n  maint: 1\n"
+    )
+
+
+def test_deleting_the_first_entry_keeps_the_lines_after_it_below_the_key_comment() -> (
+    None
+):
+    text = "projects:  # mine\n  a:\n    repo: /a\n\n  # next\n  b: 1\n"
+
+    changed = delete_in_text(text, ["projects", "a"])
+
+    assert changed == "projects:  # mine\n  # next\n  b: 1\n"
+
+
+SPACED = (
+    "projects:\n  a:\n    repo: /a\n\n  b:\n    repo: /b\n\n  c:\n    repo: /c\n\n"
+    "other: 1\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a", "projects:\n  b:\n    repo: /b\n\n  c:\n    repo: /c\n\nother: 1\n"),
+        ("b", "projects:\n  a:\n    repo: /a\n\n  c:\n    repo: /c\n\nother: 1\n"),
+        ("c", "projects:\n  a:\n    repo: /a\n\n  b:\n    repo: /b\n\nother: 1\n"),
+    ],
+)
+def test_deleting_an_entry_leaves_one_blank_line_where_there_were_two(
+    name: str, expected: str
+) -> None:
+    assert delete_in_text(SPACED, ["projects", name]) == expected
+
+
+def test_delete_in_text_puts_the_lines_after_a_block_list_below_it() -> None:
+    text = "p:\n  a:\n    xs:\n      - 1  # one\n      - 2\n  b: 1\n\n# the end\nq: 1\n"
+
+    changed = delete_in_text(text, ["p", "b"])
+
+    assert (
+        changed == "p:\n  a:\n    xs:\n      - 1  # one\n      - 2\n\n# the end\nq: 1\n"
+    )

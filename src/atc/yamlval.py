@@ -1,16 +1,17 @@
 """Reading and editing YAML: the one place ruamel's untyped data enters."""
 
-import copy
 import io
 import math
 from collections import Counter
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
-from ruamel.yaml.error import MarkedYAMLError, YAMLError
+from ruamel.yaml.error import CommentMark, MarkedYAMLError, YAMLError
+from ruamel.yaml.tokens import CommentToken
 
 from atc.errors import RegistryError
 from atc.jsonval import JsonValue
@@ -65,9 +66,10 @@ def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
     ``text`` is edited in ruamel's round-trip mode, so comments, key order,
     quoting and blank lines stay as they were, and the comment lines that
     follow the entry stay after it. A mapping that is missing on the way is
-    created, and so is the entry, at the end of its mapping. A list is written
-    in flow style, ``[a, b]``, and a list that was there is replaced. The
-    comments inside a replaced block list or mapping go with it, but the
+    created, and so is the entry, at the end of its mapping. A mapping that was
+    written as ``{}`` and gets its first entry is written in block style. A list
+    is written in flow style, ``[a, b]``, and a list that was there is replaced.
+    The comments inside a replaced block list or mapping go with it, but the
     comment on its key stays.
 
     Raises:
@@ -79,26 +81,8 @@ def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
     """
     if not keys:
         raise ValueError("set_in_text needs at least one key")
-    editor = YAML(typ="rt")
-    editor.preserve_quotes = True
-    editor.width = _NO_WRAP
-    editor.indent(mapping=2, sequence=4, offset=2)  # pyright: ignore[reportAny]
-    try:
-        # The round trip's use of ruamel's untyped data: what it loads is taken
-        # as `object`, and every node is viewed through the protocols below
-        # once `isinstance` has said what it is.
-        loaded: object = editor.load(text)  # pyright: ignore[reportAny, reportUnknownMemberType]
-    except YAMLError as exc:
-        raise RegistryError(_describe(exc)) from exc
-    root = _new_map() if loaded is None else _as_map(loaded)
-    if root is None:
-        raise RegistryError("the document must be a mapping")
-    holder, depth = root, 0
-    while depth < len(keys) - 1 and holder.get(keys[depth]) is not None:
-        child = _as_map(holder.get(keys[depth]))
-        if child is None:
-            raise RegistryError(f"/{'/'.join(keys[: depth + 1])}: is not a mapping")
-        holder, depth = child, depth + 1
+    editor, root = _open(text)
+    holder, depth = _walk(root, keys)
     # What is left of `keys` is missing, so it is built whole and put in once.
     entry = _rebuild(value)
     for name in reversed(keys[depth + 1 :]):
@@ -106,19 +90,93 @@ def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
         wrapper[name] = entry
         entry = wrapper
     replaced = holder.get(keys[depth])
+    after = _open_up(root, keys[:depth], holder)
     _put(holder, keys[depth], entry)
+    if after:
+        _tail(holder, keys[depth]).attach(after)
     edited = _render(editor, root)
     # Only what went with a replaced collection may be gone: the comments on
-    # its own lines, not the lines that follow it. This checks the text, not
-    # ruamel's bookkeeping, so a change in how ruamel holds comments cannot lose
-    # one without this noticing.
-    lost = _comments_in(text) - _comments_in(edited)
+    # its own lines, not the lines that follow it.
+    allowed: Counter[str] = Counter()
     if _as_map(replaced) is not None or _as_seq(replaced) is not None:
-        lost -= _comments_in(_without_trailer(_render(editor, replaced)))
-    for comment in lost:
+        allowed = _comments_in(_without_trailer(_render(editor, replaced)))
+    _refuse_lost_comments(text, edited, keys, allowed)
+    return edited
+
+
+def delete_in_text(text: str, keys: Sequence[str]) -> str:
+    """
+    Remove the entry at ``keys`` from the YAML document ``text``, and return the text.
+
+    ``text`` is edited as :func:`set_in_text` does it, so what else is in it
+    stays as it was. The comments inside the entry, the one on its own line or
+    its key's, and the block of comment lines directly above it, at the key's own
+    indentation and with no blank line between, go with it. The other comment
+    and blank lines around it stay: the ones that followed it now follow the
+    entry before it, or come first in the mapping when it had none, and when it
+    was the only entry, the mapping is written as ``{}`` with those lines after
+    it.
+
+    Raises:
+        RegistryError: ``text`` is not valid YAML, has no mapping at the root or
+            where ``keys`` pass through, has no such entry, or the edit would lose
+            a comment that is outside the entry.
+        ValueError: ``keys`` is empty.
+
+    """
+    if not keys:
+        raise ValueError("delete_in_text needs at least one key")
+    editor, root = _open(text)
+    holder, depth = _walk(root, keys)
+    name = keys[-1]
+    if depth != len(keys) - 1 or name not in holder:
+        raise RegistryError(f"/{'/'.join(keys)}: no such entry")
+    removed, own = holder.get(name), holder.ca.items.get(name)
+    ending = _ending(holder, name)
+    lines = "" if ending is None else _detach_lines(ending)
+    siblings = list(holder)
+    index = siblings.index(name)
+    before = siblings[index - 1] if index else None
+    above = None if len(keys) < 2 else _Above(_walk(root, keys[:-1])[0], keys[-2])
+    column = _key_column(holder, name)
+    dropped = (
+        _drop_above(_tail(holder, before).token(), column)
+        if before is not None
+        else _drop_first_above(holder, above, column)
+    )
+    del holder[name]
+    _ = holder.ca.items.pop(name, None)
+    if before is not None:
+        if lines:
+            _tail(holder, before).attach(lines)
+    elif len(holder):
+        if lines:
+            _attach_first(holder, above, lines)
+    else:
+        _empty(holder, above, lines)
+    edited = _render(editor, root)
+    # The entry is rendered on its own to find the comments that go with it.
+    alone = _new_map()
+    alone[name] = removed
+    if own is not None:
+        alone.ca.items[name] = own
+    allowed = _comments_in(_without_trailer(_render(editor, alone))) + dropped
+    _refuse_lost_comments(text, edited, keys, allowed)
+    return edited
+
+
+def _refuse_lost_comments(
+    text: str, edited: str, keys: Sequence[str], allowed: Counter[str]
+) -> None:
+    """
+    Refuse an edit of ``keys`` that dropped a comment other than the ``allowed`` ones.
+
+    This checks the text, not ruamel's bookkeeping, so a change in how ruamel
+    holds comments cannot lose one without this noticing.
+    """
+    for comment in _comments_in(text) - _comments_in(edited) - allowed:
         message = f"/{'/'.join(keys)}: editing it would lose the comment: {comment}"
         raise RegistryError(message)
-    return edited
 
 
 _NO_WRAP = 1 << 20
@@ -166,15 +224,26 @@ def _comments_in(text: str) -> Counter[str]:
 
 
 class _Token(Protocol):
-    """A comment as ruamel keeps it: its text, and the lines up to the next entry."""
+    """
+    A comment as ruamel keeps it: its text, and the lines up to the next entry.
+
+    ``column`` is where its first line starts.
+    """
 
     value: str
+    column: int
 
 
 class _Comments(Protocol):
-    """The comments of a mapping or a list, by key or index."""
+    """
+    The comments of a mapping or a list, by key or index.
+
+    ``comment`` is the one on the line of the mapping's own key, and the lines
+    between that and its first entry.
+    """
 
     items: dict[str | int, list[_Token | None]]
+    comment: list[_Token | list[_Token] | None] | None
 
 
 class _Flow(Protocol):
@@ -199,12 +268,23 @@ class _Seq(_Node, Protocol):
     def append(self, value: object) -> None: ...
 
 
+class _LineCol(Protocol):
+    """Where in the text the keys of a mapping were."""
+
+    def key(self, key: str) -> Sequence[int]: ...
+
+
 class _Map(_Node, Protocol):
+    @property
+    def lc(self) -> _LineCol: ...
+
     def get(self, key: str) -> object: ...
 
     def __contains__(self, key: str) -> bool: ...
 
     def __setitem__(self, key: str, value: object) -> None: ...
+
+    def __delitem__(self, key: str) -> None: ...
 
     def __iter__(self) -> Iterator[str]: ...
 
@@ -227,6 +307,41 @@ def _as_seq(node: object) -> _Seq | None:
     if not isinstance(node, CommentedSeq):
         return None
     return cast("_Seq", cast("object", node))
+
+
+def _open(text: str) -> tuple[YAML, _Map]:
+    """Load ``text`` for editing, with the editor to write it back with."""
+    editor = YAML(typ="rt")
+    editor.preserve_quotes = True
+    editor.width = _NO_WRAP
+    editor.indent(mapping=2, sequence=4, offset=2)  # pyright: ignore[reportAny]
+    try:
+        # The round trip's use of ruamel's untyped data: what it loads is taken
+        # as `object`, and every node is viewed through the protocols below
+        # once `isinstance` has said what it is.
+        loaded: object = editor.load(text)  # pyright: ignore[reportAny, reportUnknownMemberType]
+    except YAMLError as exc:
+        raise RegistryError(_describe(exc)) from exc
+    root = _new_map() if loaded is None else _as_map(loaded)
+    if root is None:
+        raise RegistryError("the document must be a mapping")
+    return editor, root
+
+
+def _walk(root: _Map, keys: Sequence[str]) -> tuple[_Map, int]:
+    """
+    Follow ``keys`` down from ``root`` for as long as the mappings are there.
+
+    Returns the mapping that holds the first key that is missing, or the last
+    one, and that key's index in ``keys``.
+    """
+    holder, depth = root, 0
+    while depth < len(keys) - 1 and holder.get(keys[depth]) is not None:
+        child = _as_map(holder.get(keys[depth]))
+        if child is None:
+            raise RegistryError(f"/{'/'.join(keys[: depth + 1])}: is not a mapping")
+        holder, depth = child, depth + 1
+    return holder, depth
 
 
 def _rebuild(value: JsonValue) -> object:
@@ -260,31 +375,231 @@ def _put(holder: _Map, key: str, value: object) -> None:
     holder[key] = value
     if ending is None or (own is not None and own[2] is ending):
         return
+    lines = _detach_lines(ending)
+    if lines:
+        _tail(holder, key).attach(lines)
+
+
+def _detach_lines(ending: _Token) -> str:
+    """Cut the lines that follow an entry off its ``ending`` comment, return them."""
     head, newline, lines = ending.value.partition("\n")
-    if not lines:
+    if lines:
+        ending.value = head + newline
+    return lines
+
+
+# Ruamel keeps the comments of a mapping or a list in `ca.items`, by key or index,
+# as a list of four slots. A list item's trailing comment is in the first, a
+# mapping value's in the third, and the lines between a key and the first entry of
+# its mapping value are in the fourth, as a list of comments.
+_ITEM_END = 0
+_LINE_END = 2
+_PRE_COMMENT = 3
+
+
+@dataclass(frozen=True, slots=True)
+class _Tail:
+    """
+    Where the lines after an entry hang: the comment of its last scalar.
+
+    That is ``slot`` of ruamel's list for ``key``, in the comments of ``owner``.
+    """
+
+    owner: _Node
+    key: str | int
+    slot: int
+
+    def token(self) -> _Token | None:
+        """Give the comment there now, if there is one."""
+        owned = self.owner.ca.items.get(self.key)
+        return None if owned is None else owned[self.slot]
+
+    def attach(self, lines: str) -> None:
+        """
+        Put ``lines`` at the end of the entry.
+
+        Blank lines that the entry already ends with are not doubled.
+        """
+        items = self.owner.ca.items
+        owned = items.get(self.key)
+        if owned is None:
+            owned = items[self.key] = [None, None, None, None]
+        kept = owned[self.slot]
+        if kept is None:
+            owned[self.slot] = _new_comment(f"\n{lines}")
+            return
+        kept.value = _joined(kept.value, lines)
+
+
+@dataclass(frozen=True, slots=True)
+class _Above:
+    """The mapping that holds the key of another mapping, and that key."""
+
+    holder: _Map
+    key: str
+
+    def entry(self) -> list[_Token | None] | None:
+        """Give ruamel's list of comments for the key, if it has one."""
+        found = self.holder.ca.items.get(self.key)
+        return found if found is not None and len(found) > _PRE_COMMENT else None
+
+
+def _attach_first(holder: _Map, above: _Above | None, lines: str) -> None:
+    """
+    Put ``lines`` before the first entry of ``holder``, after the comments there.
+
+    ``above`` is the key that ``holder`` is the value of. It keeps its own list
+    of the comments before the first entry too, which is the one ruamel writes
+    when it has one.
+    """
+    first = _first_comments(holder)
+    if first:
+        first[-1].value = _joined(first[-1].value, lines)
         return
-    moved = copy.copy(ending)
-    ending.value = head + newline
-    owner, name = _tail_owner(holder, key)
-    owned = owner.ca.items.get(name)
-    if owned is None:
-        moved.value = f"\n{lines}"
-        owner.ca.items[name] = [None, None, moved, None]
-    elif owned[2] is None:
-        moved.value = f"\n{lines}"
-        owned[2] = moved
-    else:
-        kept = owned[2]
-        kept.value = kept.value if kept.value.endswith("\n") else f"{kept.value}\n"
-        kept.value += lines
+    # Nothing comes before them, so blank lines are left out.
+    body = lines.lstrip("\n")
+    if not body.strip():
+        return
+    added = [_new_comment(body)]
+    own = None if holder.ca.comment is None else holder.ca.comment[0]
+    holder.ca.comment = [own, added]
+    entry = None if above is None else above.entry()
+    if entry is not None:
+        slots = cast("list[_Token | list[_Token] | None]", entry)
+        slots[_PRE_COMMENT] = added
 
 
-def _tail_owner(holder: _Map, key: str) -> tuple[_Map, str]:
-    """Find the entry that holds the lines after ``holder[key]``: its last scalar."""
-    inner = _as_map(holder.get(key))
+def _empty(holder: _Map, above: _Above | None, lines: str) -> None:
+    """
+    Write ``holder``, which has lost its last entry, as ``{}``, and keep its comments.
+
+    The comments between its key and the entry it lost, and the ``lines`` that
+    followed that entry, go after its key, which is ``above``'s.
+    """
+    holder.fa.set_flow_style()
+    first = _first_comments(holder)
+    if holder.ca.comment is not None:
+        holder.ca.comment[1] = None
+    entry = None if above is None else above.entry()
+    if entry is not None:
+        entry[_PRE_COMMENT] = None
+    pre = "".join(token.value for token in first)
+    kept = _joined(pre, lines) if pre else lines
+    if above is not None and kept:
+        _Tail(above.holder, above.key, _LINE_END).attach(kept)
+
+
+def _open_up(root: _Map, keys: Sequence[str], holder: _Map) -> str:
+    """
+    Prepare ``holder``, the mapping at ``keys``, to get its first entry.
+
+    An empty mapping was written ``{}``, and with an entry it is written in block
+    style. The comment lines after the ``{}`` hang on its key, which would put
+    them above the entry. They are cut off and returned, to be put after the
+    entry instead.
+    """
+    if len(holder) or not keys:
+        return ""
+    above = _Tail(_walk(root, keys)[0], keys[-1], _LINE_END)
+    ending = above.token()
+    return "" if ending is None else _detach_lines(ending)
+
+
+def _key_column(holder: _Map, key: str) -> int:
+    """Give the column ``key`` starts at in the text, or -1 if it is not known."""
+    try:
+        return holder.lc.key(key)[1]
+    except KeyError:
+        return -1
+
+
+def _split_above(
+    value: str, column: int, *, own_line: bool, start: int
+) -> tuple[str, str]:
+    """
+    Split the block of comment lines that ends ``value`` off it.
+
+    The block is the comment lines that come right before an entry that starts
+    at ``column``, with no blank line in between, and each starts at ``column``
+    too: a deeper line belongs to the entry before, a shallower one to what
+    holds both. Returns what stays and the block. With ``own_line``, ``value``
+    starts with the rest of the previous entry's own line, which stays whole.
+    ``start`` is where the first line of ``value`` starts, when that is not
+    written in it.
+    """
+    head, newline, rest = value.partition("\n") if own_line else ("", "", value)
+    lines = rest.splitlines(keepends=True)
+    cut = len(lines)
+    while cut:
+        line = lines[cut - 1]
+        indent = len(line) - len(line.lstrip(" "))
+        if not own_line and cut == 1:
+            indent += start
+        if not line.lstrip().startswith("#") or indent != column:
+            break
+        cut -= 1
+    return head + newline + "".join(lines[:cut]), "".join(lines[cut:])
+
+
+def _drop_above(token: _Token | None, column: int) -> Counter[str]:
+    """Cut the block of comments right above the next entry off the end of ``token``."""
+    if token is None:
+        return Counter()
+    kept, gone = _split_above(token.value, column, own_line=True, start=0)
+    token.value = kept
+    return _comments_in(gone)
+
+
+def _drop_first_above(holder: _Map, above: _Above | None, column: int) -> Counter[str]:
+    """Cut the block of comments right above the first entry of ``holder`` off."""
+    first = _first_comments(holder)
+    gone: Counter[str] = Counter()
+    while first:
+        last = first[-1]
+        kept, block = _split_above(
+            last.value, column, own_line=False, start=last.column
+        )
+        gone += _comments_in(block)
+        if kept:
+            last.value = kept
+            break
+        _ = first.pop()
+    if not first and holder.ca.comment is not None:
+        holder.ca.comment[1] = None
+        entry = None if above is None else above.entry()
+        if entry is not None:
+            entry[_PRE_COMMENT] = None
+    return gone
+
+
+def _first_comments(holder: _Map) -> list[_Token]:
+    """Find the comments between the key of ``holder`` and its first entry."""
+    comment = holder.ca.comment
+    first = None if comment is None else comment[1]
+    return first if isinstance(first, list) else []
+
+
+def _joined(kept: str, lines: str) -> str:
+    """Add ``lines`` after the comment text ``kept``, without doubling a blank line."""
+    kept = kept if kept.endswith("\n") else f"{kept}\n"
+    return kept + (lines.lstrip("\n") if kept.endswith("\n\n") else lines)
+
+
+def _new_comment(value: str) -> _Token:
+    """Make a comment with the text ``value``, which starts at the first column."""
+    return cast("_Token", cast("object", CommentToken(value, CommentMark(0), None)))
+
+
+def _tail(holder: _Map, key: str) -> _Tail:
+    """Find where the lines after ``holder[key]`` hang: its last scalar's comment."""
+    value = holder.get(key)
+    inner = _as_map(value)
     if inner is not None and len(inner) and not inner.fa.flow_style():
-        return _tail_owner(inner, next(reversed(inner)))
-    return holder, key
+        return _tail(inner, next(reversed(inner)))
+    items = _as_seq(value)
+    if items is not None and len(items) and not items.fa.flow_style():
+        return _Tail(items, len(items) - 1, _ITEM_END)
+    return _Tail(holder, key, _LINE_END)
 
 
 def _ending(holder: _Map, key: str) -> _Token | None:

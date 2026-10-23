@@ -10,10 +10,12 @@ from atc.errors import PathError, RegistryError
 from atc.registry import (
     REGISTRY_FILE,
     account_unit,
+    add_project,
     choose_account,
     load_registry,
     normalize_path,
     parse_registry,
+    remove_project,
     set_skills,
 )
 from atc.sources import discover
@@ -524,6 +526,41 @@ def test_a_project_can_name_a_snapshot_config(
     assert registry.projects["x"].snapshot is None
 
 
+def test_a_project_can_name_its_worktrees_directory_and_base_branch(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, worktrees: ~/wt/bar/, branch-from: develop")
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.projects["bar"].worktrees == home / "wt" / "bar"
+    assert registry.projects["bar"].branch_from == "develop"
+
+
+def test_a_project_has_no_worktrees_directory_and_branches_from_main_by_default(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(with_project("repo: /r")), home)
+
+    assert registry.projects["bar"].worktrees is None
+    assert registry.projects["bar"].branch_from == "main"
+
+
+@pytest.mark.parametrize(
+    ("entry", "pointer"),
+    [
+        ("repo: /r, worktrees: wt", "/projects/bar/worktrees: .*absolute"),
+        ("repo: /r, branch-from: ''", "/projects/bar/branch-from"),
+        ("repo: /r, branch-from: 1", "/projects/bar/branch-from"),
+    ],
+)
+def test_worktrees_and_branch_from_must_be_valid(
+    write_registry: RegistryWriter, home: Path, entry: str, pointer: str
+) -> None:
+    with pytest.raises(RegistryError, match=pointer):
+        _ = load_registry(write_registry(with_project(entry)), home)
+
+
 @pytest.mark.parametrize("snapshot", ["1", "''"])
 def test_a_snapshot_must_be_a_non_empty_string(
     write_registry: RegistryWriter, home: Path, snapshot: str
@@ -878,6 +915,98 @@ def test_set_skills_keeps_the_permissions_of_the_file(
 def test_set_skills_reports_a_file_that_is_missing(home: Path, tmp_path: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be read"):
         _ = set_skills(tmp_path / "absent.yaml", home, "a", ["x"])
+
+
+PROJECT_FILE = """\
+    version: 1
+    default-account: a
+    accounts:
+      a: {agent: claude, dir: /a}
+
+    # the projects
+    projects:
+      bar:
+        repo: /bar  # the main checkout
+
+      # the other one
+      other: {repo: /other}
+"""
+
+
+def test_add_project_writes_the_entry_and_returns_the_registry(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+
+    registry = add_project(path, home, "new", {"repo": "/new", "account": "a"})
+
+    assert registry.projects["new"].repo == Path("/new")
+    assert registry.projects["new"].account == "a"
+    assert list(registry.projects) == ["bar", "other", "new"]
+    assert load_registry(path, home) == registry
+    assert path.read_text(encoding="utf-8") == (
+        textwrap.dedent(PROJECT_FILE) + "  new:\n    repo: /new\n    account: a\n"
+    )
+
+
+def test_add_project_refuses_an_existing_name_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+
+    with pytest.raises(RegistryError, match=r"/projects/bar: .*exists already"):
+        _ = add_project(path, home, "bar", {"repo": "/x"})
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_FILE)
+
+
+def test_add_project_refuses_a_project_that_would_be_invalid_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+
+    with pytest.raises(RegistryError, match="/projects/new/account: no account"):
+        _ = add_project(path, home, "new", {"repo": "/x", "account": "ghost"})
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_FILE)
+
+
+def test_add_project_creates_the_projects_mapping(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    registry = add_project(path, home, "bar", {"repo": "/bar"})
+
+    assert list(registry.projects) == ["bar"]
+    assert path.read_text(encoding="utf-8").endswith(
+        "skills: [x]}\nprojects:\n  bar:\n    repo: /bar\n"
+    )
+
+
+def test_remove_project_removes_only_the_entry(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+
+    registry = remove_project(path, home, "bar")
+
+    assert list(registry.projects) == ["other"]
+    assert load_registry(path, home) == registry
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_FILE).replace(
+        "  bar:\n    repo: /bar  # the main checkout\n\n", ""
+    )
+
+
+def test_remove_project_refuses_an_unknown_name_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+
+    with pytest.raises(RegistryError, match=r"no project named 'ghost'; .*bar, other"):
+        _ = remove_project(path, home, "ghost")
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_FILE)
 
 
 def test_an_agent_can_name_its_binary(
