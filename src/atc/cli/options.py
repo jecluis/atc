@@ -7,7 +7,6 @@ from pathlib import Path
 import click
 from rich import box
 from rich.table import Table
-from rich.text import Text
 
 from atc import git
 from atc.context import BuildContext, load_context
@@ -15,7 +14,7 @@ from atc.launch import find_project
 from atc.paths import Dirs, dirs_from_env
 from atc.registry import REGISTRY_FILE, Account, Project, Registry, load_registry
 from atc.sources import Sources, discover
-from atc.ui import Ui
+from atc.ui import Ui, shown
 from atc.worktree import Worktree
 
 SHORT_HEAD = 7
@@ -132,8 +131,8 @@ def worktrees_table(trees: Sequence[Worktree]) -> Table:
     table.add_column("Commit", no_wrap=True)
     for tree in trees:
         table.add_row(
-            Text(str(tree.path)),
-            Text(tree.branch) if tree.branch else Text("(detached)", style="dim"),
-            Text(tree.head[:SHORT_HEAD]),
+            shown(str(tree.path)),
+            shown(tree.branch) if tree.branch else shown("(detached)", style="dim"),
+            shown(tree.head[:SHORT_HEAD]),
         )
     return table

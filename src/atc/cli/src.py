@@ -8,7 +8,6 @@ import click
 import rich_click
 from rich import box
 from rich.table import Table
-from rich.text import Text
 
 from atc import exitcodes
 from atc.cli.options import (
@@ -22,7 +21,7 @@ from atc.pull import pull
 from atc.registry import REGISTRY_FILE
 from atc.skills import Catalog, discover_skills
 from atc.sources import SOURCE_DIRS, Source, Sources
-from atc.ui import Ui
+from atc.ui import Ui, shown
 from atc.validate import Validation, validate_config, validate_sources
 
 
@@ -168,16 +167,16 @@ def _sources_table(found: Sources, catalog: Catalog) -> Table:
     for source in found.items:
         clone = _clone(source)
         table.add_row(
-            Text(source.name) if source.name else Text("-", style="dim"),
-            Text(str(source.root)),
-            Text(found.layout),
-            Text(str(_count(source.conf, "*.json"))),
-            Text(str(_count(source.assets, "*"))),
-            Text(str(sum(1 for skill in catalog.skills if skill.source == source))),
-            Text(clone.branch if clone else ""),
-            Text(clone.commit if clone else ""),
-            Text("dirty", style="yellow") if clone and clone.dirty else Text(),
-            Text(clone.ahead_behind if clone else ""),
+            shown(source.name) if source.name else shown("-", style="dim"),
+            shown(str(source.root)),
+            shown(found.layout),
+            shown(str(_count(source.conf, "*.json"))),
+            shown(str(_count(source.assets, "*"))),
+            shown(str(sum(1 for skill in catalog.skills if skill.source == source))),
+            shown(clone.branch if clone else ""),
+            shown(clone.commit if clone else ""),
+            shown("dirty", style="yellow") if clone and clone.dirty else shown(""),
+            shown(clone.ahead_behind if clone else ""),
         )
     return table
 

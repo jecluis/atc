@@ -9,13 +9,12 @@ from typing import override
 
 import click
 import rich_click
-from rich.text import Text
 from rich.tree import Tree
 
 from atc import launch
 from atc.cli.options import HELP_OPTIONS, conf_d_option, lax_option, load_build_context
 from atc.launch import LaunchPlan
-from atc.ui import Ui
+from atc.ui import Ui, shown
 
 ABSENT = "\N{EN DASH}"
 """What stands for a repository or project that there is none of."""
@@ -210,7 +209,7 @@ def _show(ui: Ui, plan: LaunchPlan) -> None:
     project = ABSENT if plan.project is None else plan.project.name
     repository = ABSENT if plan.common_dir is None else str(plan.common_dir)
     account = plan.account
-    tree = Tree(Text("atc run"))
+    tree = Tree(shown("atc run"))
     lines = [
         f"repository: {repository}",
         f"project: {project}",
@@ -221,15 +220,15 @@ def _show(ui: Ui, plan: LaunchPlan) -> None:
     if plan.snapshot is not None:
         lines.append(f"snapshot: {plan.snapshot}")
     for line in lines:
-        _ = tree.add(Text(line))
+        _ = tree.add(shown(line))
     environment = tree.add(
-        Text("environment" if plan.env_changes else "environment: unchanged")
+        shown("environment" if plan.env_changes else "environment: unchanged")
     )
     for name, value in plan.env_changes.items():
         _ = environment.add(
-            Text(f"{name} (removed)" if value is None else f"{name}={value}")
+            shown(f"{name} (removed)" if value is None else f"{name}={value}")
         )
-    _ = tree.add(Text(f"argv: {shlex.join(plan.argv)}"))
+    _ = tree.add(shown(f"argv: {shlex.join(plan.argv)}"))
     ui.tree(tree)
     ui.dim("fragment:")
     ui.json(plan.fragment)

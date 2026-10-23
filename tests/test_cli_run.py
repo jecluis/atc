@@ -314,6 +314,16 @@ def test_print_text_is_never_read_as_markup(capsys: pytest.CaptureFixture[str]) 
     assert "[red]x[/red]" in capsys.readouterr().out
 
 
+def test_print_shows_control_characters_as_escapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--print", "--", "a\x1b[2Jb"]) == OK
+
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "a\\x1b[2Jb" in out
+
+
 def test_conf_d_requires_print(
     executed: list[LaunchPlan],
     dirs: Dirs,

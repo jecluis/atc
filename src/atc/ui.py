@@ -49,11 +49,16 @@ class Ui:
         return cls(Console(), Console(stderr=True))
 
     def error(self, message: str) -> None:
-        """Report a problem on standard error."""
+        """
+        Report a problem on standard error.
+
+        A control character in ``message`` is shown as its escape sequence, as
+        :meth:`dim` shows it, since messages quote units and git's output.
+        """
         self._diagnostic("error:", "red", message)
 
     def warning(self, message: str) -> None:
-        """Report something suspect on standard error."""
+        """Report something suspect on standard error, as :meth:`error` does."""
         self._diagnostic("warning:", "yellow", message)
 
     def info(self, message: str) -> None:
@@ -62,7 +67,7 @@ class Ui:
 
     def line(self, message: str) -> None:
         """Write one line of plain text on standard output."""
-        self.out.print(Text(message), soft_wrap=True)
+        self.out.print(shown(message), soft_wrap=True)
 
     def verdict(self, ok: bool, message: str) -> None:
         """
@@ -117,11 +122,11 @@ class Ui:
             self.out.print(text, soft_wrap=True)
 
     def table(self, table: Table) -> None:
-        """Write ``table`` on standard output."""
+        """Write ``table`` on standard output. Make its cells with :func:`shown`."""
         self.out.print(table)
 
     def tree(self, tree: Tree) -> None:
-        """Write ``tree`` on standard output."""
+        """Write ``tree`` on standard output. Make its labels with :func:`shown`."""
         self.out.print(tree)
 
     def pick(self, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
@@ -163,8 +168,18 @@ class Ui:
     def _diagnostic(self, prefix: str, style: str, message: str) -> None:
         # Text takes the message as it is; a string given to print would be
         # parsed as markup, and a path or branch name can look like markup.
-        line = Text.assemble((prefix, style), " ", message)
+        line = Text.assemble((prefix, style), " ", _visible(message))
         self.err.print(line, soft_wrap=True)
+
+
+def shown(text: str, style: str = "") -> Text:
+    """
+    Make ``text`` into a table cell or a tree label that shows it as it is.
+
+    It is never read as markup, and a control character in it, such as the
+    escape that starts a terminal command, is shown as its escape sequence.
+    """
+    return Text(_visible(text), style=style)
 
 
 def _diff_style(line: str) -> str:

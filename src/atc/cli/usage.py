@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.text import Text
 
 from atc.cli.options import HELP_OPTIONS, current_dirs, load_machine_registry
-from atc.ui import Ui
+from atc.ui import Ui, shown
 from atc.usage import UsageRecord, format_age, read_usage
 
 RED_FROM = 70
@@ -47,21 +47,23 @@ def usage() -> None:
         record, warning = read_usage(dirs, name)
         if warning is not None:
             ui.warning(warning)
-        table.add_row(Text(name), *_cells(record))
+        table.add_row(shown(name), *_cells(record))
     ui.table(table)
 
 
 def _cells(record: UsageRecord | None) -> tuple[Text, Text]:
     """Describe ``record`` as the percentage and the age, or as no data."""
     if record is None:
-        return Text("no data", style="dim"), _dash()
+        return shown("no data", style="dim"), _dash()
     age = format_age(datetime.now(UTC) - record.recorded_at)
     if record.five_hour_pct is None:
-        return _dash(), Text(age)
+        return _dash(), shown(age)
     # Rounded first, as the statusline does, so the colour agrees with the number.
     whole = round(record.five_hour_pct)
-    return Text(f"{whole}%", style="red" if whole >= RED_FROM else "yellow"), Text(age)
+    return shown(f"{whole}%", style="red" if whole >= RED_FROM else "yellow"), shown(
+        age
+    )
 
 
 def _dash() -> Text:
-    return Text("-", style="dim")
+    return shown("-", style="dim")

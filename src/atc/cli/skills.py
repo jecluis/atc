@@ -11,7 +11,6 @@ import click
 import rich_click
 from rich import box
 from rich.table import Table
-from rich.text import Text
 
 from atc import exitcodes
 from atc.backends import backend_for
@@ -23,7 +22,7 @@ from atc.links import LinkPlan
 from atc.registry import Account, set_skills
 from atc.skills import Catalog, Skill, discover_skills
 from atc.sync import AccountPlan, apply_account, plan_account
-from atc.ui import PickChoice, Ui
+from atc.ui import PickChoice, Ui, shown
 
 DESCRIPTION_WIDTH = 60
 
@@ -321,11 +320,11 @@ def _skills_table(catalog: Catalog, plans: Sequence[AccountPlan]) -> Table:
     for skill in sorted(
         catalog.skills, key=lambda found: (found.name, found.source.name)
     ):
-        states = [Text(*_state(plan, skill)) for plan in plans]
+        states = [shown(*_state(plan, skill)) for plan in plans]
         table.add_row(
-            Text(skill.name),
-            Text(skill.source.name) if skill.source.name else Text("-", style="dim"),
-            Text(_shortened(skill.description)),
+            shown(skill.name),
+            shown(skill.source.name) if skill.source.name else shown("-", style="dim"),
+            shown(_shortened(skill.description)),
             *states,
         )
     return table

@@ -26,7 +26,7 @@ from atc.registry import (
     add_project,
     remove_project,
 )
-from atc.ui import Ui
+from atc.ui import Ui, shown
 from atc.worktree import list_worktrees
 
 LABEL_WIDTH = 13
@@ -60,10 +60,10 @@ def ls() -> None:
     table.add_column("Worktrees", overflow="fold", min_width=16)
     for project in registry.projects.values():
         table.add_row(
-            Text(project.name),
-            Text(str(project.repo)),
-            Text(project.account or registry.default_account),
-            Text(str(project.worktrees)) if project.worktrees else _dash(),
+            shown(project.name),
+            shown(str(project.repo)),
+            shown(project.account or registry.default_account),
+            shown(str(project.worktrees)) if project.worktrees else _dash(),
         )
     ui.table(table)
 
@@ -220,7 +220,7 @@ def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
 
 
 def _dash() -> Text:
-    return Text("-", style="dim")
+    return shown("-", style="dim")
 
 
 def _checkout(repo: str | None) -> Path:

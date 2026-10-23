@@ -3,6 +3,7 @@
 import json
 import re
 import sys
+from pathlib import Path
 from typing import final
 
 import click
@@ -10,8 +11,10 @@ import pytest
 import questionary
 from rich.console import Console
 
+from atc.cli.options import worktrees_table
 from atc.jsonval import JsonObject, dumps
-from atc.ui import PickChoice, Ui
+from atc.ui import PickChoice, Ui, shown
+from atc.worktree import Worktree
 
 YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
@@ -141,6 +144,44 @@ def test_diff_shows_control_characters_as_escapes(
     terminal_ui().diff(["+a\x1b[2Jb\x07"])
     out = ANSI.sub("", capsys.readouterr().out)
     assert out == "+a\\x1b[2Jb\\x07\n"
+
+
+def test_error_and_warning_show_control_characters_as_escapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ui = terminal_ui()
+    ui.error("a\x1b[2Jb\x07")
+    ui.warning("c\x1b]0;title\x07")
+
+    err = capsys.readouterr().err
+    assert ANSI.sub("", err) == "error: a\\x1b[2Jb\\x07\nwarning: c\\x1b]0;title\\x07\n"
+
+
+def test_table_cells_show_control_characters_as_escapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    trees = [Worktree(Path("/w/a\x1b[2Jb"), "main", "0123456789")]
+
+    Ui.default().table(worktrees_table(trees))
+
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "/w/a\\x1b[2Jb" in out
+
+
+def test_shown_text_is_neither_markup_nor_control_characters() -> None:
+    text = shown("[red]a\x1b[2Jb\tc", "dim")
+
+    assert text.plain == "[red]a\\x1b[2Jb\tc"
+    assert text.style == "dim"
+
+
+def test_line_shows_control_characters_as_escapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    Ui.default().line("personal: failed (git: a\x1b[2Jb\x07)")
+
+    assert capsys.readouterr().out == "personal: failed (git: a\\x1b[2Jb\\x07)\n"
 
 
 def test_dim_is_plain_text_on_stdout_when_it_is_not_a_terminal(
