@@ -53,7 +53,7 @@ as a design constraint, not a lint setting.
 
 - pydantic validates; it never transforms what reaches the output. `load_unit`
   reads `settings` straight from the parsed document, so no default invented
-  during validation can appear in a generated `settings.local.json`.
+  during validation can appear in generated settings.
 - If a model is ever dumped, it must use `model_dump(exclude_unset=True)`. A
   plain `model_dump()` fills in defaults for fields nobody set, which would
   write settings the user never asked for.

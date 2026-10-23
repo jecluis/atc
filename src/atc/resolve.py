@@ -26,7 +26,7 @@ class Resolution:
     """
     The outcome of resolving a set of units.
 
-    ``settings`` is the merged ``settings.local.json`` payload. ``warnings``
+    ``settings`` is the merged settings of the units. ``warnings``
     holds diagnostics that did not stop the resolution, such as unknown
     settings keys tolerated under ``lax``.
     """

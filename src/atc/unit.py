@@ -19,8 +19,8 @@ class UnitEnvelope(BaseModel):
 
     ``imports`` lists other units: ``path/to/unit.json`` is relative to the
     ``conf`` directory of the unit's own source, and ``@name/path/to/unit.json``
-    to that of the source called ``name``. ``settings`` holds the
-    ``settings.local.json`` fragment this unit contributes. Both are optional:
+    to that of the source called ``name``. ``settings`` holds the fragment of
+    Claude Code settings this unit contributes. Both are optional:
     a unit with only ``imports`` acts as a profile that groups other units
     together.
     """

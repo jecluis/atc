@@ -229,7 +229,7 @@ of Claude Code settings and can import other units:
 | `version` | Required, and must be `2`. A unit with `"version": 1` is refused: change the number. |
 | `description` | Optional note for people. atc ignores it. |
 | `imports` | Optional list of unit references, merged before this unit's own `settings`. |
-| `settings` | Optional fragment of `settings.local.json`. Its top-level keys must be ones Claude Code defines (`atc show account --lax` accepts others with a warning). |
+| `settings` | Optional fragment of Claude Code settings. Its top-level keys must be ones Claude Code defines (`atc show account --lax` accepts others with a warning). |
 
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
