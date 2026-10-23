@@ -74,13 +74,15 @@ def publish(
     *,
     links: Mapping[str, str] | None = None,
     remove: Sequence[str] = (),
+    message: str = "update",
 ) -> str:
     """
     Add a commit to ``upstream`` that changes the files in it.
 
     It writes ``files``, makes the symbolic ``links`` (name to target) and
-    deletes ``remove``. It goes through a second clone kept next to the
-    repository, as someone else pushing would. Returns the new commit's id.
+    deletes ``remove``, and commits that with ``message``. It goes through a
+    second clone kept next to the repository, as someone else pushing would.
+    Returns the new commit's id.
     """
     work = upstream.with_name(f"{upstream.name}-work")
     if not work.exists():
@@ -92,7 +94,7 @@ def publish(
     for relative in remove:
         (work / relative).unlink()
     _ = run_git(["add", "-A"], cwd=work)
-    _ = run_git(["commit", "-q", "--allow-empty", "-m", "update"], cwd=work)
+    _ = run_git(["commit", "-q", "--allow-empty", "-m", message], cwd=work)
     _ = run_git(["push", "-q"], cwd=work)
     return run_git(["rev-parse", "HEAD"], cwd=work)
 

@@ -17,7 +17,7 @@ from atc.cli.options import (
     load_sources,
 )
 from atc.git import git_or_none
-from atc.pull import pull
+from atc.pull import Deployed, pull
 from atc.registry import REGISTRY_FILE
 from atc.skills import Catalog, discover_skills
 from atc.sources import SOURCE_DIRS, Source, Sources
@@ -90,28 +90,43 @@ def pull_command(names: tuple[str, ...]) -> None:
     to it. Afterwards it removes group and world write from conf, assets and
     skills, as git applies the umask to what it writes.
 
-    Prints one line per source. A source that fails or is refused is left as it
-    was, its problems are shown, and the exit status is 1. Sources that are not
-    git clones, or have no upstream, are skipped.
+    Prints one line per source. For a source it updated, it then lists on
+    standard error the commits it deployed, the newest 20 of them, and the
+    files they changed in conf, assets and skills: review them, since they
+    decide what the next sessions are allowed. A source that fails or is
+    refused is left as it was, its problems are shown, and the exit status is
+    1. Sources that are not git clones, or have no upstream, are skipped.
     """
     ui = Ui.default()
     found, validate = _checker(None, ui)
     results = pull(found, names, validate)
     problems = False
-    shown: set[str] = set()
+    warned: set[str] = set()
     for result in results:
         ui.line(f"{result.name or found.conf_d}: {result.status} ({result.detail})")
         problems = problems or result.status in {"failed", "refused"}
+        if result.deployed is not None:
+            _show_deployed(ui, result.deployed)
         if result.validation is None:
             continue
         for warning in result.validation.warnings:
-            if warning not in shown:
-                shown.add(warning)
+            if warning not in warned:
+                warned.add(warning)
                 ui.warning(warning)
         for error in result.validation.errors:
             ui.error(error)
     if problems:
         raise click.exceptions.Exit(exitcodes.CONFIG)
+
+
+def _show_deployed(ui: Ui, deployed: Deployed) -> None:
+    """Show the commits an update deployed, and what they changed, to review."""
+    for commit in deployed.commits:
+        ui.info(f"  {commit}")
+    if deployed.more:
+        ui.info(f"  … {deployed.more} more")
+    for line in deployed.stat or ("no changes in conf, assets or skills",):
+        ui.info(f"  {line}")
 
 
 def _checker(

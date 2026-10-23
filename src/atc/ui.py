@@ -62,8 +62,12 @@ class Ui:
         self._diagnostic("warning:", "yellow", message)
 
     def info(self, message: str) -> None:
-        """Report progress or success on standard error, as plain text."""
-        self.err.print(Text(message), soft_wrap=True)
+        """
+        Report progress or success on standard error, as plain text.
+
+        A control character in ``message`` is shown as its escape sequence.
+        """
+        self.err.print(shown(message), soft_wrap=True)
 
     def line(self, message: str) -> None:
         """Write one line of plain text on standard output."""

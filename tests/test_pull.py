@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from atc import pull as pull_module
 from atc.errors import PathError
 from atc.git import run_git
 from atc.paths import Dirs
@@ -71,6 +72,62 @@ def test_a_valid_upstream_commit_is_deployed(
     assert result.validation.errors == ()
     assert head(deployed) == commit
     assert (deployed / "conf" / "b.json").is_file()
+
+
+@pytest.mark.usefixtures("deployed")
+def test_an_update_lists_the_commits_and_the_files_it_deploys(
+    dirs: Dirs, upstream: Path
+) -> None:
+    first = publish(upstream, {"conf/b.json": unit()}, message="conf: add b")
+    second = publish(upstream, {"README": "x"}, message="explain")
+
+    result = pull_one(dirs.conf_d)
+
+    assert result.deployed is not None
+    assert result.deployed.commits == (
+        f"{second[:7]} explain",
+        f"{first[:7]} conf: add b",
+    )
+    assert result.deployed.more == 0
+    assert result.deployed.stat[0].startswith("conf/b.json | ")
+    assert result.deployed.stat[-1].startswith("1 file changed")
+
+
+@pytest.mark.usefixtures("deployed")
+def test_an_update_counts_the_commits_beyond_the_listed_ones(
+    dirs: Dirs, upstream: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pull_module, "LOG_LIMIT", 2)
+    for index in range(3):
+        _ = publish(upstream, {"conf/b.json": unit({"model": str(index)})})
+
+    result = pull_one(dirs.conf_d)
+
+    assert result.deployed is not None
+    assert len(result.deployed.commits) == 2
+    assert result.deployed.more == 1
+
+
+@pytest.mark.usefixtures("deployed")
+def test_an_update_outside_conf_assets_and_skills_has_no_stat(
+    dirs: Dirs, upstream: Path
+) -> None:
+    _ = publish(upstream, {"README": "x"})
+
+    result = pull_one(dirs.conf_d)
+
+    assert result.deployed is not None
+    assert len(result.deployed.commits) == 1
+    assert result.deployed.stat == ()
+
+
+@pytest.mark.usefixtures("deployed")
+def test_nothing_is_listed_for_a_source_that_was_not_updated(
+    dirs: Dirs, upstream: Path
+) -> None:
+    assert pull_one(dirs.conf_d).deployed is None
+    _ = publish(upstream, {"conf/bad.json": "{"})
+    assert pull_one(dirs.conf_d).deployed is None
 
 
 def test_an_invalid_upstream_commit_is_not_deployed(

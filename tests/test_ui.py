@@ -157,6 +157,14 @@ def test_error_and_warning_show_control_characters_as_escapes(
     assert ANSI.sub("", err) == "error: a\\x1b[2Jb\\x07\nwarning: c\\x1b]0;title\\x07\n"
 
 
+def test_info_shows_control_characters_as_escapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    Ui.default().info("a\x1b[2Jb")
+
+    assert capsys.readouterr().err == "a\\x1b[2Jb\n"
+
+
 def test_table_cells_show_control_characters_as_escapes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

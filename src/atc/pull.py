@@ -15,7 +15,26 @@ from atc.validate import Validation
 
 type PullStatus = Literal["updated", "current", "skipped", "refused", "failed"]
 
+LOG_LIMIT = 20
+"""How many of the commits an update deploys are listed; the others are counted."""
+
 _GROUP_WORLD_WRITE = stat.S_IWGRP | stat.S_IWOTH
+
+
+@dataclass(frozen=True, slots=True)
+class Deployed:
+    """
+    What an update brought into a source, for the user to review.
+
+    ``commits`` are the newest of the commits, as ``git log --oneline`` lists
+    them, at most ``LOG_LIMIT``, and ``more`` counts the others. ``stat`` is
+    the lines of ``git diff --stat`` for ``conf``, ``assets`` and ``skills``,
+    with no leading spaces, and is empty when none of them changed.
+    """
+
+    commits: tuple[str, ...]
+    more: int
+    stat: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +47,14 @@ class PullResult:
     state forbids a pull, or ``failed``. ``detail`` explains in a few words.
     ``validation`` holds the check's findings on the incoming commit. It is set
     when the check ran, and a ``failed`` result with errors in it was not
-    deployed.
+    deployed. ``deployed`` is set when the source was fast-forwarded.
     """
 
     name: str
     status: PullStatus
     detail: str
     validation: Validation | None
+    deployed: Deployed | None = None
 
 
 def pull(
@@ -117,13 +137,35 @@ def _update(
         detail = f"{upstream} ({commit[:7]}) fails the check, so it was not deployed"
         return PullResult(name, "failed", detail, found)
 
+    deployed = _deployed(root, old, commit, behind)
     _ = run_git(["merge", "--ff-only", "--quiet", commit], cwd=root)
     try:
         _remove_group_world_write(source)
     except OSError as exc:
         detail = f"fast-forwarded to {commit[:7]}, but {exc}"
-        return PullResult(name, "failed", detail, found)
-    return PullResult(name, "updated", f"{old[:7]}..{commit[:7]}", found)
+        return PullResult(name, "failed", detail, found, deployed)
+    return PullResult(name, "updated", f"{old[:7]}..{commit[:7]}", found, deployed)
+
+
+def _deployed(root: Path, old: str, new: str, count: int) -> Deployed:
+    """Describe the ``count`` commits from ``old`` to ``new`` and what they change."""
+    span = f"{old}..{new}"
+    log = run_git(
+        [
+            "log",
+            "--oneline",
+            "--no-decorate",
+            "--no-color",
+            "--no-show-signature",
+            f"--max-count={LOG_LIMIT}",
+            span,
+        ],
+        cwd=root,
+    )
+    diff = run_git(["diff", "--stat", "--no-color", span, "--", *SOURCE_DIRS], cwd=root)
+    commits = tuple(log.splitlines())
+    stat_lines = tuple(line.strip() for line in diff.splitlines())
+    return Deployed(commits, max(count - len(commits), 0), stat_lines)
 
 
 def _checkout(root: Path, commit: str, scratch: Path) -> Path:

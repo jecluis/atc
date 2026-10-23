@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from atc import pull as pull_module
 from atc.cli import main
 from atc.git import run_git
 from atc.paths import Dirs
@@ -423,7 +424,30 @@ def test_src_pull_deploys_a_valid_commit(
 def test_src_pull_says_when_a_source_is_current(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert run_pull(capsys)[0].startswith("personal: current (")
+    out, err = run_pull(capsys)
+
+    assert out.startswith("personal: current (")
+    assert [line for line in err.splitlines() if not line.startswith("warning: ")] == []
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_shows_the_commits_and_files_it_deploys(
+    upstream: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pull_module, "LOG_LIMIT", 1)
+    first = publish(upstream, {"conf/b.json": unit()}, message="conf: add b")
+    second = publish(upstream, {"assets/x": "x"}, message="assets: add \x1b[2Jx")
+
+    out, err = run_pull(capsys)
+
+    assert out.startswith("personal: updated (")
+    assert out.endswith(f"..{second[:7]})\n")
+    assert first[:7] not in err
+    lines = [line for line in err.splitlines() if not line.startswith("warning: ")]
+    assert lines[:2] == [f"  {second[:7]} assets: add \\x1b[2Jx", "  … 1 more"]
+    assert any(line.startswith("  assets/x ") for line in lines)
+    assert any(line.startswith("  conf/b.json ") for line in lines)
+    assert lines[-1].startswith("  2 files changed")
 
 
 def test_src_pull_does_not_deploy_a_commit_that_fails_the_check(

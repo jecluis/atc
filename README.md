@@ -617,6 +617,15 @@ It prints one line per source on standard output, `NAME: STATUS (DETAIL)`, and
 for the single layout's source, which has no name, the path of `conf.d` takes
 the place of `NAME`.
 
+For each source it fast-forwarded, it then shows on standard error what it
+deployed: the commits, as `git log --oneline OLD..NEW` lists them, the newest 20
+followed by `… N more` when there are others, and `git diff --stat OLD..NEW --
+conf assets skills`, the files that changed in what a source deploys. Review
+them. The upstream can be a checkout where sessions commit, and a commit there
+that weakens a unit, a hook, the instructions file or a skill passes every
+check and takes effect in the next session. Nothing more is shown for a source
+that was not updated.
+
 | Status | Meaning |
 | --- | --- |
 | `updated` | Fast-forwarded. The detail is `OLD..NEW`, the short commits. |
