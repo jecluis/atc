@@ -103,8 +103,8 @@ def test_a_unit_that_leads_out_of_conf_is_an_error(tmp_path: Path) -> None:
 TWO_ACCOUNTS = """\
     version: 1
     accounts:
-      personal: {dir: ~/.claude}
-      work: {dir: ~/.config/work, unit: profiles/work.json}
+      personal: {agent: claude, dir: ~/.claude}
+      work: {agent: claude, dir: ~/.config/work, unit: profiles/work.json}
 """
 
 
@@ -162,3 +162,18 @@ def test_validate_config_reports_layer_warnings_once(
 
     assert result.errors == ()
     assert len(result.warnings) == 1
+
+
+def test_validate_config_reports_a_template_error_in_an_account_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"model": "{{nope}}"})},
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert result.units == 1
+    assert len(result.errors) == 1
+    assert "account layer for personal" in result.errors[0]
+    assert "unknown reference {{nope}}" in result.errors[0]

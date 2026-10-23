@@ -34,7 +34,7 @@ def test_an_account_can_name_its_unit(
     text = """\
         version: 1
         accounts:
-          bravo: {dir: ~/.config/bravo, unit: "@bravo/accounts/x.json"}
+          bravo: {agent: claude, dir: ~/.config/bravo, unit: "@bravo/accounts/x.json"}
         """
 
     registry = load_registry(write_registry(text), home)
@@ -48,9 +48,9 @@ def test_accounts_keep_the_order_of_the_file(
     text = """\
         version: 1
         accounts:
-          zed: {dir: /z}
-          alpha: {dir: /a}
-          mid: {dir: /m}
+          zed: {agent: claude, dir: /z}
+          alpha: {agent: claude, dir: /a}
+          mid: {agent: claude, dir: /m}
         """
 
     registry = load_registry(write_registry(text), home)
@@ -61,7 +61,7 @@ def test_accounts_keep_the_order_of_the_file(
 def test_two_accounts_cannot_share_a_dir_however_it_is_written(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = MINIMAL_REGISTRY + "      other: {dir: ~/.claude/}\n"
+    text = MINIMAL_REGISTRY + "      other: {agent: claude, dir: ~/.claude/}\n"
     with pytest.raises(RegistryError, match="'personal' and 'other' share"):
         _ = load_registry(write_registry(text), home)
 
@@ -74,8 +74,8 @@ def test_a_symlinked_prefix_counts_as_the_same_dir(
     text = f"""\
         version: 1
         accounts:
-          a: {{dir: {tmp_path}/real/x}}
-          b: {{dir: {tmp_path}/link/x}}
+          a: {{agent: claude, dir: {tmp_path}/real/x}}
+          b: {{agent: claude, dir: {tmp_path}/link/x}}
         """
 
     with pytest.raises(RegistryError, match="share"):
@@ -83,7 +83,7 @@ def test_a_symlinked_prefix_counts_as_the_same_dir(
 
 
 def test_duplicate_keys_are_refused(write_registry: RegistryWriter, home: Path) -> None:
-    text = MINIMAL_REGISTRY + "      personal: {dir: ~/.other}\n"
+    text = MINIMAL_REGISTRY + "      personal: {agent: claude, dir: ~/.other}\n"
     with pytest.raises(RegistryError, match="duplicate key"):
         _ = load_registry(write_registry(text), home)
 
@@ -98,7 +98,7 @@ def test_non_string_keys_are_refused(
 def test_misspelled_keys_are_refused(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\nacounts: {a: {dir: /a}}\n"
+    text = "version: 1\nacounts: {a: {agent: claude, dir: /a}}\n"
     with pytest.raises(RegistryError, match="/acounts"):
         _ = load_registry(write_registry(text), home)
 
@@ -106,7 +106,7 @@ def test_misspelled_keys_are_refused(
 def test_an_unknown_account_key_is_refused_with_its_place(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\naccounts: {personal: {dir: /a, unti: x}}\n"
+    text = "version: 1\naccounts: {personal: {agent: claude, dir: /a, unti: x}}\n"
 
     with pytest.raises(RegistryError, match="/accounts/personal/unti"):
         _ = load_registry(write_registry(text), home)
@@ -125,7 +125,7 @@ def test_keys_the_registry_does_not_read_yet_are_refused(
 def test_only_the_integer_1_is_a_version(
     write_registry: RegistryWriter, home: Path, version: str
 ) -> None:
-    text = f"version: {version}\naccounts: {{a: {{dir: /a}}}}\n"
+    text = f"version: {version}\naccounts: {{a: {{agent: claude, dir: /a}}}}\n"
 
     with pytest.raises(RegistryError, match="/version"):
         _ = load_registry(write_registry(text), home)
@@ -140,7 +140,7 @@ def test_required_keys_are_required(write_registry: RegistryWriter, home: Path) 
 def test_values_are_not_converted_to_the_expected_type(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\naccounts: {a: {dir: /a, unit: 5}}\n"
+    text = "version: 1\naccounts: {a: {agent: claude, dir: /a, unit: 5}}\n"
 
     with pytest.raises(RegistryError, match="/accounts/a/unit"):
         _ = load_registry(write_registry(text), home)
@@ -169,7 +169,7 @@ def test_a_missing_registry_says_what_to_create(home: Path, tmp_path: Path) -> N
 
 
 def test_relative_paths_are_refused(write_registry: RegistryWriter, home: Path) -> None:
-    text = "version: 1\naccounts: {a: {dir: .claude}}\n"
+    text = "version: 1\naccounts: {a: {agent: claude, dir: .claude}}\n"
     with pytest.raises(RegistryError, match=r"/accounts/a/dir.*absolute"):
         _ = load_registry(write_registry(text), home)
 
@@ -177,11 +177,11 @@ def test_relative_paths_are_refused(write_registry: RegistryWriter, home: Path) 
 def test_environment_variables_are_not_expanded(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    relative = "version: 1\naccounts: {a: {dir: $HOME/x}}\n"
+    relative = "version: 1\naccounts: {a: {agent: claude, dir: $HOME/x}}\n"
     with pytest.raises(RegistryError, match=r"\$HOME/x"):
         _ = load_registry(write_registry(relative), home)
 
-    absolute = "version: 1\naccounts: {a: {dir: /opt/$HOME/x}}\n"
+    absolute = "version: 1\naccounts: {a: {agent: claude, dir: /opt/$HOME/x}}\n"
     registry = load_registry(write_registry(absolute), home)
     assert registry.accounts["a"].dir == Path("/opt/$HOME/x")
 
@@ -190,7 +190,7 @@ def test_environment_variables_are_not_expanded(
 def test_account_names_follow_the_name_rule(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
-    text = f"version: 1\naccounts: {{{name}: {{dir: /a}}}}\n"
+    text = f"version: 1\naccounts: {{{name}: {{agent: claude, dir: /a}}}}\n"
 
     assert name in load_registry(write_registry(text), home).accounts
 
@@ -199,7 +199,7 @@ def test_account_names_follow_the_name_rule(
 def test_account_names_that_break_the_rule_are_refused(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
-    text = f'version: 1\naccounts: {{"{name}": {{dir: /a}}}}\n'
+    text = f'version: 1\naccounts: {{"{name}": {{agent: claude, dir: /a}}}}\n'
 
     with pytest.raises(RegistryError, match=f"'{name}'.*not a valid account name"):
         _ = load_registry(write_registry(text), home)
@@ -208,7 +208,7 @@ def test_account_names_that_break_the_rule_are_refused(
 def test_an_unknown_account_lists_the_known_ones(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = MINIMAL_REGISTRY + "      work: {dir: /w}\n"
+    text = MINIMAL_REGISTRY + "      work: {agent: claude, dir: /w}\n"
     registry = load_registry(write_registry(text), home)
 
     assert registry.account("work").name == "work"
@@ -260,7 +260,10 @@ def test_account_unit_follows_a_qualified_reference(
     conf_d = tmp_path / "conf.d"
     _ = make_source(conf_d / "bravo", {"conf/accounts/x.json": unit()})
     _ = make_source(conf_d / "other", {"conf/a.json": unit()})
-    text = 'version: 1\naccounts: {a: {dir: /a, unit: "@bravo/accounts/x.json"}}\n'
+    text = (
+        "version: 1\n"
+        'accounts: {a: {agent: claude, dir: /a, unit: "@bravo/accounts/x.json"}}\n'
+    )
     registry = load_registry(write_registry(text), home)
 
     found = account_unit(discover(conf_d, uid=UID), registry, registry.account("a"))
@@ -292,3 +295,92 @@ def test_account_unit_refuses_a_unit_several_sources_have(
         _ = account_unit(
             discover(conf_d, uid=UID), registry, registry.account("personal")
         )
+
+
+def test_agents_and_variables_are_read(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        vars: {scratch_root: /mnt/scratch}
+        accounts:
+          personal:
+            agent: claude
+            dir: ~/.claude
+            vars: {scratch: /mnt/scratch/me}
+        """
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.vars == {"scratch_root": "/mnt/scratch"}
+    assert registry.accounts["personal"].agent == "claude"
+    assert registry.accounts["personal"].vars == {"scratch": "/mnt/scratch/me"}
+
+
+def test_variables_default_to_none(write_registry: RegistryWriter, home: Path) -> None:
+    registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
+
+    assert registry.vars == {}
+    assert registry.accounts["personal"].vars == {}
+
+
+def test_an_unknown_agent_is_refused(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\naccounts: {a: {agent: codex, dir: /a}}\n"
+
+    with pytest.raises(RegistryError, match=r"/accounts/a/agent.*'claude'"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_the_agent_is_required(write_registry: RegistryWriter, home: Path) -> None:
+    text = "version: 1\naccounts: {a: {dir: /a}}\n"
+
+    with pytest.raises(RegistryError, match=r"/accounts/a/agent: Field required"):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize(
+    ("text", "pointer"),
+    [
+        ("vars: {x: 'a{{b'}\naccounts: {a: {agent: claude, dir: /a}}", "/vars/x"),
+        (
+            "accounts: {a: {agent: claude, dir: /a, vars: {x: '{{home}}'}}}",
+            "/accounts/a/vars/x",
+        ),
+    ],
+)
+def test_variable_values_must_not_contain_braces(
+    write_registry: RegistryWriter, home: Path, text: str, pointer: str
+) -> None:
+    with pytest.raises(RegistryError, match=rf"{pointer}: .*must not contain '\{{\{{'"):
+        _ = load_registry(write_registry(f"version: 1\n{text}\n"), home)
+
+
+@pytest.mark.parametrize("name", ["a", "scratch_root", "a1_b2"])
+def test_variable_names_follow_the_name_rule(
+    write_registry: RegistryWriter, home: Path, name: str
+) -> None:
+    text = f"version: 1\nvars: {{{name}: v}}\naccounts: {{}}\n"
+
+    assert load_registry(write_registry(text), home).vars == {name: "v"}
+
+
+@pytest.mark.parametrize("name", ["Scratch", "1a", "_a", "a-b", "a.b", "a b"])
+def test_variable_names_that_break_the_rule_are_refused(
+    write_registry: RegistryWriter, home: Path, name: str
+) -> None:
+    account = f'{{agent: claude, dir: /a, vars: {{"{name}": v}}}}'
+    text = f"version: 1\naccounts: {{a: {account}}}\n"
+
+    with pytest.raises(RegistryError, match=f"/accounts/a/vars.*'{name}'.*not a valid"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_variable_values_are_not_converted_to_strings(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\nvars: {n: 5}\naccounts: {}\n"
+
+    with pytest.raises(RegistryError, match="/vars/n"):
+        _ = load_registry(write_registry(text), home)

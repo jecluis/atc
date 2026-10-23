@@ -1,9 +1,11 @@
 """Building the account layer, and the policy on what a layer may set."""
 
+from pathlib import Path
+
 import pytest
 
 from atc import layers
-from atc.errors import PathError, PolicyError
+from atc.errors import PathError, PolicyError, TemplateError
 from atc.jsonval import JsonObject
 from atc.layers import build_account_layer, check_policy
 from tests.conftest import ContextBuilder
@@ -35,7 +37,7 @@ def test_the_registry_can_name_another_account_unit(
     registry = """\
         version: 1
         accounts:
-          personal: {dir: ~/.claude, unit: "@bravo/accounts/x.json"}
+          personal: {agent: claude, dir: ~/.claude, unit: "@bravo/accounts/x.json"}
         """
     ctx = build_context(
         {
@@ -134,3 +136,60 @@ def test_a_policy_pointer_reaches_into_nested_settings(
     check_policy({"a": {"b": 1}}, "account", "x.json")
     with pytest.raises(PolicyError, match=r"x\.json: /a/b is not allowed"):
         check_policy({"a": {"b": 1}}, "project", "x.json")
+
+
+def test_templates_are_expanded_with_the_account_in_each_unit(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(
+                {"env": {"WHO": "{{account.name}}"}}, imports=["common/base.json"]
+            ),
+            "conf/common/base.json": unit({"env": {"DIR": "{{account.dir}}"}}),
+        }
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.settings == {"env": {"WHO": "personal", "DIR": str(home / ".claude")}}
+
+
+def test_a_template_error_names_the_unit_the_pointer_and_the_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"permissions": {"allow": ["{{nope}}"]}})}
+    )
+
+    with pytest.raises(TemplateError) as caught:
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert str(caught.value) == (
+        "accounts/personal.json (account layer for personal): "
+        "/permissions/allow/0: unknown reference {{nope}}"
+    )
+
+
+def test_project_variables_do_not_exist_in_the_account_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"model": "{{project.name}}"})}
+    )
+
+    with pytest.raises(TemplateError, match=r"/model: unknown reference \{\{project"):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
+def test_the_description_is_not_expanded(build_context: ContextBuilder) -> None:
+    document: JsonObject = {
+        "version": 2,
+        "description": "{{nope",
+        "settings": {"model": "x"},
+    }
+    ctx = build_context({"conf/accounts/personal.json": document})
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.settings == {"model": "x"}

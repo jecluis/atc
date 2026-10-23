@@ -12,7 +12,7 @@ from atc.errors import PathError, SourceError
 SOURCE_DIRS = ("conf", "assets", "skills")
 """The subdirectories atc reads from a source. Anything else in it is ignored."""
 
-_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,8 +174,7 @@ def _find_nested(conf_d: Path) -> tuple[tuple[Source, ...], tuple[str, ...]]:
         if not _NAME.fullmatch(entry.name):
             message = (
                 f"{entry}: '{entry.name}' is not a valid source name; names are "
-                "lowercase letters, digits, '_' and '-', and start with a letter "
-                "or a digit"
+                "lowercase letters, digits and '_', and start with a letter"
             )
             raise SourceError(message)
         items.append(Source(entry.name, entry))

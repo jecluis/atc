@@ -71,10 +71,20 @@ def test_a_directory_with_no_sources_in_it_is_an_error(tmp_path: Path) -> None:
         _ = discover(conf_d, uid=UID)
 
 
-def test_source_names_follow_the_name_rule(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", ["a", "my_src", "src2"])
+def test_source_names_follow_the_name_rule(tmp_path: Path, name: str) -> None:
     conf_d = tmp_path / "conf.d"
-    _ = make_source(conf_d / "Personal", {"conf/a.json": unit()})
-    with pytest.raises(SourceError, match="Personal"):
+    _ = make_source(conf_d / name, {"conf/a.json": unit()})
+    assert [s.name for s in discover(conf_d, uid=UID).items] == [name]
+
+
+@pytest.mark.parametrize("name", ["Personal", "my-src", "1src", "_src"])
+def test_source_names_that_break_the_rule_are_refused(
+    tmp_path: Path, name: str
+) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / name, {"conf/a.json": unit()})
+    with pytest.raises(SourceError, match=f"'{name}' is not a valid source name"):
         _ = discover(conf_d, uid=UID)
 
 

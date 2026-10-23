@@ -41,10 +41,10 @@ git clone <url> ~/.config/atc/conf.d/personal   # multi layout, one clone per so
 ```
 
 Mixing the layouts is an error, and atc looks no deeper than one level. Source
-names are lowercase letters, digits, `_` and `-`, starting with a letter or a
-digit. Entries whose names start with `.`, and plain files, are ignored. In the
-multi layout, a visible subdirectory that has none of `conf/`, `assets/` and
-`skills/` is ignored with a warning.
+names are lowercase letters, digits and `_`, starting with a letter, so that a
+unit can refer to them (see Templates). Entries whose names start with `.`, and
+plain files, are ignored. In the multi layout, a visible subdirectory that has
+none of `conf/`, `assets/` and `skills/` is ignored with a warning.
 
 Hooks and the statusline run from `assets/` outside the sandbox, so atc only
 loads a source that meets these rules, and otherwise stops with an error that
@@ -68,19 +68,28 @@ belongs to no config source, so it never lands in a git repository by accident.
 
 ```yaml
 version: 1
+vars:
+  scratch_root: /mnt/scratch
 accounts:
   personal:
+    agent: claude
     dir: ~/.claude
   work:
+    agent: claude
     dir: ~/.config/work/claude
     unit: "@work/accounts/work.json"
+    vars:
+      scratch: /mnt/scratch/work
 ```
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `version` | yes | Must be `1`. |
+| `vars` | no | Variables for every unit, as `{{vars.<name>}}` (see Templates). |
+| `accounts.<name>.agent` | yes | The coding agent the account is for. Only `claude` exists. |
 | `accounts.<name>.dir` | yes | The account's configuration directory. |
 | `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
+| `accounts.<name>.vars` | no | Variables for this account's units, as `{{account.vars.<name>}}`. |
 
 No other keys are accepted yet, and a misspelled key is an error. The rules:
 
@@ -94,6 +103,9 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
   letter or a digit.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or
   a symbolic link in the path makes no difference.
+- Variable names are lowercase letters, digits and `_`, starting with a letter,
+  so they can be written in a reference. Values are strings and must not contain
+  `{{`.
 
 ## Units
 
@@ -144,6 +156,60 @@ without duplicates, and for any other value the later one wins. Two values of
 different JSON types at the same key are an error. The output is
 deterministic: keys are sorted.
 
+### Templates
+
+A string in `settings`, at any depth, can contain **references**: `{{home}}`,
+`{{account.dir}}`. A reference is lowercase letters, digits and `_`, with `.`
+between parts and no spaces. Each unit is expanded as it is loaded, before it is
+merged, so one unit can serve every account:
+
+```json
+{
+  "version": 2,
+  "settings": {
+    "sandbox": {
+      "credentials": {
+        "files": [
+          { "path": "{{account.secrets}}", "mode": "deny" },
+          { "path": "{{peers.dir}}", "mode": "deny" }
+        ]
+      }
+    },
+    "permissions": { "deny": ["Read({{peers.dir}}/**)"] },
+    "statusLine": { "command": "bash {{source.assets}}/statusline.sh" }
+  }
+}
+```
+
+- A reference to a string is replaced in place, wherever it is in the string.
+  Replaced text is never scanned again.
+- A reference to a list expands the array element that contains it: the element
+  is repeated once per item, in order, with the reference replaced in each copy.
+  An empty list removes the element, which is still checked for errors. The
+  element can be a string or an object, and it may use only one list reference.
+  A list reference outside an array is an error.
+- `imports`, `description` and object keys are never substituted. A key that
+  contains `{{` is an error, and so is any `{{` that does not start a valid
+  reference.
+- An unknown reference is an error. It names the unit, where in `settings` it
+  is, the reference, and the account being built.
+
+| Reference | Type | Value |
+| --- | --- | --- |
+| `home` | string | Your home directory. |
+| `atc.config_dir`, `atc.conf_d`, `atc.state_dir`, `atc.runtime_dir` | string | The directories atc uses: its configuration, its config sources, its state, and its locks. |
+| `atc.install_dir` | string | The Python environment atc runs from. |
+| `source.name` | string | The name of the source that contains the unit. Empty with a single source. |
+| `source.root`, `source.conf`, `source.assets` | string | That source's directory, its `conf/` and its `assets/`. |
+| `sources.<name>.root`, `.conf`, `.assets` | string | The same for any source, by name. Only with several sources. |
+| `vars.<name>` | string | The registry's `vars`. |
+| `account.name`, `account.agent`, `account.dir` | string | The account being built. |
+| `account.files` | list | Files the account owns outside its `dir`. For Claude, `~/.claude.json` when `dir` is `~/.claude`, otherwise none. |
+| `account.secrets` | list | The account's credentials and state file, which its own sessions must not read. For Claude, `.credentials.json` in `dir` and the state file: `~/.claude.json` when `dir` is `~/.claude`, otherwise `.claude.json` in `dir`. |
+| `account.vars.<name>` | string | The account's `vars`. |
+| `peers.dir` | list | The `dir` of every other account. |
+| `peers.files` | list | The `files` of every other account, in one list. |
+
 ## Usage
 
 Run `atc --help`, or `--help` after any command, for the options.
@@ -181,6 +247,8 @@ When the machine registry exists, it also builds the settings of every account,
 as `atc show account` does, and reports:
 
 - an account whose unit does not exist, or exists in several sources
+- a unit with a reference that cannot be expanded for an account, such as an
+  unknown variable
 - a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
   refused in an account's settings, because the value is the memory directory
   itself and every project would share it
@@ -200,8 +268,9 @@ stops the check with that error.
 
 Builds the settings of the account `NAME`, one of the accounts in the machine
 registry, and writes them to standard output as JSON. They are the account's
-unit merged together with everything it imports, as described under Units, and
-every unit is checked against what the account's settings may contain.
+unit merged together with everything it imports, as described under Units, with
+the references in each unit expanded for the account (see Templates). Every unit
+is checked against what the account's settings may contain.
 
 The output has sorted keys and a trailing newline, and is the same every time
 for the same configuration. On a terminal it is coloured. Redirected, it is

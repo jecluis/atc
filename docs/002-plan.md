@@ -592,7 +592,9 @@ expand_element(elem, bindings, pointer):
          entering a nested list, excluding names already in bindings
   none   -> [expand_value(elem, bindings, pointer)]
   one r  -> [expand_value(elem, bindings | {r: item}, pointer) for item in variables[r]]
-            (an empty list yields [], which removes the element)
+            (an empty list yields [], which removes the element; it is still
+             expanded once with a placeholder item and the result discarded,
+             so a bad reference inside it is an error)
   more   -> error "only one list reference per array element"
 substitute(text, bindings, pointer):
   a "{{" that doesn't start a REFERENCE match -> error "malformed reference"

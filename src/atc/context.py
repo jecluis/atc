@@ -1,5 +1,6 @@
 """Everything a layer build needs, loaded once."""
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,12 +12,17 @@ from atc.sources import Sources, discover
 
 @dataclass(frozen=True, slots=True)
 class BuildContext:
-    """The registry and the config sources, with the directories they came from."""
+    """
+    The registry and the config sources, with the directories they came from.
+
+    ``install_dir`` is the Python environment atc runs from.
+    """
 
     registry: Registry
     sources: Sources
     dirs: Dirs
     home: Path
+    install_dir: Path
 
 
 def load_context(
@@ -34,9 +40,15 @@ def load_context(
         SourceError: the sources are missing, ambiguous, or not trusted.
 
     """
-    dirs = dirs_from_env(env, home)
+    dirs = dirs_from_env(env, home, uid)
     if conf_d is not None:
         dirs = replace(dirs, conf_d=conf_d)
     sources = discover(dirs.conf_d, uid=uid)
     registry = load_registry(dirs.config_dir / REGISTRY_FILE, home)
-    return BuildContext(registry=registry, sources=sources, dirs=dirs, home=home)
+    return BuildContext(
+        registry=registry,
+        sources=sources,
+        dirs=dirs,
+        home=home,
+        install_dir=Path(sys.prefix),
+    )

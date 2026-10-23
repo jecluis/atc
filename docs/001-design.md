@@ -245,7 +245,8 @@ atc reads sources from `conf_d`, in one of two layouts:
   plain files.
 - **Unused directories:** a visible subdirectory that has none of `conf/`,
   `assets/` and `skills/` gets a warning.
-- **Names:** source names match `[a-z0-9][a-z0-9_-]*`.
+- **Names:** source names match `[a-z][a-z0-9_]*`, so every source can be
+  named in a reference such as `{{sources.<name>.root}}` (§7.3).
 
 Each source is normally a git clone, and it can come from a different
 repository than the others. For example, `personal` might be this repository
@@ -361,7 +362,8 @@ A **reference** is written `{{name.name…}}`. Each name matches
     or an object.
   - It is emitted once per list item, in list order, with the reference
     replaced in each copy.
-  - An empty list removes the element.
+  - An empty list removes the element, after checking it as if it had one
+    item, so a bad reference inside it is still an error.
   - An element may use only one distinct list reference.
   - A list reference with no enclosing array element is an error.
 - **Malformed text:** any `{{` that doesn't start a valid reference is an

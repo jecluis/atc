@@ -62,6 +62,6 @@ def git_repo(path: Path) -> Path:
 MINIMAL_REGISTRY = """\
     version: 1
     accounts:
-      personal: {dir: ~/.claude}
+      personal: {agent: claude, dir: ~/.claude}
 """
 """A registry with one account, `personal`, whose unit is `accounts/personal.json`."""

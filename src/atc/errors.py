@@ -39,3 +39,7 @@ class RegistryError(ConfigError):
 
 class PolicyError(ConfigError):
     """A unit sets a key that the layer being built does not allow."""
+
+
+class TemplateError(ConfigError):
+    """A unit's settings use a reference that cannot be expanded."""

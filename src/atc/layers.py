@@ -10,6 +10,8 @@ from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located
 from atc.registry import Account, account_unit
 from atc.resolve import UnitTransform, resolve
+from atc.template import VarValue, expand
+from atc.variables import layer_variables, with_source
 
 type LayerKind = Literal["account", "project", "session"]
 
@@ -48,30 +50,45 @@ def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> La
     """
     Merge the unit of ``account`` and everything it imports.
 
-    Each unit is checked against the policy for the account layer. Set ``lax``
-    to report unknown settings keys as warnings instead of errors.
+    The references in each unit are expanded for ``account``, and the unit is
+    then checked against the policy for the account layer. Set ``lax`` to
+    report unknown settings keys as warnings instead of errors.
 
     Raises:
         PathError: the account's unit does not exist, or several sources have it.
+        TemplateError: a unit has a reference that cannot be expanded.
         PolicyError: a unit sets a key the account layer must not.
         ConfigError: as :func:`atc.resolve.resolve`, for the units themselves.
 
     """
     root = account_unit(ctx.sources, ctx.registry, account)
-    resolution = resolve(
-        ctx.sources, [root], lax=lax, transform=_policy_transform("account")
+    transform = _unit_transform(
+        "account", layer_variables(ctx, account), f"account layer for {account.name}"
     )
+    resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
     return Layer("account", resolution.settings, resolution.warnings)
 
 
-def _policy_transform(kind: LayerKind) -> UnitTransform:
-    """Make the transform that applies the policy of layer ``kind`` to a unit."""
+def _unit_transform(
+    kind: LayerKind, variables: Mapping[str, VarValue], layer: str
+) -> UnitTransform:
+    """
+    Make the transform that prepares a unit for layer ``kind``.
 
-    def check(unit: Located, settings: JsonObject) -> JsonObject:
-        check_policy(settings, kind, unit.display)
-        return settings
+    It expands the unit's references, with ``variables`` and the unit's own
+    source, then applies the policy. ``layer`` names the layer in error messages.
+    """
 
-    return check
+    def prepare(unit: Located, settings: JsonObject) -> JsonObject:
+        expanded = expand(
+            settings,
+            with_source(variables, unit.source),
+            origin=f"{unit.display} ({layer})",
+        )
+        check_policy(expanded, kind, unit.display)
+        return expanded
+
+    return prepare
 
 
 def _is_set(settings: JsonObject, pointer: str) -> bool:

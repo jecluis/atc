@@ -82,7 +82,7 @@ def home(isolated_env: Path) -> Path:
 
 @pytest.fixture
 def dirs(home: Path) -> Dirs:
-    return dirs_from_env(os.environ, home)
+    return dirs_from_env(os.environ, home, UID)
 
 
 @pytest.fixture

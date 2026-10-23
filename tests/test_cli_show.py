@@ -81,7 +81,8 @@ def test_show_unknown_account_is_a_config_error(
     configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
 ) -> None:
     configure(
-        {PERSONAL: unit()}, MINIMAL_REGISTRY + "      work: {dir: ~/.config/work}\n"
+        {PERSONAL: unit()},
+        MINIMAL_REGISTRY + "      work: {agent: claude, dir: ~/.config/work}\n",
     )
 
     assert main(["show", "account", "nope"]) == CONFIG
@@ -155,3 +156,28 @@ def test_src_check_builds_every_account_layer(
     assert captured.out == ""
     assert "accounts/personal.json: /autoMemoryDirectory" in captured.err
     assert "ok:" not in captured.err
+
+
+def test_show_account_expands_templates(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str], home: Path
+) -> None:
+    configure({PERSONAL: unit({"env": {"ACCOUNT_DIR": "{{account.dir}}"}})})
+
+    status = main(["show", "account", "personal"])
+
+    assert status == OK
+    assert json.loads(capsys.readouterr().out) == {
+        "env": {"ACCOUNT_DIR": str(home / ".claude")}
+    }
+
+
+def test_show_account_reports_an_unknown_reference(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({PERSONAL: unit({"model": "{{nope}}"})})
+
+    assert main(["show", "account", "personal"]) == CONFIG
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "/model: unknown reference {{nope}}" in captured.err

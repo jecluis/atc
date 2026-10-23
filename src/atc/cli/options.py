@@ -42,7 +42,7 @@ lax_option = click.option(
 
 def current_dirs() -> Dirs:
     """Work out the directories atc uses from this process's environment."""
-    return dirs_from_env(os.environ, Path.home())
+    return dirs_from_env(os.environ, Path.home(), os.getuid())
 
 
 def load_sources(conf_d: Path | None) -> Sources:
