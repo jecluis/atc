@@ -65,7 +65,8 @@ def sync(
     Builds the settings of each ACCOUNT, or of every account, and writes them to
     settings.json in the account's directory. The directory must exist already:
     atc does not create accounts. Nothing is written until every account has been
-    built, so an error leaves all of them as they were.
+    built, so an error in building one leaves all of them as they were. A write
+    that fails stops the sync there, and the accounts before it stay written.
 
     The settings are compared with what atc wrote last, which it remembers under
     $XDG_STATE_HOME/atc/sync (~/.local/state/atc/sync when unset), and compared

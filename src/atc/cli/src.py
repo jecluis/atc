@@ -57,13 +57,18 @@ def check(conf_d: Path | None) -> None:
 
     Loads each unit and follows its imports, including those that lead into
     other sources, and reports every problem found rather than only the first:
-    malformed units, unknown settings keys, missing or circular imports, and
-    values of conflicting types. When the machine registry (machine.yaml in
+    malformed units, unknown settings keys, missing or circular imports, values
+    of conflicting types, and malformed template references, in every unit
+    whether anything uses it or not. When the machine registry (machine.yaml in
     atc's configuration directory) exists, it also builds the settings of every
-    account, which finds accounts whose unit is missing and units that set a
-    key their layer does not allow. It also finds accounts that select a skill,
-    or ask for an instructions file, that does not exist. Prints a summary line
-    when all is well and exits with status 1 otherwise.
+    account, and of every project with each account the project allows, which
+    finds accounts and projects whose unit is missing, references that cannot
+    be expanded, and units that set a key their layer does not allow. It also
+    finds accounts that select a skill, or ask for an instructions file, that
+    does not exist. It warns about permission rules that can never apply, and
+    about skills that were skipped or whose front matter looks wrong, but
+    warnings never fail the check. Prints a summary line when all is well and
+    exits with status 1 otherwise.
     """
     ui = Ui.default()
     found, validate = _checker(conf_d, ui)

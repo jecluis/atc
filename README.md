@@ -945,8 +945,10 @@ in line with the configuration:
 
 The directory must exist already, because creating an account means logging in,
 which atc does not do. Every account is planned before any is changed, so an
-error in one leaves all of them as they were, and every account that fails is
-reported.
+error in planning one leaves all of them as they were, and every account that
+fails is reported. A write that fails, once the accounts are being written,
+stops `atc sync` there with exit status `1`: the accounts before it stay
+written.
 
 #### Settings
 
