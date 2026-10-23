@@ -152,7 +152,9 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
 
 - The file is YAML 1.2, so `no`, `on` and `off` stay strings. Only values JSON
   can hold are accepted: a timestamp such as `2026-10-23` is an error that
-  asks you to quote it. Repeated keys and keys that are not strings are errors.
+  asks you to quote it. Repeated keys and keys that are not strings are errors,
+  and so are an alias (`*name`) for a list or a mapping and a merge key (`<<`):
+  write the value out.
 - A leading `~` in a path stands for your home directory. Every path must then
   be absolute. Environment variables are not expanded, so `$HOME/x` is an
   error.
@@ -192,7 +194,8 @@ not skills.
   which is the text between a first line of `---` and the next `---` line. It
   is only shown by `atc skills ls`. atc warns when the front matter's `name`
   differs from the directory's name, or when the front matter cannot be read as
-  YAML. The skill counts either way.
+  YAML, which it reads as it reads the registry, aliases refused. The skill
+  counts either way.
 - **Selection:** an account's `skills` in the registry lists the skills to link
   into it. Each account chooses its own. An entry is the skill's name, such as
   `git-commits`, or `@name/git-commits` for the source called `name`. Without

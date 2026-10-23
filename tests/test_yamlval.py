@@ -1,5 +1,6 @@
 """Reading YAML as JSON values, and refusing everything else."""
 
+import time
 from collections.abc import Sized
 from pathlib import Path
 
@@ -87,14 +88,47 @@ def test_two_documents_are_refused() -> None:
 
 
 def test_an_alias_to_itself_is_refused() -> None:
-    with pytest.raises(RegistryError, match="refers to itself"):
+    with pytest.raises(RegistryError, match="aliases are not supported"):
         _ = parse_yaml("a: &x [*x]\n", "t")
 
 
-def test_an_alias_used_twice_is_read_twice() -> None:
-    parsed: JsonValue = parse_yaml("a: &x {b: 1}\nc: *x\n", "t")
+@pytest.mark.parametrize(
+    "text", ["a: &x {b: 1}\nc: *x\n", "a: &x [1]\nc: [*x]\n"], ids=["map", "list"]
+)
+def test_an_alias_is_refused_where_it_is_used(text: str) -> None:
+    with pytest.raises(RegistryError, match=r"^t: /c(/0)?: aliases are not supported"):
+        _ = parse_yaml(text, "t")
 
-    assert parsed == {"a": {"b": 1}, "c": {"b": 1}}
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "base: &b {x: 1}\nother:\n  <<: *b\n  y: 2\n",
+        "other:\n  <<: {x: 1}\n  y: 2\n",
+        "base: &b {x: 1}\nother: {<<: [*b], y: 2}\n",
+    ],
+    ids=["alias", "inline", "list"],
+)
+def test_a_merge_key_is_refused(text: str) -> None:
+    with pytest.raises(RegistryError, match=r"^t: line \d+: merge keys \(<<\) are not"):
+        _ = parse_yaml(text, "t")
+
+
+def test_a_quoted_merge_key_is_an_ordinary_key() -> None:
+    assert parse_yaml("other:\n  '<<': 1\n", "t") == {"other": {"<<": 1}}
+
+
+def test_an_alias_bomb_is_refused_at_once() -> None:
+    lines = ["a: &a [x, x, x, x, x, x, x, x, x]"]
+    for this, previous in zip("bcdefghij", "abcdefghi", strict=True):
+        aliases = ", ".join([f"*{previous}"] * 9)
+        lines.append(f"{this}: &{this} [{aliases}]")
+    started = time.monotonic()
+
+    with pytest.raises(RegistryError, match=r"^t: /b/0: aliases are not supported"):
+        _ = parse_yaml("\n".join(lines) + "\n", "t")
+
+    assert time.monotonic() - started < 5
 
 
 def test_an_empty_document_is_null() -> None:

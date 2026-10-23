@@ -126,6 +126,30 @@ def test_unparseable_front_matter_warns_and_the_skill_still_counts(
     assert str(tmp_path / "conf.d" / "skills" / "review" / "SKILL.md") in warning
 
 
+def test_an_alias_in_front_matter_warns_and_the_skill_still_counts(
+    tmp_path: Path,
+) -> None:
+    text = "---\nname: &n review\ntags: &t [a]\nmore: [*t]\n---\n# Body\n"
+
+    _, catalog = catalog_of(tmp_path / "conf.d", {"skills/review/SKILL.md": text})
+
+    assert [skill.name for skill in catalog.skills] == ["review"]
+    (warning,) = catalog.warnings
+    assert "front matter: /more/0: aliases are not supported" in warning
+
+
+def test_a_merge_key_in_front_matter_warns_and_the_skill_still_counts(
+    tmp_path: Path,
+) -> None:
+    text = "---\nname: review\nmeta:\n  <<: {a: 1}\n---\n# Body\n"
+
+    _, catalog = catalog_of(tmp_path / "conf.d", {"skills/review/SKILL.md": text})
+
+    assert [skill.name for skill in catalog.skills] == ["review"]
+    (warning,) = catalog.warnings
+    assert "front matter: line 3: merge keys (<<) are not supported" in warning
+
+
 def test_a_skill_file_that_cannot_be_decoded_warns_and_counts(tmp_path: Path) -> None:
     sources = discover(
         make_source(tmp_path / "conf.d", {"skills/review/SKILL.md": ""}), uid=UID

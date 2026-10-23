@@ -6,10 +6,11 @@ from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol, cast, final, override
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
+from ruamel.yaml.constructor import ConstructorError, SafeConstructor
 from ruamel.yaml.error import CommentMark, MarkedYAMLError, YAMLError
 from ruamel.yaml.tokens import CommentToken
 
@@ -41,13 +42,15 @@ def parse_yaml(text: str, origin: str) -> JsonValue:
 
     Raises:
         RegistryError: the text is not valid YAML, repeats a key within a
-            mapping, has a key that is not a string, or holds a value JSON has
-            no type for, such as a timestamp. The last message says to quote
-            the value.
+            mapping, has a key that is not a string, uses an alias for a list
+            or a mapping or a merge key (``<<``), or holds a value JSON has no
+            type for, such as a timestamp. The last message says to quote the
+            value.
 
     """
     loader = YAML(typ="safe")
     loader.version = (1, 2)
+    loader.Constructor = _NoMergeConstructor
     try:
         # The only place ruamel's result is taken. Its `load` is typed to
         # return `Any`; `_to_json` receives it as `object` and builds a
@@ -56,7 +59,37 @@ def parse_yaml(text: str, origin: str) -> JsonValue:
         parsed: object = loader.load(text)  # pyright: ignore[reportAny, reportUnknownMemberType]
     except YAMLError as exc:
         raise RegistryError(f"{origin}: {_describe(exc)}") from exc
-    return _to_json(parsed, origin, "", ())
+    return _to_json(parsed, origin, "", set())
+
+
+_MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
+class _MergeKey(Protocol):
+    """The parts of the node of a mapping key that are used to spot ``<<``."""
+
+    tag: object
+    start_mark: object
+
+
+class _MappingNode(Protocol):
+    value: list[tuple[_MergeKey, object]]
+
+
+@final
+class _NoMergeConstructor(SafeConstructor):
+    """ruamel's safe constructor, refusing merge keys, which JSON has no form of."""
+
+    @override
+    def flatten_mapping(self, node: object) -> None:
+        # ruamel calls this for every mapping, before building it, to expand
+        # its merge keys; refusing them here means none is ever expanded.
+        for key, _ in cast("_MappingNode", node).value:
+            if key.tag == _MERGE_TAG:
+                raise ConstructorError(
+                    problem="merge keys (<<) are not supported; write the entries out",
+                    problem_mark=key.start_mark,
+                )
 
 
 def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
@@ -649,21 +682,16 @@ def _describe(exc: YAMLError) -> str:
     return f"{where}{marked.problem}{context}"
 
 
-def _to_json(
-    value: object, origin: str, pointer: str, active: tuple[int, ...]
-) -> JsonValue:
+def _to_json(value: object, origin: str, pointer: str, seen: set[int]) -> JsonValue:
     """
     Turn what ruamel built into a ``JsonValue``, refusing anything else.
 
-    ``pointer`` is the JSON pointer to ``value``, for messages. ``active``
-    holds the identities of the containers being converted, so that an alias
-    that contains itself is caught.
+    ``pointer`` is the JSON pointer to ``value``, for messages. ``seen`` holds
+    the identities of the lists and mappings met so far. ruamel builds the node
+    an alias names once and shares it, so meeting one again is an alias, which
+    is refused: expanding aliases of aliases grows without bound.
     """
     here = pointer or "<root>"
-    identity = id(value)
-    if identity in active:
-        raise RegistryError(f"{origin}: {here}: an alias refers to itself")
-    inside = (*active, identity)
     match value:
         case None | bool() | int() | str():
             return value
@@ -674,20 +702,30 @@ def _to_json(
             return value
         case list():
             items = cast("list[object]", value)
+            _first_time(items, seen, f"{origin}: {here}")
             return [
-                _to_json(item, origin, f"{pointer}/{index}", inside)
+                _to_json(item, origin, f"{pointer}/{index}", seen)
                 for index, item in enumerate(items)
             ]
         case dict():
             members = cast("dict[object, object]", value)
+            _first_time(members, seen, f"{origin}: {here}")
             converted: dict[str, JsonValue] = {}
             for key, member in members.items():
                 if not isinstance(key, str):
                     message = f"{origin}: {here}: key {key} is not a string; quote it"
                     raise RegistryError(message)
-                converted[key] = _to_json(member, origin, f"{pointer}/{key}", inside)
+                converted[key] = _to_json(member, origin, f"{pointer}/{key}", seen)
             return converted
         case _:
             kind = type(value).__name__
             message = f"{origin}: {here}: {kind} is not a JSON value; quote it"
             raise RegistryError(message)
+
+
+def _first_time(node: object, seen: set[int], where: str) -> None:
+    """Refuse ``node`` if it was met before, and remember it."""
+    if id(node) in seen:
+        message = f"{where}: aliases are not supported; write the value out in full"
+        raise RegistryError(message)
+    seen.add(id(node))

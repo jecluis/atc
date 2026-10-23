@@ -97,6 +97,25 @@ def test_duplicate_keys_are_refused(write_registry: RegistryWriter, home: Path) 
         _ = load_registry(write_registry(text), home)
 
 
+def test_aliases_are_refused(write_registry: RegistryWriter, home: Path) -> None:
+    text = (
+        MINIMAL_REGISTRY
+        + "    vars: &shared {scratch_root: /mnt/s}\n"
+        + "    projects:\n      bar: {repo: ~/src/bar, vars: *shared}\n"
+    )
+    with pytest.raises(RegistryError, match="aliases are not supported"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_merge_keys_are_refused(write_registry: RegistryWriter, home: Path) -> None:
+    text = (
+        MINIMAL_REGISTRY
+        + "      work:\n        <<: {agent: claude}\n        dir: ~/.config/work\n"
+    )
+    with pytest.raises(RegistryError, match=r"merge keys \(<<\) are not supported"):
+        _ = load_registry(write_registry(text), home)
+
+
 def test_non_string_keys_are_refused(
     write_registry: RegistryWriter, home: Path
 ) -> None:
