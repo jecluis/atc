@@ -17,6 +17,22 @@ def load_json(path: Path) -> JsonValue:
     """
     Parse the JSON document stored at ``path``, strictly.
 
+    Raises:
+        UnitError: the file cannot be read, or does not contain valid JSON. See
+            :func:`parse_json` for what counts as valid.
+
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UnitError(f"{path}: cannot be read: {exc}") from exc
+    return parse_json(text, str(path))
+
+
+def parse_json(text: str, origin: str) -> JsonValue:
+    """
+    Parse the JSON document ``text``, strictly. ``origin`` names it in errors.
+
     Python's JSON parser is more permissive than JSON itself. Two of its
     extensions are rejected here, because both would otherwise travel silently
     into a generated ``settings.local.json``: the constants ``NaN``,
@@ -25,13 +41,9 @@ def load_json(path: Path) -> JsonValue:
     occurrence and discard the rest without a word.
 
     Raises:
-        UnitError: the file cannot be read, or does not contain valid JSON.
+        UnitError: ``text`` is not valid JSON.
 
     """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise UnitError(f"{path}: cannot be read: {exc}") from exc
     try:
         # The only place untyped data crosses into the program. `json.loads` is
         # declared as returning `Any`; JsonValue describes exactly the set of
@@ -43,7 +55,7 @@ def load_json(path: Path) -> JsonValue:
             object_pairs_hook=_object_from_pairs,
         )
     except ValueError as exc:
-        raise UnitError(f"{path}: invalid JSON: {exc}") from exc
+        raise UnitError(f"{origin}: invalid JSON: {exc}") from exc
     return cast(JsonValue, parsed)
 
 

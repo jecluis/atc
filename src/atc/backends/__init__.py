@@ -5,6 +5,7 @@ from typing import Protocol
 
 from atc.backends.claude import ClaudeBackend
 from atc.errors import RegistryError
+from atc.jsonval import JsonObject
 from atc.registry import Account
 
 
@@ -30,6 +31,24 @@ class Backend(Protocol):
 
     def secrets(self, account: Account) -> tuple[Path, ...]:
         """Return the credential and state files its own sessions must not read."""
+        ...
+
+    def settings_file(self, account: Account) -> Path:
+        """Return the file ``account``'s generated settings are written to."""
+        ...
+
+    def render(self, settings: JsonObject) -> str:
+        """Return ``settings`` as the text of that file."""
+        ...
+
+    def parse(self, text: str, origin: str) -> JsonObject:
+        """
+        Read the text of a settings file, naming ``origin`` in errors.
+
+        Raises:
+            UnitError: ``text`` is not a JSON object.
+
+        """
         ...
 
 

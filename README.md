@@ -7,8 +7,8 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc show account`, `atc show project`, `atc src ls`,
-`atc src check` and `atc src pull`.
+Today the tool implements `atc sync`, `atc show account`, `atc show project`,
+`atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -403,6 +403,72 @@ output and the exit status are the same as without the check.
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 
+### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
+
+Writes `settings.json` in the directory of each account named, or of every
+account, from the settings atc builds for it (see `atc show account`). The
+directory must exist already, because creating an account means logging in,
+which atc does not do. Every account is built before any is written, so an error
+in one leaves all of them as they were, and every account that fails is reported.
+
+Three versions are involved: the **new** settings the units produce, the **live**
+file, and the **last** settings atc wrote, which it remembers. They are compared
+as JSON, so a file that Claude Code only reformatted has not been edited. A live
+file that is not valid JSON equals nothing: it counts as never synced when there
+is no last, and as edited outside atc otherwise. A last that cannot be read counts
+as missing, so it is never trusted. Each account is in one of these situations:
+
+| Live file | Last | Situation | What happens |
+| --- | --- | --- | --- |
+| missing | any | Not created yet | New is written. |
+| the same as new | any | Already current | Nothing is written, and new is recorded as last. |
+| present | unknown | Never synced, and differs | The difference from live to new is shown, and nothing is written unless `--take-over` is given. |
+| the same as last | known | Unchanged since the last sync | New is written. |
+| not the same as last | known | Edited outside atc | The edit, from last to live, is shown, and nothing is written unless `--discard-live` is given. |
+
+To keep an edit made outside atc, move it into a unit, commit it, run
+`atc src pull`, and run `atc sync` again: live then equals new, so nothing is
+discarded.
+
+Each line of output is `ACCOUNT: STATUS` on standard output, where the status is
+one of:
+
+- `written`
+- `current`
+- `would write`, with `--check` or `--diff`
+- `never synced and differs (--take-over writes it)`
+- `edited outside atc (--discard-live overwrites it)`
+
+An account that is left alone also gets a unified diff. Warnings about the
+account's settings, among them permission rules that can never apply (see Rule
+warnings), go to standard error.
+
+**Every write** first copies the live file, when there is one, to
+`<state_dir>/sync/ACCOUNT/backups/<UTC time>-settings.json`, such as
+`20261023T120000Z-settings.json`, and keeps the last ten. It then replaces the file
+in one step, from a temporary file in the same directory, and keeps the file's
+permissions. A new file is readable by you alone. The last settings are kept in
+`<state_dir>/sync/ACCOUNT/settings.json`. `<state_dir>` is `~/.local/state/atc`, or
+`atc` in `$XDG_STATE_HOME` when that is an absolute path. Backups and records
+are readable by you alone, because settings can hold secrets.
+
+Run `atc sync` from your own terminal: Claude Code does not let commands in its
+sandbox write `settings.json`.
+
+| Option | Effect |
+| --- | --- |
+| `--check` | Write nothing. Exit `3` if any account would be written or was left alone. |
+| `--diff` | Write nothing, and show the settings diff of each account that would change. |
+| `--take-over` | Write settings that were never synced but differ from new. |
+| `--discard-live` | Write settings that were edited outside atc, discarding the edit. |
+| `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--check` or `--diff`: `sync` writes only what the default sources build. |
+
+The exit status is `3` when an account was left alone (never synced and
+differing, or edited outside atc) and with `--check` when anything would be
+written, `1` when an account cannot be built, planned or written, and `0`
+otherwise.
+
 ### Rule warnings
 
 Claude Code applies permission rules deny first, then ask, then allow, whichever
@@ -440,7 +506,8 @@ a repository's own `.claude/settings*.json` are not considered.
 `atc show account` checks the account's settings alone. `atc show project`
 checks the account's and the project's together, as Claude Code sees them.
 `atc src check` checks every account, and every project with each account it
-allows. These warnings go to standard error. They never change what atc prints
+allows. `atc sync` checks the account it writes. These warnings go to standard
+error. They never change what atc prints
 or writes, and never change the exit status.
 
 ### Output and exit status
@@ -449,8 +516,10 @@ Output is coloured only when it goes to a terminal. `NO_COLOR` and
 `FORCE_COLOR` are honoured.
 
 Exit status is `0` on success, `1` for a problem with the configuration, a
-config source or git, which includes a source `atc src pull` failed or refused,
-and `2` for a problem with the command line.
+config source or git, which includes a source `atc src pull` failed or refused
+and a file `atc sync` could not write, `2` for a problem with the command line,
+and `3` when `atc sync` left an account alone or, with `--check`, has something
+to write.
 
 ## Development
 

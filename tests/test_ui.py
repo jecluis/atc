@@ -105,3 +105,35 @@ def test_no_color_is_honoured(
     err = capsys.readouterr().err
     assert YELLOW not in err
     assert "warning:" in err
+
+
+DIFF = ["--- a (live)", "+++ a (new)", "@@ -1 +1 @@", '-"[red]x"', '+"[bold]y"']
+
+
+def test_diff_lines_are_plain_text_when_stdout_is_not_a_terminal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    Ui.default().diff(DIFF)
+    captured = capsys.readouterr()
+    assert captured.out == "".join(f"{line}\n" for line in DIFF)
+    assert captured.err == ""
+
+
+def test_diff_lines_are_coloured_on_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    terminal_ui().diff(DIFF)
+    out = capsys.readouterr().out
+    assert RED in out
+    assert "\x1b[32m" in out
+    assert ANSI.sub("", out) == "".join(f"{line}\n" for line in DIFF)
+
+
+def test_diff_shows_control_characters_as_escapes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    terminal_ui().diff(["+a\x1b[2Jb\x07"])
+    out = ANSI.sub("", capsys.readouterr().out)
+    assert out == "+a\\x1b[2Jb\\x07\n"

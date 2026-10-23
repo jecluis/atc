@@ -1,4 +1,4 @@
-"""The Claude backend: where an account keeps its files."""
+"""The Claude backend: where an account keeps its files and settings."""
 
 from pathlib import Path
 
@@ -6,7 +6,8 @@ import pytest
 
 from atc.backends import backend_for
 from atc.backends.claude import ClaudeBackend
-from atc.errors import RegistryError
+from atc.errors import RegistryError, UnitError
+from atc.jsonval import dumps
 from atc.registry import Registry, parse_registry
 
 REGISTRY = """\
@@ -80,3 +81,31 @@ def test_backend_for_names_the_agents_it_supports(home: Path) -> None:
     assert isinstance(backend_for("claude", home), ClaudeBackend)
     with pytest.raises(RegistryError, match=r"'nope'.*claude"):
         _ = backend_for("nope", home)
+
+
+def test_settings_live_in_the_account_directory(home: Path) -> None:
+    account = load(home).account("bravo")
+
+    path = ClaudeBackend(home).settings_file(account)
+
+    assert path == home / ".config" / "bravo" / "claude" / "settings.json"
+
+
+def test_render_is_the_tools_json_output(home: Path) -> None:
+    assert ClaudeBackend(home).render({"b": 1, "a": [True]}) == dumps(
+        {"b": 1, "a": [True]}
+    )
+
+
+def test_parse_reads_an_object_strictly(home: Path) -> None:
+    backend = ClaudeBackend(home)
+
+    assert backend.parse('{"a": {"b": 1}}', "live") == {"a": {"b": 1}}
+    for text in ("{nope", '{"a": NaN}', '{"a": 1, "a": 2}'):
+        with pytest.raises(UnitError, match=r"^live: invalid JSON"):
+            _ = backend.parse(text, "live")
+
+
+def test_parse_refuses_what_is_not_an_object(home: Path) -> None:
+    with pytest.raises(UnitError, match=r"^live: .*object.*array"):
+        _ = ClaudeBackend(home).parse("[1]", "live")

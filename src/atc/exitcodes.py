@@ -8,3 +8,6 @@ CONFIG = 1
 
 USAGE = 2
 """The command line is wrong."""
+
+CHECK = 3
+"""A check failed, or ``atc sync`` left something unwritten."""

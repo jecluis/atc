@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from atc.errors import UnitError
+from atc.jsonval import JsonObject, dumps, json_kind, parse_json
 from atc.registry import Account, normalize_path
 
 
@@ -35,6 +37,21 @@ class ClaudeBackend:
             else account.dir / ".claude.json"
         )
         return (account.dir / ".credentials.json", state)
+
+    def settings_file(self, account: Account) -> Path:
+        """``settings.json`` in the account's directory."""
+        return account.dir / "settings.json"
+
+    def render(self, settings: JsonObject) -> str:
+        return dumps(settings)
+
+    def parse(self, text: str, origin: str) -> JsonObject:
+        document = parse_json(text, origin)
+        if not isinstance(document, dict):
+            raise UnitError(
+                f"{origin}: expected a JSON object, found {json_kind(document)}"
+            )
+        return document
 
     def _home_state(self) -> Path:
         return self.home / ".claude.json"

@@ -43,3 +43,7 @@ class PolicyError(ConfigError):
 
 class TemplateError(ConfigError):
     """A unit's settings use a reference that cannot be expanded."""
+
+
+class WriteError(ConfigError):
+    """A file atc had to write could not be written."""

@@ -1,5 +1,6 @@
 """Terminal output: data on standard output, diagnostics on standard error."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Self
 
@@ -62,6 +63,20 @@ class Ui:
         _ = self.out.file.write(dumps(value))
         self.out.file.flush()
 
+    def diff(self, lines: Iterable[str]) -> None:
+        """
+        Write the lines of a unified diff on standard output.
+
+        On a terminal, removed lines are red, added lines green and headers
+        bold. The lines are plain text, never markup, and a control character
+        in one, such as the escape that starts a terminal command, is shown as
+        its escape sequence, since the lines can come from a file someone else
+        edited.
+        """
+        for line in lines:
+            text = Text(_visible(line), style=_diff_style(line))
+            self.out.print(text, soft_wrap=True)
+
     def table(self, table: Table) -> None:
         """Write ``table`` on standard output."""
         self.out.print(table)
@@ -71,3 +86,26 @@ class Ui:
         # parsed as markup, and a path or branch name can look like markup.
         line = Text.assemble((prefix, style), " ", message)
         self.err.print(line, soft_wrap=True)
+
+
+def _diff_style(line: str) -> str:
+    """Pick the style of one line of a unified diff."""
+    if line.startswith(("---", "+++")):
+        return "bold"
+    if line.startswith("@@"):
+        return "cyan"
+    if line.startswith("-"):
+        return "red"
+    if line.startswith("+"):
+        return "green"
+    return ""
+
+
+def _visible(line: str) -> str:
+    """Spell out the characters of ``line`` that a terminal would act on."""
+    return "".join(
+        char
+        if char.isprintable() or char == "\t"
+        else char.encode("unicode_escape").decode()
+        for char in line
+    )

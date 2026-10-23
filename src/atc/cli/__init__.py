@@ -9,6 +9,7 @@ import rich_click
 from atc import exitcodes
 from atc.cli.show import show
 from atc.cli.src import src
+from atc.cli.sync import sync
 from atc.errors import ConfigError
 from atc.ui import Ui
 
@@ -23,6 +24,7 @@ def app() -> None:
 
 app.add_command(show)
 app.add_command(src)
+app.add_command(sync)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
