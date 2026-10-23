@@ -43,7 +43,7 @@ TOP_LEVEL = ("rev-parse", "--show-toplevel")
 GC_AUTO = ("config", "--get", "gc.auto")
 NOT_IN_A_REPOSITORY = "not in a git repository, so the repository checks are skipped"
 REPOSITORY_CHECKS = 7
-PROTECTED = 18
+PROTECTED = 19
 """How many checks a session in a repository, in the `personal` account, makes."""
 
 
@@ -166,6 +166,7 @@ def make_world(home: Path, dirs: Dirs, registry: Registry) -> World:
             home / "python" / "cpython",
             dirs.conf_d / "assets" / "AGENTS.md",
             dirs.conf_d / "skills" / "grill-me",
+            dirs.conf_d / "skills" / "grill-me" / "SKILL.md",
         },
         answers={TOP_LEVEL: str(git_dir.parent), GC_AUTO: "0"},
         common=git_dir,
@@ -480,11 +481,35 @@ def test_a_skill_link_the_registry_does_not_select_is_checked(world: World) -> N
     world.probe.listings[world.personal / "skills"].append(entry)
     world.probe.links[entry] = checkout
     world.probe.writable_paths.add(checkout)
+    world.probe.existing.add(checkout / "SKILL.md")
 
     report = world.run()
 
     assert failures(report) == [f"{checkout} is not writable (linked from {entry})"]
-    assert len(report.results) == PROTECTED + 1
+    assert len(report.results) == PROTECTED + 2
+
+
+def test_a_writable_skill_md_in_a_read_only_skill_fails(world: World) -> None:
+    skill = world.dirs.conf_d / "skills" / "grill-me" / "SKILL.md"
+    world.probe.writable_paths.add(skill)
+    entry = world.personal / "skills" / "grill-me"
+
+    assert failures(world.run()) == [f"{skill} is not writable (linked from {entry})"]
+
+
+def test_a_missing_skill_md_in_a_writable_skill_fails_with_the_skill(
+    world: World,
+) -> None:
+    target = world.dirs.conf_d / "skills" / "grill-me"
+    world.probe.writable_paths.add(target)
+    world.probe.existing.remove(target / "SKILL.md")
+    entry = world.personal / "skills" / "grill-me"
+
+    assert failures(world.run()) == [
+        f"{target} is not writable (linked from {entry})",
+        f"{target / 'SKILL.md'} is missing and could be created in {target} "
+        + f"(linked from {entry})",
+    ]
 
 
 def test_a_relative_link_target_is_taken_from_the_links_directory(
@@ -525,10 +550,23 @@ def test_a_missing_instructions_file_is_not_checked(world: World) -> None:
 def test_a_skill_that_is_not_a_link_must_not_be_writable(world: World) -> None:
     entry = world.personal / "skills" / "own"
     world.probe.listings[world.personal / "skills"].append(entry)
-    world.probe.existing.add(entry)
+    world.probe.existing.add(entry / "SKILL.md")
     world.probe.writable_paths.add(entry)
 
     assert failures(world.run()) == [f"{entry} is not writable (not a link)"]
+
+
+def test_the_skill_md_of_a_skill_that_is_not_a_link_must_not_be_writable(
+    world: World,
+) -> None:
+    entry = world.personal / "skills" / "own"
+    world.probe.listings[world.personal / "skills"].append(entry)
+    world.probe.existing.add(entry)
+    world.probe.writable_paths.add(entry / "SKILL.md")
+
+    assert failures(world.run()) == [
+        f"{entry / 'SKILL.md'} is not writable (not a link)"
+    ]
 
 
 def test_a_dangling_skill_link_under_a_writable_parent_fails(world: World) -> None:

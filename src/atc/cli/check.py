@@ -32,7 +32,7 @@ def check() -> None:
     - atc's configuration, config sources, state and runtime directories, its
       installation and the Python installation it runs on cannot be written
     - the files that the account's instructions file and every entry of its
-      skills directory lead to cannot be written
+      skills directory lead to cannot be written, nor can each skill's SKILL.md
 
     A path that is missing passes only if a session could not create it: if the
     nearest directory above it that exists cannot be written. A check that does

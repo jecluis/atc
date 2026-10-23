@@ -1072,8 +1072,8 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   Python installation it runs on (`atc.python_dir`), cannot be written.
 - **Instructions and skills:** what the account's instructions file and every
   entry of its skills directory lead to cannot be written. That is a link's
-  target, or the entry itself when it is a file or a directory. This includes
-  links that `atc sync` did not make.
+  target, or the entry itself when it is a file or a directory, and for each
+  skill, its `SKILL.md` too. This includes links that `atc sync` did not make.
 
 A path that is missing, or a link that leads nowhere, is no reason to pass: a
 session could create what is not there. Such a check passes only when the

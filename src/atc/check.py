@@ -13,6 +13,7 @@ from atc.errors import GitError, RegistryError
 from atc.git import common_dir as git_common_dir
 from atc.git import run_git
 from atc.paths import Dirs
+from atc.refs import SKILL_FILE
 from atc.registry import Account, Registry, normalize_path
 
 ACCOUNT_VARIABLE = "ATC_ACCOUNT"
@@ -421,8 +422,9 @@ def _instructions_and_skills(
     Check what the account's instructions file and every skill entry lead to.
 
     That is the target of a link, or the entry itself when it is a file or a
-    directory. An instructions file that is not there is not checked. A skills
-    directory that is there but cannot be listed fails.
+    directory, and for a skill that is there, its ``SKILL.md`` as well. An
+    instructions file that is not there is not checked. A skills directory that
+    is there but cannot be listed fails.
     """
     if account is None:
         note = "no account for this session: instructions and skills checks are skipped"
@@ -436,14 +438,20 @@ def _instructions_and_skills(
         what = f"{skills} cannot be listed, so its skills are unchecked: {exc}"
         results.append(CheckResult(False, what))
         listed = []
-    for entry in (backend.instructions_file(account), *listed):
+    instructions = backend.instructions_file(account)
+    for entry in (instructions, *listed):
         link = probe.readlink(entry)
         if link is not None:
-            target = entry.parent / link
-            where = f"linked from {entry}"
-            results.append(_cannot_write(probe, target, str(target), where=where))
+            found, where = entry.parent / link, f"linked from {entry}"
         elif probe.exists(entry):
-            results.append(_cannot_write(probe, entry, str(entry), where="not a link"))
+            found, where = entry, "not a link"
+        else:
+            continue
+        results.append(_cannot_write(probe, found, str(found), where=where))
+        landing = _landing(probe, found)
+        if entry != instructions and landing is not None and probe.exists(landing):
+            skill = found / SKILL_FILE
+            results.append(_cannot_write(probe, skill, str(skill), where=where))
     return Report(tuple(results))
 
 
