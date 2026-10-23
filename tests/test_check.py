@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from atc.check import (
+    CheckResult,
     RealProbe,
     Report,
     current_account,
@@ -48,7 +49,13 @@ PROTECTED = 18
 
 @dataclass(slots=True)
 class FakeProbe:
-    """A session's view of files and git, as sets of what it can do."""
+    """
+    A session's view of files and git, as sets of what it can do.
+
+    A path exists when it is in ``existing`` or in ``writable_paths``. Asking
+    whether a path that does not exist is writable is a mistake in the test or
+    in the check, so it raises rather than answering.
+    """
 
     writable_paths: set[Path] = field(default_factory=set[Path])
     readable_paths: set[Path] = field(default_factory=set[Path])
@@ -59,15 +66,20 @@ class FakeProbe:
     common: Path | GitError | None = None
     links: dict[Path, Path] = field(default_factory=dict[Path, Path])
     listings: dict[Path, list[Path]] = field(default_factory=dict[Path, list[Path]])
+    unlistable: set[Path] = field(default_factory=set[Path])
 
     def writable(self, path: Path) -> bool:
+        if not self.exists(path):
+            raise AssertionError(
+                f"asked whether {path}, which is not there, is writable"
+            )
         return path in self.writable_paths
 
     def readable_contents(self, path: Path) -> bool:
         return path in self.readable_paths
 
     def exists(self, path: Path) -> bool:
-        return path in self.existing
+        return path in self.existing or path in self.writable_paths
 
     def git(self, args: Sequence[str]) -> str:
         if tuple(args) not in self.answers:
@@ -83,6 +95,8 @@ class FakeProbe:
         return self.links.get(path)
 
     def entries(self, directory: Path) -> list[Path]:
+        if directory in self.unlistable:
+            raise PermissionError(13, "Permission denied", str(directory))
         return self.listings.get(directory, [])
 
 
@@ -135,12 +149,23 @@ def make_world(home: Path, dirs: Dirs, registry: Registry) -> World:
     probe = FakeProbe(
         writable_paths={git_dir / "objects"},
         existing={
+            git_dir / "objects",
+            git_dir / "objects" / "pack",
             git_dir / "packed-refs",
             git_dir / "hooks",
             git_dir / "config",
+            git_dir.parent.parent,
             personal / ".credentials.json",
             home / ".claude.json",
             registry.account("bravo").dir,
+            dirs.config_dir,
+            dirs.conf_d,
+            dirs.state_dir,
+            dirs.runtime_dir,
+            home / "tools" / "atc",
+            home / "python" / "cpython",
+            dirs.conf_d / "assets" / "AGENTS.md",
+            dirs.conf_d / "skills" / "grill-me",
         },
         answers={TOP_LEVEL: str(git_dir.parent), GC_AUTO: "0"},
         common=git_dir,
@@ -217,7 +242,6 @@ def test_packed_refs_hooks_and_config_are_checked_only_when_present(
 ) -> None:
     gone = {world.git_dir / name for name in ("packed-refs", "hooks", "config")}
     world.probe.existing -= gone
-    world.probe.writable_paths |= gone
 
     report = world.run()
 
@@ -490,7 +514,7 @@ def test_an_instructions_file_that_is_not_a_link_must_not_be_writable(
 def test_a_missing_instructions_file_is_not_checked(world: World) -> None:
     entry = world.personal / "CLAUDE.md"
     del world.probe.links[entry]
-    world.probe.writable_paths.add(entry)
+    world.probe.writable_paths.add(world.personal)
 
     report = world.run()
 
@@ -507,8 +531,193 @@ def test_a_skill_that_is_not_a_link_must_not_be_writable(world: World) -> None:
     assert failures(world.run()) == [f"{entry} is not writable (not a link)"]
 
 
+def test_a_dangling_skill_link_under_a_writable_parent_fails(world: World) -> None:
+    entry = world.personal / "skills" / "legacy"
+    parent = world.home / "claude-stuff" / "skills"
+    target = parent / "legacy"
+    world.probe.listings[world.personal / "skills"].append(entry)
+    world.probe.links[entry] = target
+    world.probe.writable_paths.add(parent)
+
+    assert failures(world.run()) == [
+        f"{target} is missing and could be created in {parent} (linked from {entry})"
+    ]
+
+
+def test_a_link_to_a_dangling_link_is_followed(world: World) -> None:
+    entry = world.personal / "skills" / "legacy"
+    middle = world.home / "links" / "legacy"
+    target = world.home / "claude-stuff" / "legacy"
+    world.probe.listings[world.personal / "skills"].append(entry)
+    world.probe.links |= {entry: middle, middle: target}
+    world.probe.existing.add(middle)
+    world.probe.writable_paths.add(target.parent)
+
+    assert failures(world.run()) == [
+        f"{middle} is missing and could be created in {target.parent} "
+        + f"(linked from {entry})"
+    ]
+
+
+def test_a_missing_state_dir_under_a_writable_parent_fails(world: World) -> None:
+    state = world.dirs.state_dir
+    world.probe.existing.remove(state)
+    world.probe.writable_paths.add(state.parent)
+
+    assert failures(world.run()) == [
+        f"atc's state directory {state} is missing and could be created in "
+        + str(state.parent)
+    ]
+
+
+def test_a_missing_path_under_a_read_only_parent_passes(world: World) -> None:
+    state = world.dirs.state_dir
+    world.probe.existing.remove(state)
+    world.probe.existing.add(state.parent.parent)
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert CheckResult(
+        True, f"atc's state directory {state} is missing and can't be created"
+    ) in (report.results)
+
+
+def test_a_missing_path_with_nothing_above_it_fails(world: World) -> None:
+    runtime = world.dirs.runtime_dir
+    world.probe.existing.remove(runtime)
+
+    assert failures(world.run()) == [
+        f"atc's runtime directory {runtime} is missing, and no directory above it "
+        + "exists"
+    ]
+
+
+def test_a_missing_path_under_a_dangling_link_is_checked_where_it_leads(
+    world: World,
+) -> None:
+    state = world.dirs.state_dir
+    elsewhere = world.home / "elsewhere"
+    world.probe.existing.remove(state)
+    world.probe.existing.add(state.parent)
+    world.probe.links[state.parent] = elsewhere / "state"
+    world.probe.writable_paths.add(elsewhere)
+
+    assert failures(world.run()) == [
+        f"atc's state directory {state} is missing and could be created in "
+        + str(elsewhere)
+    ]
+
+
+def test_a_loop_of_links_fails(world: World) -> None:
+    install = world.install_dir
+    other = install.parent / "other"
+    world.probe.links |= {install: other, other: install}
+    world.probe.existing.add(other)
+    world.probe.writable_paths.add(install.parent)
+
+    assert failures(world.run()) == [
+        f"atc's install directory {install} leads through a loop of symbolic "
+        + "links, or too many of them, so it is unchecked"
+    ]
+
+
+@pytest.mark.parametrize("hole", ["dangling-ancestor", "loop"])
+def test_links_on_disk_are_followed_before_the_verdict(
+    tmp_path: Path,
+    home: Path,
+    dirs: Dirs,
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+    hole: str,
+) -> None:
+    room = tmp_path / "room"
+    room.mkdir()
+    if hole == "dangling-ancestor":
+        (room / "a").symlink_to(room / "c")
+        python = room / "a" / "python"
+        expected = (
+            f"atc's Python directory {python} is missing and could be created in "
+            + str(room)
+        )
+    else:
+        (room / "x").symlink_to(room / "y")
+        (room / "y").symlink_to(room / "x")
+        python = room / "x"
+        expected = (
+            f"atc's Python directory {python} leads through a loop of symbolic "
+            + "links, or too many of them, so it is unchecked"
+        )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+
+    report = run_checks(
+        RealProbe(),
+        registry=registry,
+        dirs=dirs,
+        install_dir=tmp_path / "atc",
+        python_dir=python,
+        home=home,
+        env={"ATC_ACCOUNT": "personal"},
+    )
+
+    assert CheckResult(False, expected) in report.results
+
+
+def test_a_missing_pack_directory_under_writable_objects_fails(world: World) -> None:
+    pack = world.git_dir / "objects" / "pack"
+    world.probe.existing.remove(pack)
+
+    assert failures(world.run()) == [
+        f"{pack} is missing and could be created in {world.git_dir / 'objects'}"
+    ]
+
+
+def test_a_skills_directory_that_cannot_be_listed_fails(world: World) -> None:
+    skills = world.personal / "skills"
+    world.probe.unlistable.add(skills)
+
+    (failed,) = failures(world.run())
+
+    assert failed.startswith(f"{skills} cannot be listed, so its skills are unchecked")
+    assert "Permission denied" in failed
+
+
+def test_a_dangling_link_on_disk_fails_when_its_target_could_be_made(
+    tmp_path: Path,
+    home: Path,
+    dirs: Dirs,
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skills = home / ".claude" / "skills"
+    skills.mkdir(parents=True)
+    checkout = tmp_path / "claude-stuff" / "skills"
+    checkout.mkdir(parents=True)
+    (skills / "foo").symlink_to(checkout / "foo")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+
+    report = run_checks(
+        RealProbe(),
+        registry=registry,
+        dirs=dirs,
+        install_dir=tmp_path / "atc",
+        python_dir=tmp_path / "python",
+        home=home,
+        env={"ATC_ACCOUNT": "personal"},
+    )
+
+    target = checkout / "foo"
+    assert CheckResult(
+        False,
+        f"{target} is missing and could be created in {checkout} "
+        + f"(linked from {skills / 'foo'})",
+    ) in (report.results)
+
+
 def test_home_is_in_a_sandbox_only_when_it_is_not_writable(home: Path) -> None:
-    probe = FakeProbe()
+    probe = FakeProbe(existing={home})
     assert in_sandbox(probe, home)
 
     probe.writable_paths.add(home)
@@ -629,6 +838,8 @@ def test_the_real_probe_asks_the_file_system(tmp_path: Path) -> None:
     assert probe.readlink(skills / "gone") is None
     assert probe.entries(skills) == [dangling, file]
     assert probe.entries(skills / "gone") == []
+    with pytest.raises(NotADirectoryError):
+        _ = probe.entries(file)
 
 
 def test_the_real_probe_runs_git_in_the_current_directory(
@@ -675,6 +886,12 @@ def test_the_real_probe_raises_for_a_repository_git_refuses(
 
 
 def use_probe(monkeypatch: pytest.MonkeyPatch, world: World) -> None:
+    # The command checks the environment it runs in, which this one is.
+    world.probe.existing |= {
+        world.home,
+        Path(sys.prefix),
+        Path(sys.base_prefix).resolve(),
+    }
     # `atc.cli.check` names the command in the package, not the module.
     module = import_module("atc.cli.check")
     monkeypatch.setattr(module, "RealProbe", lambda: world.probe)

@@ -34,11 +34,13 @@ def check() -> None:
     - the files that the account's instructions file and every entry of its
       skills directory lead to cannot be written
 
-    A check that does not apply, such as the repository checks outside a
-    repository, gives a plain line saying so instead. If git cannot inspect
-    the repository, that is a FAIL. The exit status is 0 when everything passes
-    and 3 otherwise. If the home directory can be written this is not a
-    sandbox: it says so and exits with status 2.
+    A path that is missing passes only if a session could not create it: if the
+    nearest directory above it that exists cannot be written. A check that does
+    not apply, such as the repository checks outside a repository, gives a plain
+    line saying so instead. If git cannot inspect the repository, or the skills
+    directory cannot be listed, that is a FAIL. The exit status is 0 when
+    everything passes and 3 otherwise. If the home directory can be written
+    this is not a sandbox: it says so and exits with status 2.
     """  # noqa: D301  (\b keeps the list above from being rewrapped)
     home = Path.home()
     probe = RealProbe()

@@ -1075,6 +1075,15 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   target, or the entry itself when it is a file or a directory. This includes
   links that `atc sync` did not make.
 
+A path that is missing, or a link that leads nowhere, is no reason to pass: a
+session could create what is not there. Such a check passes only when the
+nearest directory above the path that exists cannot be written, and the line
+says the path is missing and can't be created; otherwise it fails, saying where
+the path could be created. A skills directory that is there but cannot be listed
+is a `FAIL` too. Links are followed to where a write would land, including a link
+that is the nearest directory above a missing path, and a loop of links, or more
+than 40 of them, is a `FAIL`.
+
 A check that does not apply is not a `PASS`: a plain line says so instead. That
 is the case for the repository checks outside a repository, and for the
 instructions and skills checks when no account matches the session.

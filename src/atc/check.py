@@ -20,13 +20,19 @@ ACCOUNT_VARIABLE = "ATC_ACCOUNT"
 
 _TOP_LEVEL = ("rev-parse", "--show-toplevel")
 _GC_AUTO = ("config", "--get", "gc.auto")
+_MAX_LINKS = 40
+"""How many symbolic links are followed from one path, as Linux follows them."""
 
 
 class Probe(Protocol):
     """What a session can do to files and to git, found out without changing them."""
 
     def writable(self, path: Path) -> bool:
-        """Say whether ``path`` can be written, without writing it."""
+        """
+        Say whether ``path``, which exists, can be written, without writing it.
+
+        For a directory that is whether entries can be made in it.
+        """
         ...
 
     def readable_contents(self, path: Path) -> bool:
@@ -64,7 +70,13 @@ class Probe(Protocol):
         ...
 
     def entries(self, directory: Path) -> list[Path]:
-        """List what ``directory`` holds, or nothing when it cannot be read."""
+        """
+        List what ``directory`` holds, which is nothing when it is missing.
+
+        Raises:
+            OSError: ``directory`` is there but cannot be listed.
+
+        """
         ...
 
 
@@ -111,7 +123,7 @@ class RealProbe:
     def entries(self, directory: Path) -> list[Path]:
         try:
             return sorted(directory.iterdir())
-        except OSError:
+        except FileNotFoundError:
             return []
 
 
@@ -238,7 +250,74 @@ def _repository(probe: Probe) -> Report:
 
 
 def _read_only(probe: Probe, path: Path) -> CheckResult:
-    return CheckResult(not probe.writable(path), f"{path} is read-only")
+    return _cannot_write(probe, path, str(path), claim="is read-only")
+
+
+def _cannot_write(
+    probe: Probe,
+    path: Path,
+    subject: str,
+    *,
+    claim: str = "is not writable",
+    where: str = "",
+) -> CheckResult:
+    """
+    Check that ``path``, which messages call ``subject``, cannot be written.
+
+    Symbolic links are followed to where writing ``path`` would land, as
+    :func:`_landing` does. When that is missing, what counts is whether a
+    session could create it: whether the nearest directory above it that
+    exists can be written. A loop of links, or too many, fails. ``claim`` is
+    what passing says, and ``where``, when given, is added in brackets.
+    """
+    tail = f" ({where})" if where else ""
+    landing = _landing(probe, path)
+    if landing is None:
+        what = (
+            f"{subject} leads through a loop of symbolic links, or too many of "
+            + f"them, so it is unchecked{tail}"
+        )
+        return CheckResult(False, what)
+    if probe.exists(landing):
+        return CheckResult(not probe.writable(landing), f"{subject} {claim}{tail}")
+    above = _nearest(probe, landing)
+    if above is None:
+        missing = f"{subject} is missing, and no directory above it exists{tail}"
+        return CheckResult(False, missing)
+    if probe.writable(above):
+        return CheckResult(
+            False, f"{subject} is missing and could be created in {above}{tail}"
+        )
+    return CheckResult(True, f"{subject} is missing and can't be created{tail}")
+
+
+def _landing(probe: Probe, path: Path) -> Path | None:
+    """
+    Find where writing ``path`` would land, following symbolic links.
+
+    That is past the links at its end, and, while it is missing, past a link
+    that is the nearest directory above it that exists, since what is missing
+    would be made where that link leads. ``None`` means the links run out: a
+    loop, or more than ``_MAX_LINKS``.
+    """
+    for _ in range(_MAX_LINKS):
+        link = probe.readlink(path)
+        if link is not None:
+            path = path.parent / link
+            continue
+        if probe.exists(path):
+            return path
+        above = _nearest(probe, path)
+        link = None if above is None else probe.readlink(above)
+        if above is None or link is None:
+            return path
+        path = above.parent / link / path.relative_to(above)
+    return None
+
+
+def _nearest(probe: Probe, path: Path) -> Path | None:
+    """Find the nearest directory above ``path`` that exists, if any does."""
+    return next((parent for parent in path.parents if probe.exists(parent)), None)
 
 
 def _gc_is_off(probe: Probe) -> CheckResult:
@@ -329,10 +408,7 @@ def _atc_itself(
     )
     return Report(
         tuple(
-            CheckResult(
-                not probe.writable(path),
-                f"atc's {label} directory {path} is not writable",
-            )
+            _cannot_write(probe, path, f"atc's {label} directory {path}")
             for label, path in named
         )
     )
@@ -345,33 +421,29 @@ def _instructions_and_skills(
     Check what the account's instructions file and every skill entry lead to.
 
     That is the target of a link, or the entry itself when it is a file or a
-    directory. An entry that is not there is not checked.
+    directory. An instructions file that is not there is not checked. A skills
+    directory that is there but cannot be listed fails.
     """
     if account is None:
         note = "no account for this session: instructions and skills checks are skipped"
         return Report((), (note,))
     backend = backend_for(account.agent, home)
-    entries = [
-        backend.instructions_file(account),
-        *probe.entries(backend.skills_dir(account)),
-    ]
+    skills = backend.skills_dir(account)
     results: list[CheckResult] = []
-    for entry in entries:
+    try:
+        listed = probe.entries(skills)
+    except OSError as exc:
+        what = f"{skills} cannot be listed, so its skills are unchecked: {exc}"
+        results.append(CheckResult(False, what))
+        listed = []
+    for entry in (backend.instructions_file(account), *listed):
         link = probe.readlink(entry)
         if link is not None:
             target = entry.parent / link
-            results.append(
-                CheckResult(
-                    not probe.writable(target),
-                    f"{target} is not writable (linked from {entry})",
-                )
-            )
+            where = f"linked from {entry}"
+            results.append(_cannot_write(probe, target, str(target), where=where))
         elif probe.exists(entry):
-            results.append(
-                CheckResult(
-                    not probe.writable(entry), f"{entry} is not writable (not a link)"
-                )
-            )
+            results.append(_cannot_write(probe, entry, str(entry), where="not a link"))
     return Report(tuple(results))
 
 
