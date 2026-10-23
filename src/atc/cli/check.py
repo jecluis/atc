@@ -24,9 +24,11 @@ def check() -> None:
     config sources. Prints one PASS or FAIL line per check:
 
     \b
-    - the repository's objects/pack and packed-refs, and hooks and config when
-      present, cannot be written, new objects can be, git's automatic gc is
-      off, and the directory above the worktree cannot be written
+    - the repository's objects/pack and packed-refs, hooks and config when
+      present, and the shared and the worktree's own config.worktree when
+      extensions.worktreeConfig is on, cannot be written, new objects can be,
+      git's automatic gc is off, and the directory above the worktree cannot be
+      written
     - the session's own account's credentials, and every other account's
       directory and files, cannot be read
     - atc's configuration, config sources, state and runtime directories, its

@@ -21,6 +21,20 @@ ACCOUNT_VARIABLE = "ATC_ACCOUNT"
 
 _TOP_LEVEL = ("rev-parse", "--show-toplevel")
 _GC_AUTO = ("config", "--get", "gc.auto")
+_WORKTREE_CONFIG = (
+    "config",
+    "--local",
+    "--type=bool",
+    "--default=false",
+    "--get",
+    "extensions.worktreeConfig",
+)
+_CONFIG_WORKTREE = (
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "config.worktree",
+)
 _MAX_LINKS = 40
 """How many symbolic links are followed from one path, as Linux follows them."""
 
@@ -239,6 +253,7 @@ def _repository(probe: Probe) -> Report:
         for name in ("packed-refs", "hooks", "config")
         if probe.exists(git_dir / name)
     ]
+    results += _config_worktree(probe, git_dir)
     results.append(
         CheckResult(
             probe.writable(git_dir / "objects"),
@@ -248,6 +263,35 @@ def _repository(probe: Probe) -> Report:
     results.append(_gc_is_off(probe))
     results.append(_worktree_parent_is_read_only(probe))
     return Report(tuple(results))
+
+
+def _config_worktree(probe: Probe, git_dir: Path) -> list[CheckResult]:
+    """
+    Check the ``config.worktree`` files git reads, if it reads any.
+
+    It does when ``extensions.worktreeConfig`` is on: the shared one, and the
+    current worktree's own, which is the shared one in the main worktree.
+    """
+    try:
+        if probe.git(_WORKTREE_CONFIG) != "true":
+            return []
+    except GitError as exc:
+        what = (
+            f"cannot tell whether git reads config.worktree, so it is unchecked ({exc})"
+        )
+        return [CheckResult(False, what)]
+    shared = git_dir / "config.worktree"
+    results = [_read_only(probe, shared)]
+    try:
+        own = Path(probe.git(_CONFIG_WORKTREE))
+    except GitError as exc:
+        what = (
+            f"cannot find this worktree's config.worktree, so it is unchecked ({exc})"
+        )
+        return [*results, CheckResult(False, what)]
+    if own != shared:
+        results.append(_read_only(probe, own))
+    return results
 
 
 def _read_only(probe: Probe, path: Path) -> CheckResult:

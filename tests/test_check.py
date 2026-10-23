@@ -41,6 +41,20 @@ accounts:
 
 TOP_LEVEL = ("rev-parse", "--show-toplevel")
 GC_AUTO = ("config", "--get", "gc.auto")
+WORKTREE_CONFIG = (
+    "config",
+    "--local",
+    "--type=bool",
+    "--default=false",
+    "--get",
+    "extensions.worktreeConfig",
+)
+CONFIG_WORKTREE = (
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "config.worktree",
+)
 NOT_IN_A_REPOSITORY = "not in a git repository, so the repository checks are skipped"
 REPOSITORY_CHECKS = 7
 PROTECTED = 19
@@ -168,7 +182,11 @@ def make_world(home: Path, dirs: Dirs, registry: Registry) -> World:
             dirs.conf_d / "skills" / "grill-me",
             dirs.conf_d / "skills" / "grill-me" / "SKILL.md",
         },
-        answers={TOP_LEVEL: str(git_dir.parent), GC_AUTO: "0"},
+        answers={
+            TOP_LEVEL: str(git_dir.parent),
+            GC_AUTO: "0",
+            WORKTREE_CONFIG: "false",
+        },
         common=git_dir,
         links={
             personal / "CLAUDE.md": dirs.conf_d / "assets" / "AGENTS.md",
@@ -248,6 +266,74 @@ def test_packed_refs_hooks_and_config_are_checked_only_when_present(
 
     assert failures(report) == []
     assert len(report.results) == PROTECTED - 3
+
+
+def test_config_worktree_is_not_checked_when_git_does_not_read_it(
+    world: World,
+) -> None:
+    world.probe.writable_paths.add(world.git_dir)
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert len(report.results) == PROTECTED
+    assert not [r for r in report.results if "config.worktree" in r.what]
+
+
+def test_the_main_worktree_s_config_worktree_is_checked_once(world: World) -> None:
+    common = world.git_dir / "config.worktree"
+    world.probe.answers |= {WORKTREE_CONFIG: "true", CONFIG_WORKTREE: str(common)}
+    world.probe.existing.add(common)
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert CheckResult(True, f"{common} is read-only") in report.results
+    assert len(report.results) == PROTECTED + 1
+
+
+def test_a_missing_config_worktree_in_a_writable_git_dir_fails(world: World) -> None:
+    common = world.git_dir / "config.worktree"
+    world.probe.answers |= {WORKTREE_CONFIG: "true", CONFIG_WORKTREE: str(common)}
+    world.probe.writable_paths.add(world.git_dir)
+
+    assert failures(world.run()) == [
+        f"{common} is missing and could be created in {world.git_dir}"
+    ]
+
+
+def test_a_linked_worktree_s_own_config_worktree_is_checked_too(
+    world: World,
+) -> None:
+    common = world.git_dir / "config.worktree"
+    own = world.git_dir / "worktrees" / "feature" / "config.worktree"
+    world.probe.answers |= {WORKTREE_CONFIG: "true", CONFIG_WORKTREE: str(own)}
+    world.probe.existing |= {common, own.parent}
+    world.probe.writable_paths.add(own)
+
+    report = world.run()
+
+    assert failures(report) == [f"{own} is read-only"]
+    assert CheckResult(True, f"{common} is read-only") in report.results
+    assert len(report.results) == PROTECTED + 2
+
+
+def test_config_worktree_git_cannot_answer_for_fails(world: World) -> None:
+    del world.probe.answers[WORKTREE_CONFIG]
+
+    (failed,) = failures(world.run())
+
+    assert failed.startswith("cannot tell whether git reads config.worktree")
+    assert "exit status 1" in failed
+
+
+def test_config_worktree_git_cannot_place_fails(world: World) -> None:
+    world.probe.answers[WORKTREE_CONFIG] = "true"
+    world.probe.existing.add(world.git_dir / "config.worktree")
+
+    (failed,) = failures(world.run())
+
+    assert failed.startswith("cannot find this worktree's config.worktree")
 
 
 def test_unwritable_objects_fails(world: World) -> None:
@@ -894,6 +980,29 @@ def test_the_real_probe_runs_git_in_the_current_directory(
     assert probe.common_dir() == repo.resolve() / ".git"
     with pytest.raises(GitError):
         _ = probe.git(["config", "--get", "no.such.key"])
+
+
+def test_the_real_probe_answers_where_git_reads_config_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _ = (repo / "file").write_text("x", encoding="utf-8")
+    _ = git_repo(repo)
+    linked = tmp_path / "linked"
+    _ = run_git(["worktree", "add", "-q", "-b", "feature", str(linked)], cwd=repo)
+    probe = RealProbe()
+    git_dir = repo.resolve() / ".git"
+
+    monkeypatch.chdir(linked)
+    assert probe.git(WORKTREE_CONFIG) == "false"
+    _ = run_git(["config", "extensions.worktreeConfig", "true"], cwd=repo)
+    assert probe.git(WORKTREE_CONFIG) == "true"
+    assert probe.git(CONFIG_WORKTREE) == str(
+        git_dir / "worktrees" / "linked" / "config.worktree"
+    )
+    monkeypatch.chdir(repo)
+    assert probe.git(CONFIG_WORKTREE) == str(git_dir / "config.worktree")
 
 
 def test_the_real_probe_finds_no_repository_outside_one(

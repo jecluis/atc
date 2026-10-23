@@ -1059,6 +1059,9 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
 - **The repository:** `objects/pack` and `packed-refs` cannot be written, nor can
   `hooks` and `config` when they exist, new objects can be written, git's
   automatic gc is off, and the directory above the worktree cannot be written.
+  When `extensions.worktreeConfig` is on, git also reads `config.worktree`, the
+  shared one and the current worktree's own, and neither can be written; when
+  it is off, they are not checked.
   If git cannot inspect the repository, for example because it refuses one that
   someone else owns, that is a `FAIL`, not a skip.
 - **The accounts:** the session's own account's credentials (`.credentials.json`
