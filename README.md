@@ -825,8 +825,11 @@ current directory is in, whether in the main checkout or in a worktree, as for
 
 Adds the project `NAME` to the machine registry. `REPO` is a checkout of the
 project's repository, the main one, a worktree or a bare repository, and
-defaults to the current directory. What is written as `repo` is the top level of
-its working tree, or `REPO` itself for a bare repository. Before anything is
+defaults to the current directory. What is written as `repo` is the repository's
+main worktree, whichever of its worktrees `REPO` is in, or the repository itself
+when it is bare, so that `atc wt rm` of a worktree never leaves the project
+without its repository. When the git directory is kept apart from the checkout,
+as a submodule's is, it is the top level of `REPO`. Before anything is
 written it checks that `REPO` is a git repository that no project has yet, and
 that the branch `BRANCH` exists in it, as `refs/heads/BRANCH`, so `main~1` or a
 tag is refused. `BRANCH` is `--from`, or `main` when that is not given. A failed
@@ -917,7 +920,8 @@ error that says why and exits `1`:
 - atc refuses one where a rebase, merge, cherry-pick, revert or bisect is in
   progress
 
-`--force` removes it anyway. A locked worktree is refused either way. **Files
+`--force` removes it anyway. A locked worktree is refused either way, and so is
+the project's own `repo`, which is never removed. **Files
 that git ignores are deleted** with the worktree, whatever they hold, as build
 output such as `target/` or `.venv` usually is: move anything you want to keep
 first. The branch is never deleted, so what is committed on it stays in the

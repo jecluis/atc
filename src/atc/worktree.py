@@ -111,16 +111,17 @@ def remove_worktree(project: Project, name: str, *, force: bool) -> None:
     """
     Remove the worktree ``name`` from ``project``, and keep its branch.
 
-    ``name`` is a directory in the project's worktrees directory. Unless
-    ``force``, a worktree whose removal would lose commits is refused: one
-    where a rebase, merge, cherry-pick, revert or bisect is in progress, or
-    whose ``HEAD`` is detached at a commit no branch contains. Git refuses one
-    with uncommitted changes or untracked files. The files git ignores are
-    deleted with it.
+    ``name`` is a directory in the project's worktrees directory, and never the
+    project's repository. Unless ``force``, a worktree whose removal would lose
+    commits is refused: one where a rebase, merge, cherry-pick, revert or
+    bisect is in progress, or whose ``HEAD`` is detached at a commit no branch
+    contains. Git refuses one with uncommitted changes or untracked files. The
+    files git ignores are deleted with it.
 
     Raises:
         ConfigError: the project has no worktrees directory, ``name`` is not
-            the name of a directory in it, or removing it would lose commits.
+            the name of a directory in it, it is the project's repository, or
+            removing it would lose commits.
         GitError: git refused, for example because ``name`` is not a worktree.
 
     """
@@ -130,6 +131,12 @@ def remove_worktree(project: Project, name: str, *, force: bool) -> None:
             f"'{name}' is not a name in {directory}; give the name of a directory in it"
         )
     path = directory / name
+    if path.resolve() == project.repo.resolve():
+        message = (
+            f"{path}: it is the repository of project '{project.name}', not a "
+            + "worktree to remove"
+        )
+        raise ConfigError(message)
     if not force:
         _refuse_losing_commits(project, path)
     args = ["worktree", "remove", *(["--force"] if force else []), str(path)]

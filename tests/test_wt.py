@@ -427,6 +427,32 @@ def test_rm_deletes_files_git_ignores(
     assert not path.exists()
 
 
+def test_rm_refuses_the_projects_repository(
+    configure: ConfigWriter,
+    agent: Path,
+    repo: Path,
+    worktrees: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A project registered by a linked worktree, as atc once allowed.
+    linked = worktrees / "linked"
+    _ = run_git(["worktree", "add", "-q", "-b", "linked", str(linked)], cwd=repo)
+    configure(
+        {"conf/accounts/personal.json": unit({})},
+        REGISTRY.format(agent=agent, repo=linked, more=f"    worktrees: {worktrees}\n"),
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["wt", "rm", "linked", "--force"]) == CONFIG
+
+    assert capsys.readouterr().err == (
+        f"error: {linked}: it is the repository of project 'bar', not a worktree "
+        + "to remove\n"
+    )
+    assert linked.is_dir()
+
+
 def test_rm_keeps_the_branch(repo: Path, register: Registrar) -> None:
     register()
     assert main(["wt", "new", "feature/x"]) == OK

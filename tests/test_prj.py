@@ -484,7 +484,7 @@ def test_add_refuses_a_repository_that_is_registered_already(
     status = main(["prj", "add", "again", str(wt)])
 
     assert status == CONFIG
-    assert f"{wt}: already registered as project 'bar'" in capsys.readouterr().err
+    assert f"{repo}: already registered as project 'bar'" in capsys.readouterr().err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
 
 
@@ -532,3 +532,62 @@ def test_add_keeps_a_bare_repository_as_it_is(
 
     assert status == OK
     assert load_registry(registry_file(dirs), home).projects["bar"].repo == bare
+
+
+@pytest.mark.parametrize("given", [False, True], ids=["from-cwd", "as-repo"])
+def test_add_from_a_linked_worktree_stores_the_main_worktree(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    given: bool,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    wt = tmp_path / "wt" / "feature"
+    _ = run_git(["worktree", "add", "-q", "-b", "feature", str(wt)], cwd=repo)
+    configure(FILES, registry_text())
+    monkeypatch.chdir(wt)
+
+    status = main(["prj", "add", "bar", *([str(wt)] if given else [])])
+
+    assert status == OK
+    assert load_registry(registry_file(dirs), home).projects["bar"].repo == repo
+
+
+def test_add_inside_a_bare_repository_without_a_repo_stores_it(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bare = tmp_path / "bar.git"
+    _ = run_git(["clone", "-q", "--bare", str(make_repo(tmp_path / "src")), str(bare)])
+    configure(FILES, registry_text())
+    monkeypatch.chdir(bare / "refs")
+
+    status = main(["prj", "add", "bar"])
+
+    assert status == OK
+    assert load_registry(registry_file(dirs), home).projects["bar"].repo == bare
+
+
+def test_add_keeps_the_top_level_when_the_git_directory_is_elsewhere(
+    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+) -> None:
+    # As a submodule's checkout is: its git directory is not next to it, so the
+    # one above the git directory is no checkout of it.
+    checkout = tmp_path / "work" / "bar"
+    git_dir = tmp_path / "gitdirs" / "bar"
+    git_dir.parent.mkdir()
+    _ = run_git(
+        ["init", "-q", "-b", "main", "--separate-git-dir", str(git_dir), str(checkout)]
+    )
+    _ = run_git(["commit", "-q", "--allow-empty", "-m", "init"], cwd=checkout)
+    configure(FILES, registry_text())
+
+    status = main(["prj", "add", "bar", str(checkout)])
+
+    assert status == OK
+    assert load_registry(registry_file(dirs), home).projects["bar"].repo == checkout

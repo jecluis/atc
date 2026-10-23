@@ -144,9 +144,13 @@ def add(
     NAME is the project's name, the one its settings go by: projects/NAME.json
     in a config source. REPO is a checkout of its repository, whether the main
     one, a worktree or a bare repository, and defaults to the current directory.
-    What is registered is the top level of its working tree. REPO must be a git
-    repository that no project has yet, and the branch that new branches start
-    from must exist in it.
+    What is registered is the repository's main worktree, whichever of its
+    worktrees REPO is, or for a bare repository the repository itself, so that
+    removing a worktree never leaves the project without its repository. When
+    the git directory is kept apart from the checkout, as a submodule's is, the
+    top level of REPO is registered instead. REPO must be a git repository that
+    no project has yet, and the branch that new branches start from must exist
+    in it.
 
     The entry is added after the others in machine.yaml, with paths made
     absolute, and the rest of the file stays as it was, comments included.
@@ -225,28 +229,41 @@ def _dash() -> Text:
 
 def _checkout(repo: str | None) -> Path:
     """
-    Find the checkout to register: the top level of ``repo``, else of the cwd.
+    Find what to register: the main worktree of the repository of ``repo``.
 
-    A bare repository, which has no top level, is ``repo`` itself.
+    That is the repository ``repo``, else the current directory, is in, from
+    whichever of its worktrees. Its main worktree is the directory that holds
+    its git directory, or for a bare repository the git directory itself. When
+    the git directory is kept apart from the checkout, as a submodule's is, the
+    directory above it is no checkout, and the top level of ``repo`` is taken.
 
     Raises:
         ConfigError: it is not a git repository.
+        GitError: git cannot inspect it.
 
     """
     if repo is None:
-        here = Path.cwd()
-        if git.common_dir(here) is None:
+        start = Path.cwd()
+        common = git.common_dir(start)
+        if common is None:
             raise ConfigError(
                 "the current directory is not in a git repository; name the REPO"
             )
-        return Path(git.run_git(["rev-parse", "--show-toplevel"], cwd=here))
-    checkout = Path(repo).expanduser().resolve()
-    if not checkout.is_dir():
-        raise ConfigError(f"{checkout}: not a directory")
-    if git.common_dir(checkout) is None:
-        raise ConfigError(f"{checkout}: not a git repository")
-    top = git.git_or_none(["rev-parse", "--show-toplevel"], cwd=checkout)
-    return Path(top) if top else checkout
+    else:
+        start = Path(repo).expanduser().resolve()
+        if not start.is_dir():
+            raise ConfigError(f"{start}: not a directory")
+        common = git.common_dir(start)
+        if common is None:
+            raise ConfigError(f"{start}: not a git repository")
+    bare = git.run_git(
+        ["rev-parse", "--is-bare-repository"], cwd=common, env={"GIT_DIR": str(common)}
+    )
+    if bare == "true":
+        return common
+    if git.common_dir(common.parent) == common:
+        return common.parent
+    return Path(git.run_git(["rev-parse", "--show-toplevel"], cwd=start))
 
 
 def _check_branch(checkout: Path, branch: str) -> None:

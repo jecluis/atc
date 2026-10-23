@@ -113,7 +113,8 @@ def rm(name: str, force: bool) -> None:
     untracked files, and atc one whose HEAD is detached at a commit that no
     branch contains, or where a rebase, merge, cherry-pick, revert or bisect is
     in progress. Files that git ignores, such as build output, are deleted with
-    the worktree. The branch is never deleted.
+    the worktree. The branch is never deleted, and the project's repository is
+    never removed.
     """
     ui = Ui.default()
     remove_worktree(_current(ui), name, force=force)
