@@ -60,6 +60,41 @@ names the offending path:
 With a umask of 002, as on Fedora, a fresh clone is group-writable. Run
 `chmod -R go-w` on it once after cloning.
 
+## The machine registry
+
+`machine.yaml`, in atc's configuration directory next to `conf.d/`, holds what
+is specific to this machine: which accounts exist and where each one lives. It
+belongs to no config source, so it never lands in a git repository by accident.
+
+```yaml
+version: 1
+accounts:
+  personal:
+    dir: ~/.claude
+  work:
+    dir: ~/.config/work/claude
+    unit: "@work/accounts/work.json"
+```
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `version` | yes | Must be `1`. |
+| `accounts.<name>.dir` | yes | The account's configuration directory. |
+| `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
+
+No other keys are accepted yet, and a misspelled key is an error. The rules:
+
+- The file is YAML 1.2, so `no`, `on` and `off` stay strings. Only values JSON
+  can hold are accepted: a timestamp such as `2026-10-23` is an error that
+  asks you to quote it. Repeated keys and keys that are not strings are errors.
+- A leading `~` in a path stands for your home directory. Every path must then
+  be absolute. Environment variables are not expanded, so `$HOME/x` is an
+  error.
+- Account names are lowercase letters, digits, `_` and `-`, starting with a
+  letter or a digit.
+- Two accounts cannot share a `dir`, however it is written: a trailing `/` or
+  a symbolic link in the path makes no difference.
+
 ## Units
 
 A **unit** is a JSON file under a source's `conf/`. It contributes a fragment
@@ -86,7 +121,8 @@ of Claude Code settings and can import other units:
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
 
-**References.** An import, and a `UNIT` given to `atc build`, is one of:
+**References.** An import, a `UNIT` given to `atc build`, and an account's `unit`
+in the registry are each one of:
 
 - `path/to/unit.json`: a path relative to the `conf/` of the same source.
 - `@name/path/to/unit.json`: a path relative to the `conf/` of the source
@@ -96,8 +132,8 @@ A reference must be relative, must spell out the `.json` extension, and must
 stay inside the `conf/` of its source, links included. In an import, a
 reference without `@` always means the unit's own source.
 
-Outside a unit, as on the command line, a reference without `@` is looked up in
-every source, and exactly one must contain it. If none does the unit does not
+Outside a unit, as on the command line or in the registry, a reference without
+`@` is looked up in every source, and exactly one must contain it. If none does the unit does not
 exist, and if several do you are asked to add an `@name/` prefix. With a single
 source, or with names that never collide, the prefix is never needed.
 
@@ -142,9 +178,15 @@ into other sources. It reports every problem it finds, not only the first:
   circular
 - values of different types for the same setting
 
+When the machine registry exists, it also checks that every account's unit
+exists: an account whose unit is missing, or is in several sources, is an
+error. Without a registry, only the units are checked, with a warning saying
+so.
+
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
 it prints each problem, once, and exits `1`. Everything goes to standard
-error. A source that breaks the trust rules stops the check with that error.
+error. A source that breaks the trust rules, or a registry that is invalid,
+stops the check with that error.
 
 | Option | Effect |
 | --- | --- |

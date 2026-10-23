@@ -31,3 +31,7 @@ class SourceError(ConfigError):
 
 class GitError(ConfigError):
     """A git command failed, or git could not be run."""
+
+
+class RegistryError(ConfigError):
+    """The machine registry is unreadable, invalid, or has no such account."""

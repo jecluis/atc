@@ -55,3 +55,13 @@ def git_repo(path: Path) -> Path:
     _ = run_git(["add", "-A"], cwd=path)
     _ = run_git(["commit", "-q", "-m", "init"], cwd=path)
     return path
+
+
+# The closing quotes are not indented, so that lines can be appended: four
+# spaces for a top-level key, six for another account.
+MINIMAL_REGISTRY = """\
+    version: 1
+    accounts:
+      personal: {dir: ~/.claude}
+"""
+"""A registry with one account, `personal`, whose unit is `accounts/personal.json`."""

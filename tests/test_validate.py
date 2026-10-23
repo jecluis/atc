@@ -2,8 +2,12 @@
 
 from pathlib import Path
 
+from atc.jsonval import JsonObject
+from atc.paths import Dirs
+from atc.registry import REGISTRY_FILE, load_registry
 from atc.sources import discover
-from atc.validate import validate_sources
+from atc.validate import Validation, validate_config, validate_sources
+from tests.conftest import ConfigWriter
 from tests.helpers import UID, make_source, unit
 
 
@@ -97,3 +101,65 @@ def test_a_unit_that_leads_out_of_conf_is_an_error(tmp_path: Path) -> None:
     assert result.units == 2
     assert len(result.errors) == 1
     assert "resolves outside" in result.errors[0]
+
+
+TWO_ACCOUNTS = """\
+    version: 1
+    accounts:
+      personal: {dir: ~/.claude}
+      work: {dir: ~/.config/work, unit: profiles/work.json}
+"""
+
+
+def check_config(
+    dirs: Dirs, home: Path, configure: ConfigWriter, files: dict[str, JsonObject]
+) -> Validation:
+    configure(files, TWO_ACCOUNTS)
+    return validate_config(
+        discover(dirs.conf_d, uid=UID),
+        load_registry(dirs.config_dir / REGISTRY_FILE, home),
+        lax=False,
+    )
+
+
+def test_validate_config_passes_when_every_account_has_its_unit(
+    dirs: Dirs, home: Path, configure: ConfigWriter
+) -> None:
+    result = check_config(
+        dirs,
+        home,
+        configure,
+        {"conf/accounts/personal.json": unit(), "conf/profiles/work.json": unit()},
+    )
+
+    assert (result.units, result.errors, result.warnings) == (2, (), ())
+
+
+def test_validate_config_reports_every_account_whose_unit_is_missing(
+    dirs: Dirs, home: Path, configure: ConfigWriter
+) -> None:
+    result = check_config(dirs, home, configure, {"conf/other.json": unit()})
+
+    assert len(result.errors) == 2
+    assert "account 'personal'" in result.errors[0]
+    assert "account 'work'" in result.errors[1]
+    assert "profiles/work.json" in result.errors[1]
+
+
+def test_validate_config_keeps_the_errors_of_the_sources(
+    dirs: Dirs, home: Path, configure: ConfigWriter
+) -> None:
+    result = check_config(
+        dirs,
+        home,
+        configure,
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/profiles/work.json": unit(),
+            "conf/stray.json": unit(imports=["gone.json"]),
+        },
+    )
+
+    assert result.units == 3
+    assert len(result.errors) == 1
+    assert "gone.json" in result.errors[0]

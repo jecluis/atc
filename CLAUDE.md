@@ -29,12 +29,15 @@ not part of the tool; they live in config sources.
 `pyrightconfig.json` runs basedpyright in `typeCheckingMode: "all"`. Treat that
 as a design constraint, not a lint setting.
 
-- No `Any` and no bare `object` in normal code. The one sanctioned exception is
-  the `json.loads` boundary in `jsonval.py`, which carries a scoped
-  `# pyright: ignore` and a comment explaining why the cast is sound. Do not
-  add another such boundary without a comparable justification. click passes
-  typed values to command functions, so the command line needs none; the one
-  typed view of click's `Any`-returning `main` is in `cli/__init__.py`.
+- No `Any` and no bare `object` in normal code. The sanctioned exceptions are
+  the `json.loads` boundary in `jsonval.py` and the ruamel boundary in
+  `yamlval.py`. Each carries a scoped `# pyright: ignore` and a comment
+  explaining why it is sound: `jsonval` casts what `json.loads` returns to
+  `JsonValue`, and `yamlval` rebuilds what ruamel returns as a `JsonValue`,
+  refusing any type JSON lacks. Do not add another such boundary without a
+  comparable justification. click passes typed values to command functions, so
+  the command line needs none; the one typed view of click's `Any`-returning
+  `main` is in `cli/__init__.py`.
 - Prefer `match` over a closed union to dispatch on JSON values, so the type
   checker can prove the dispatch is exhaustive.
 - A private class needs `@final` or per-attribute annotations to satisfy

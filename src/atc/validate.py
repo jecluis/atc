@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from atc.errors import ConfigError
 from atc.refs import locate
+from atc.registry import Registry, account_unit
 from atc.resolve import resolve
 from atc.sources import Sources
 
@@ -48,3 +49,24 @@ def validate_sources(sources: Sources, *, lax: bool) -> Validation:
             else:
                 warnings.update(dict.fromkeys(resolution.warnings))
     return Validation(units=units, errors=tuple(errors), warnings=tuple(warnings))
+
+
+def validate_config(sources: Sources, registry: Registry, *, lax: bool) -> Validation:
+    """
+    Check every unit in the sources, then that every account has its unit.
+
+    An account's unit is missing when no source has it, and ambiguous when
+    several do. All problems are collected, once each. Set ``lax`` to report
+    unknown settings keys as warnings instead of errors.
+    """
+    checked = validate_sources(sources, lax=lax)
+    errors = dict.fromkeys(checked.errors)
+    warnings = dict.fromkeys((*checked.warnings, *registry.warnings))
+    for account in registry.accounts.values():
+        try:
+            _ = account_unit(sources, registry, account)
+        except ConfigError as exc:
+            errors[str(exc)] = None
+    return Validation(
+        units=checked.units, errors=tuple(errors), warnings=tuple(warnings)
+    )

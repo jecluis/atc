@@ -7,6 +7,7 @@ import pytest
 from atc.cli import main
 from atc.git import run_git
 from atc.paths import Dirs
+from tests.conftest import ConfigWriter
 from tests.helpers import git_repo, make_source, unit
 
 
@@ -308,4 +309,52 @@ def test_src_check_conf_d_option_reads_another_directory(
 ) -> None:
     elsewhere = make_source(tmp_path / "elsewhere", {"conf/a.json": unit()})
     err = run_check(capsys, "--conf-d", str(elsewhere))[1]
+    assert "ok: 1 units in 1 sources" in err
+
+
+def test_src_check_passes_when_every_account_has_its_unit(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/accounts/personal.json": unit({"model": "x"})})
+
+    out, err = run_check(capsys)
+
+    assert out == ""
+    assert "ok: 1 units in 1 sources" in err
+    assert "warning:" not in err
+
+
+def test_src_check_reports_an_account_whose_unit_is_missing(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/other.json": unit()})
+
+    err = run_check(capsys, status=1)[1]
+
+    assert "account 'personal'" in err
+    assert "accounts/personal.json" in err
+    assert "ok:" not in err
+
+
+def test_src_check_reports_a_bad_registry(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/accounts/personal.json": unit()}, "version: 3\n")
+
+    err = run_check(capsys, status=1)[1]
+
+    assert "/version" in err
+    assert "ok:" not in err
+
+
+def test_src_check_without_a_registry_checks_sources_only(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d, {"conf/a.json": unit()})
+
+    err = run_check(capsys)[1]
+
+    assert "warning:" in err
+    assert "machine.yaml" in err
+    assert "not checked" in err
     assert "ok: 1 units in 1 sources" in err

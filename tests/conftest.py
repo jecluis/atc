@@ -2,15 +2,26 @@
 
 import json
 import os
-from collections.abc import Callable, Iterator
+import textwrap
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
 from atc.jsonval import JsonObject
 from atc.paths import Dirs, dirs_from_env
+from atc.registry import REGISTRY_FILE
+from tests.helpers import MINIMAL_REGISTRY, make_source
 
 type UnitWriter = Callable[[str, JsonObject], Path]
+type RegistryWriter = Callable[[str], Path]
+type Files = Mapping[str, str | JsonObject]
+
+
+class ConfigWriter(Protocol):
+    def __call__(self, files: Files, registry: str = MINIMAL_REGISTRY) -> None: ...
+
 
 # Variables that change what git or rich do, whatever the machine running
 # the tests has set.
@@ -81,5 +92,35 @@ def write_unit(root: Path) -> UnitWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(json.dumps(document), encoding="utf-8")
         return path
+
+    return write
+
+
+@pytest.fixture
+def write_registry(dirs: Dirs) -> RegistryWriter:
+    """Write dedented text as the registry, and return the file's path."""
+
+    def write(text: str) -> Path:
+        path = dirs.config_dir / REGISTRY_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(textwrap.dedent(text), encoding="utf-8")
+        return path
+
+    return write
+
+
+@pytest.fixture
+def configure(dirs: Dirs, write_registry: RegistryWriter) -> ConfigWriter:
+    """
+    Set up what atc reads by default: sources in ``conf.d`` and the registry.
+
+    ``files`` is written under ``conf.d`` as :func:`tests.helpers.make_source`
+    does, so a path starts with ``conf/`` in the single layout and with the
+    source's name in the multi layout.
+    """
+
+    def write(files: Files, registry: str = MINIMAL_REGISTRY) -> None:
+        _ = make_source(dirs.conf_d, files)
+        _ = write_registry(registry)
 
     return write

@@ -1,0 +1,294 @@
+"""The machine registry: what it accepts, and what it refuses."""
+
+from pathlib import Path
+
+import pytest
+
+from atc.errors import PathError, RegistryError
+from atc.registry import (
+    REGISTRY_FILE,
+    account_unit,
+    load_registry,
+    normalize_path,
+    parse_registry,
+)
+from atc.sources import discover
+from tests.conftest import RegistryWriter
+from tests.helpers import MINIMAL_REGISTRY, UID, make_source, unit
+
+
+def test_minimal_registry_loads(write_registry: RegistryWriter, home: Path) -> None:
+    path = write_registry(MINIMAL_REGISTRY)
+
+    r = load_registry(path, home)
+
+    assert r.path == path
+    assert r.warnings == ()
+    assert r.accounts["personal"].dir == home / ".claude"
+    assert r.accounts["personal"].unit == "accounts/personal.json"
+
+
+def test_an_account_can_name_its_unit(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        accounts:
+          bravo: {dir: ~/.config/bravo, unit: "@bravo/accounts/x.json"}
+        """
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.accounts["bravo"].unit == "@bravo/accounts/x.json"
+
+
+def test_accounts_keep_the_order_of_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        accounts:
+          zed: {dir: /z}
+          alpha: {dir: /a}
+          mid: {dir: /m}
+        """
+
+    registry = load_registry(write_registry(text), home)
+
+    assert list(registry.accounts) == ["zed", "alpha", "mid"]
+
+
+def test_two_accounts_cannot_share_a_dir_however_it_is_written(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = MINIMAL_REGISTRY + "      other: {dir: ~/.claude/}\n"
+    with pytest.raises(RegistryError, match="'personal' and 'other' share"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_a_symlinked_prefix_counts_as_the_same_dir(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    text = f"""\
+        version: 1
+        accounts:
+          a: {{dir: {tmp_path}/real/x}}
+          b: {{dir: {tmp_path}/link/x}}
+        """
+
+    with pytest.raises(RegistryError, match="share"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_duplicate_keys_are_refused(write_registry: RegistryWriter, home: Path) -> None:
+    text = MINIMAL_REGISTRY + "      personal: {dir: ~/.other}\n"
+    with pytest.raises(RegistryError, match="duplicate key"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_non_string_keys_are_refused(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    with pytest.raises(RegistryError, match="not a string"):
+        _ = load_registry(write_registry(MINIMAL_REGISTRY + "    1: x\n"), home)
+
+
+def test_misspelled_keys_are_refused(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\nacounts: {a: {dir: /a}}\n"
+    with pytest.raises(RegistryError, match="/acounts"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_an_unknown_account_key_is_refused_with_its_place(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\naccounts: {personal: {dir: /a, unti: x}}\n"
+
+    with pytest.raises(RegistryError, match="/accounts/personal/unti"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_keys_the_registry_does_not_read_yet_are_refused(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = MINIMAL_REGISTRY + "    default-account: personal\n"
+
+    with pytest.raises(RegistryError, match="default-account"):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize("version", ["2", "0", "true", "1.0", '"1"'])
+def test_only_the_integer_1_is_a_version(
+    write_registry: RegistryWriter, home: Path, version: str
+) -> None:
+    text = f"version: {version}\naccounts: {{a: {{dir: /a}}}}\n"
+
+    with pytest.raises(RegistryError, match="/version"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_required_keys_are_required(write_registry: RegistryWriter, home: Path) -> None:
+    for text in ("accounts: {}\n", "version: 1\n", "version: 1\naccounts: {a: {}}\n"):
+        with pytest.raises(RegistryError, match="Field required"):
+            _ = load_registry(write_registry(text), home)
+
+
+def test_values_are_not_converted_to_the_expected_type(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\naccounts: {a: {dir: /a, unit: 5}}\n"
+
+    with pytest.raises(RegistryError, match="/accounts/a/unit"):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize("text", ["- a\n- b\n", ""])
+def test_a_registry_must_be_a_mapping(home: Path, text: str) -> None:
+    with pytest.raises(RegistryError, match="must be a mapping"):
+        _ = parse_registry(text, Path("machine.yaml"), home)
+
+
+def test_errors_name_the_registry_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry("version: 1\nacounts: {}\n")
+
+    with pytest.raises(RegistryError, match=f"^{path}: "):
+        _ = load_registry(path, home)
+
+
+def test_a_missing_registry_says_what_to_create(home: Path, tmp_path: Path) -> None:
+    path = tmp_path / "absent" / REGISTRY_FILE
+
+    with pytest.raises(RegistryError, match="not found"):
+        _ = load_registry(path, home)
+
+
+def test_relative_paths_are_refused(write_registry: RegistryWriter, home: Path) -> None:
+    text = "version: 1\naccounts: {a: {dir: .claude}}\n"
+    with pytest.raises(RegistryError, match=r"/accounts/a/dir.*absolute"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_environment_variables_are_not_expanded(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    relative = "version: 1\naccounts: {a: {dir: $HOME/x}}\n"
+    with pytest.raises(RegistryError, match=r"\$HOME/x"):
+        _ = load_registry(write_registry(relative), home)
+
+    absolute = "version: 1\naccounts: {a: {dir: /opt/$HOME/x}}\n"
+    registry = load_registry(write_registry(absolute), home)
+    assert registry.accounts["a"].dir == Path("/opt/$HOME/x")
+
+
+@pytest.mark.parametrize("name", ["a", "0a", "a-b_c", "personal2"])
+def test_account_names_follow_the_name_rule(
+    write_registry: RegistryWriter, home: Path, name: str
+) -> None:
+    text = f"version: 1\naccounts: {{{name}: {{dir: /a}}}}\n"
+
+    assert name in load_registry(write_registry(text), home).accounts
+
+
+@pytest.mark.parametrize("name", ["Personal", "-a", "_a", "a.b", "a b", "ä"])
+def test_account_names_that_break_the_rule_are_refused(
+    write_registry: RegistryWriter, home: Path, name: str
+) -> None:
+    text = f'version: 1\naccounts: {{"{name}": {{dir: /a}}}}\n'
+
+    with pytest.raises(RegistryError, match=f"'{name}'.*not a valid account name"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_an_unknown_account_lists_the_known_ones(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = MINIMAL_REGISTRY + "      work: {dir: /w}\n"
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.account("work").name == "work"
+    with pytest.raises(RegistryError, match=r"'nope'.*personal, work"):
+        _ = registry.account("nope")
+
+
+def test_the_registry_may_have_no_accounts(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry("version: 1\naccounts: {}\n"), home)
+
+    with pytest.raises(RegistryError, match="no accounts"):
+        _ = registry.account("a")
+
+
+def test_normalize_path_expands_a_leading_tilde(home: Path) -> None:
+    assert normalize_path("~", home) == home
+    assert normalize_path("~/x/y", home) == home / "x" / "y"
+
+
+def test_normalize_path_leaves_other_tildes_alone(home: Path) -> None:
+    with pytest.raises(RegistryError, match="absolute"):
+        _ = normalize_path("~other/x", home)
+    assert normalize_path("/a/~/b", home) == Path("/a/~/b")
+
+
+def test_normalize_path_drops_a_trailing_slash_and_dots(home: Path) -> None:
+    assert normalize_path("/a/b/", home) == Path("/a/b")
+    assert normalize_path("/a/./b/../c", home) == Path("/a/c")
+
+
+def test_account_unit_finds_the_default_unit(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"conf/accounts/personal.json": unit()})
+    registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
+
+    found = account_unit(
+        discover(conf_d, uid=UID), registry, registry.account("personal")
+    )
+
+    assert found.display == "accounts/personal.json"
+
+
+def test_account_unit_follows_a_qualified_reference(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / "bravo", {"conf/accounts/x.json": unit()})
+    _ = make_source(conf_d / "other", {"conf/a.json": unit()})
+    text = 'version: 1\naccounts: {a: {dir: /a, unit: "@bravo/accounts/x.json"}}\n'
+    registry = load_registry(write_registry(text), home)
+
+    found = account_unit(discover(conf_d, uid=UID), registry, registry.account("a"))
+
+    assert found.display == "@bravo/accounts/x.json"
+
+
+def test_account_unit_names_the_account_when_the_unit_is_missing(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"conf/other.json": unit()})
+    registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
+
+    with pytest.raises(PathError, match=r"personal.*accounts/personal\.json.*no such"):
+        _ = account_unit(
+            discover(conf_d, uid=UID), registry, registry.account("personal")
+        )
+
+
+def test_account_unit_refuses_a_unit_several_sources_have(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    conf_d = tmp_path / "conf.d"
+    for name in ("bravo", "other"):
+        _ = make_source(conf_d / name, {"conf/accounts/personal.json": unit()})
+    registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
+
+    with pytest.raises(PathError, match=r"personal.*@name/"):
+        _ = account_unit(
+            discover(conf_d, uid=UID), registry, registry.account("personal")
+        )
