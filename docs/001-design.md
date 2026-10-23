@@ -51,6 +51,7 @@ skills.
 | F12 | `<dir>/skills/` also holds entries that nothing here created: `synced/` and `.trash/` in both accounts, and hand-made directories in the Acme one                                                        | Observed on this machine, 2026-10-23                                                                      |
 | F13 | Permission rules apply deny first, then ask, then allow, whichever settings file each comes from. A deny in any scope can't be overridden by an allow elsewhere                                          | Claude Code permissions documentation                                                                     |
 | F14 | `Bash` denies `echo a:*` and `echo a *` act alike: each refuses `echo a b` and bare `echo a`, not `echo ab`. `echo a*` refuses `echo ab`; `echo * b*` doesn't refuse `echo b c`. `*` spans spaces        | Headless probe, 2026-10-23; a `git * pull*` deny refused a commit with ` pulled` in its message           |
+| F15 | In `Read` and `Edit` permission rules, `//path` is absolute, `~/path` is under the home directory, `/path` is relative to the settings file, and a bare path is relative to the current directory        | Claude Code permissions documentation                                                                     |
 
 **Not established yet:**
 
@@ -396,10 +397,10 @@ once for every account:
     },
     "permissions": {
       "deny": [
-        "Read({{peers.dir}}/**)",
-        "Edit({{peers.dir}}/**)",
-        "Read({{peers.files}})",
-        "Edit({{peers.files}})"
+        "Read(/{{peers.dir}}/**)",
+        "Edit(/{{peers.dir}}/**)",
+        "Read(/{{peers.files}})",
+        "Edit(/{{peers.files}})"
       ]
     }
   }
@@ -415,6 +416,12 @@ Built for `acme`, this produces the same isolation entries as `acme.jq`:
 Built for `personal`, it produces the isolation entries of `default.jq`, as
 absolute paths. Strict mode, which both filters also set, belongs in the same
 hardening unit but is left out here.
+
+The extra `/` in the permission rules matters. In a `Read` or `Edit` rule,
+`/path` is relative to the settings file and only `//path` is absolute (F15).
+The variables hold absolute paths, so `Read(/{{peers.dir}}/**)` expands to
+`Read(//home/…/**)`. Sandbox paths, such as the credential entries above, take
+plain absolute paths.
 
 A unit points at its own source's assets the same way, wherever that source
 is cloned:
@@ -1014,7 +1021,8 @@ personal asset (§3). It can go once atc is the only way sessions start.
    `allowWrite`. The hardening unit also adds explicit denies, in case a
    broader `allowWrite` is added later: `sandbox.filesystem.denyWrite` on
    `{{atc.config_dir}}`, `{{atc.state_dir}}` and `{{atc.runtime_dir}}`, plus
-   matching `Edit(...)` rules for Claude's file tools, which follow permission
+   matching rules written `Edit(/{{atc.config_dir}}/**)`, which expand to
+   `//` absolute paths (F15), for Claude's file tools, which follow permission
    rules rather than the sandbox. `{{atc.install_dir}}` gets the same, because
    it holds atc's own code: the personal account's sandbox allows writes to
    uv's tool directory, where `uv tool install` puts it.

@@ -203,11 +203,16 @@ merged, so one unit can serve every account:
         ]
       }
     },
-    "permissions": { "deny": ["Read({{peers.dir}}/**)"] },
+    "permissions": { "deny": ["Read(/{{peers.dir}}/**)"] },
     "statusLine": { "command": "bash {{source.assets}}/statusline.sh" }
   }
 }
 ```
+
+In a `Read` or `Edit` permission rule, a path starting with `/` is relative to
+the settings file, and only `//` starts an absolute one. Path variables hold
+absolute paths, so a rule writes `/{{…}}` to get `//`. Sandbox paths take the
+variable as it is.
 
 - A reference to a string is replaced in place, wherever it is in the string.
   Replaced text is never scanned again.

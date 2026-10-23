@@ -50,10 +50,10 @@ ISOLATION = unit(
         },
         "permissions": {
             "deny": [
-                "Read({{peers.dir}}/**)",
-                "Edit({{peers.dir}}/**)",
-                "Read({{peers.files}})",
-                "Edit({{peers.files}})",
+                "Read(/{{peers.dir}}/**)",
+                "Edit(/{{peers.dir}}/**)",
+                "Read(/{{peers.files}})",
+                "Edit(/{{peers.files}})",
             ]
         },
     }
@@ -247,10 +247,10 @@ def test_the_isolation_unit_builds_the_bravo_entries(
         },
         "permissions": {
             "deny": [
-                f"Read({home / '.claude'}/**)",
-                f"Edit({home / '.claude'}/**)",
-                f"Read({home / '.claude.json'})",
-                f"Edit({home / '.claude.json'})",
+                f"Read(/{home / '.claude'}/**)",
+                f"Edit(/{home / '.claude'}/**)",
+                f"Read(/{home / '.claude.json'})",
+                f"Edit(/{home / '.claude.json'})",
             ]
         },
     }
@@ -275,7 +275,7 @@ def test_the_isolation_unit_builds_the_personal_entries(
                 )
             }
         },
-        "permissions": {"deny": [f"Read({bravo}/**)", f"Edit({bravo}/**)"]},
+        "permissions": {"deny": [f"Read(/{bravo}/**)", f"Edit(/{bravo}/**)"]},
     }
 
 
