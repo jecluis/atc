@@ -102,6 +102,7 @@ def test_a_unit_that_leads_out_of_conf_is_an_error(tmp_path: Path) -> None:
 
 TWO_ACCOUNTS = """\
     version: 1
+    default-account: personal
     accounts:
       personal: {agent: claude, dir: ~/.claude}
       work: {agent: claude, dir: ~/.config/work, unit: profiles/work.json}
@@ -177,3 +178,69 @@ def test_validate_config_reports_a_template_error_in_an_account_layer(
     assert len(result.errors) == 1
     assert "account layer for personal" in result.errors[0]
     assert "unknown reference {{nope}}" in result.errors[0]
+
+
+WITH_PROJECTS = (
+    TWO_ACCOUNTS
+    + "    projects:\n"
+    + "      both: {repo: /b}\n"
+    + "      only-work: {repo: /w, account: work, accounts: [work]}\n"
+)
+
+
+def test_validate_config_builds_a_project_for_every_account_it_allows(
+    build_context: ContextBuilder,
+) -> None:
+    # `who` is defined by the work account only.
+    registry = WITH_PROJECTS.replace(
+        "unit: profiles/work.json", "unit: profiles/work.json, vars: {who: w}"
+    )
+    uses_who = unit({"model": "{{account.vars.who}}"})
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/profiles/work.json": unit(),
+            "conf/projects/both.json": uses_who,
+            "conf/projects/only-work.json": uses_who,
+        },
+        registry,
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert len(result.errors) == 1
+    assert "project layer for both with account personal" in result.errors[0]
+
+
+def test_validate_config_skips_a_project_without_a_unit(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/profiles/work.json": unit(),
+        },
+        WITH_PROJECTS,
+    )
+
+    assert validate_config(ctx, lax=False).errors == ()
+
+
+def test_validate_config_reports_a_missing_explicit_project_unit_once(
+    build_context: ContextBuilder,
+) -> None:
+    registry = WITH_PROJECTS.replace(
+        "both: {repo: /b}", "both: {repo: /b, unit: x.json}"
+    )
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/profiles/work.json": unit(),
+        },
+        registry,
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert len(result.errors) == 1
+    assert "project 'both'" in result.errors[0]

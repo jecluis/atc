@@ -8,6 +8,7 @@ from atc.errors import PathError, RegistryError
 from atc.registry import (
     REGISTRY_FILE,
     account_unit,
+    choose_account,
     load_registry,
     normalize_path,
     parse_registry,
@@ -33,6 +34,7 @@ def test_an_account_can_name_its_unit(
 ) -> None:
     text = """\
         version: 1
+        default-account: bravo
         accounts:
           bravo: {agent: claude, dir: ~/.config/bravo, unit: "@bravo/accounts/x.json"}
         """
@@ -47,6 +49,7 @@ def test_accounts_keep_the_order_of_the_file(
 ) -> None:
     text = """\
         version: 1
+        default-account: zed
         accounts:
           zed: {agent: claude, dir: /z}
           alpha: {agent: claude, dir: /a}
@@ -73,6 +76,7 @@ def test_a_symlinked_prefix_counts_as_the_same_dir(
     (tmp_path / "link").symlink_to(tmp_path / "real")
     text = f"""\
         version: 1
+        default-account: a
         accounts:
           a: {{agent: claude, dir: {tmp_path}/real/x}}
           b: {{agent: claude, dir: {tmp_path}/link/x}}
@@ -98,7 +102,7 @@ def test_non_string_keys_are_refused(
 def test_misspelled_keys_are_refused(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\nacounts: {a: {agent: claude, dir: /a}}\n"
+    text = "version: 1\ndefault-account: a\nacounts: {a: {agent: claude, dir: /a}}\n"
     with pytest.raises(RegistryError, match="/acounts"):
         _ = load_registry(write_registry(text), home)
 
@@ -106,18 +110,21 @@ def test_misspelled_keys_are_refused(
 def test_an_unknown_account_key_is_refused_with_its_place(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\naccounts: {personal: {agent: claude, dir: /a, unti: x}}\n"
+    text = (
+        "version: 1\ndefault-account: personal\n"
+        "accounts: {personal: {agent: claude, dir: /a, unti: x}}\n"
+    )
 
     with pytest.raises(RegistryError, match="/accounts/personal/unti"):
         _ = load_registry(write_registry(text), home)
 
 
-def test_keys_the_registry_does_not_read_yet_are_refused(
+def test_unknown_top_level_keys_are_refused(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = MINIMAL_REGISTRY + "    default-account: personal\n"
+    text = MINIMAL_REGISTRY + "    bogus: x\n"
 
-    with pytest.raises(RegistryError, match="default-account"):
+    with pytest.raises(RegistryError, match="/bogus"):
         _ = load_registry(write_registry(text), home)
 
 
@@ -125,7 +132,10 @@ def test_keys_the_registry_does_not_read_yet_are_refused(
 def test_only_the_integer_1_is_a_version(
     write_registry: RegistryWriter, home: Path, version: str
 ) -> None:
-    text = f"version: {version}\naccounts: {{a: {{agent: claude, dir: /a}}}}\n"
+    text = (
+        f"version: {version}\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: /a}}\n"
+    )
 
     with pytest.raises(RegistryError, match="/version"):
         _ = load_registry(write_registry(text), home)
@@ -140,7 +150,10 @@ def test_required_keys_are_required(write_registry: RegistryWriter, home: Path) 
 def test_values_are_not_converted_to_the_expected_type(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\naccounts: {a: {agent: claude, dir: /a, unit: 5}}\n"
+    text = (
+        "version: 1\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: /a, unit: 5}}\n"
+    )
 
     with pytest.raises(RegistryError, match="/accounts/a/unit"):
         _ = load_registry(write_registry(text), home)
@@ -169,7 +182,9 @@ def test_a_missing_registry_says_what_to_create(home: Path, tmp_path: Path) -> N
 
 
 def test_relative_paths_are_refused(write_registry: RegistryWriter, home: Path) -> None:
-    text = "version: 1\naccounts: {a: {agent: claude, dir: .claude}}\n"
+    text = (
+        "version: 1\ndefault-account: a\naccounts: {a: {agent: claude, dir: .claude}}\n"
+    )
     with pytest.raises(RegistryError, match=r"/accounts/a/dir.*absolute"):
         _ = load_registry(write_registry(text), home)
 
@@ -177,11 +192,16 @@ def test_relative_paths_are_refused(write_registry: RegistryWriter, home: Path) 
 def test_environment_variables_are_not_expanded(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    relative = "version: 1\naccounts: {a: {agent: claude, dir: $HOME/x}}\n"
+    relative = (
+        "version: 1\ndefault-account: a\naccounts: {a: {agent: claude, dir: $HOME/x}}\n"
+    )
     with pytest.raises(RegistryError, match=r"\$HOME/x"):
         _ = load_registry(write_registry(relative), home)
 
-    absolute = "version: 1\naccounts: {a: {agent: claude, dir: /opt/$HOME/x}}\n"
+    absolute = (
+        "version: 1\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: /opt/$HOME/x}}\n"
+    )
     registry = load_registry(write_registry(absolute), home)
     assert registry.accounts["a"].dir == Path("/opt/$HOME/x")
 
@@ -190,7 +210,10 @@ def test_environment_variables_are_not_expanded(
 def test_account_names_follow_the_name_rule(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
-    text = f"version: 1\naccounts: {{{name}: {{agent: claude, dir: /a}}}}\n"
+    text = (
+        f"version: 1\ndefault-account: {name}\n"
+        f"accounts: {{{name}: {{agent: claude, dir: /a}}}}\n"
+    )
 
     assert name in load_registry(write_registry(text), home).accounts
 
@@ -199,7 +222,10 @@ def test_account_names_follow_the_name_rule(
 def test_account_names_that_break_the_rule_are_refused(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
-    text = f'version: 1\naccounts: {{"{name}": {{agent: claude, dir: /a}}}}\n'
+    text = (
+        f'version: 1\ndefault-account: "{name}"\n'
+        f'accounts: {{"{name}": {{agent: claude, dir: /a}}}}\n'
+    )
 
     with pytest.raises(RegistryError, match=f"'{name}'.*not a valid account name"):
         _ = load_registry(write_registry(text), home)
@@ -216,13 +242,13 @@ def test_an_unknown_account_lists_the_known_ones(
         _ = registry.account("nope")
 
 
-def test_the_registry_may_have_no_accounts(
+def test_a_registry_without_accounts_has_none_to_default_to(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    registry = load_registry(write_registry("version: 1\naccounts: {}\n"), home)
+    text = "version: 1\ndefault-account: a\naccounts: {}\n"
 
-    with pytest.raises(RegistryError, match="no accounts"):
-        _ = registry.account("a")
+    with pytest.raises(RegistryError, match=r"/default-account.*no accounts"):
+        _ = load_registry(write_registry(text), home)
 
 
 def test_normalize_path_expands_a_leading_tilde(home: Path) -> None:
@@ -261,7 +287,7 @@ def test_account_unit_follows_a_qualified_reference(
     _ = make_source(conf_d / "bravo", {"conf/accounts/x.json": unit()})
     _ = make_source(conf_d / "other", {"conf/a.json": unit()})
     text = (
-        "version: 1\n"
+        "version: 1\ndefault-account: a\n"
         'accounts: {a: {agent: claude, dir: /a, unit: "@bravo/accounts/x.json"}}\n'
     )
     registry = load_registry(write_registry(text), home)
@@ -302,6 +328,7 @@ def test_agents_and_variables_are_read(
 ) -> None:
     text = """\
         version: 1
+        default-account: personal
         vars: {scratch_root: /mnt/scratch}
         accounts:
           personal:
@@ -327,14 +354,14 @@ def test_variables_default_to_none(write_registry: RegistryWriter, home: Path) -
 def test_an_unknown_agent_is_refused(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\naccounts: {a: {agent: codex, dir: /a}}\n"
+    text = "version: 1\ndefault-account: a\naccounts: {a: {agent: codex, dir: /a}}\n"
 
     with pytest.raises(RegistryError, match=r"/accounts/a/agent.*'claude'"):
         _ = load_registry(write_registry(text), home)
 
 
 def test_the_agent_is_required(write_registry: RegistryWriter, home: Path) -> None:
-    text = "version: 1\naccounts: {a: {dir: /a}}\n"
+    text = "version: 1\ndefault-account: a\naccounts: {a: {dir: /a}}\n"
 
     with pytest.raises(RegistryError, match=r"/accounts/a/agent: Field required"):
         _ = load_registry(write_registry(text), home)
@@ -354,14 +381,19 @@ def test_variable_values_must_not_contain_braces(
     write_registry: RegistryWriter, home: Path, text: str, pointer: str
 ) -> None:
     with pytest.raises(RegistryError, match=rf"{pointer}: .*must not contain '\{{\{{'"):
-        _ = load_registry(write_registry(f"version: 1\n{text}\n"), home)
+        _ = load_registry(
+            write_registry(f"version: 1\ndefault-account: a\n{text}\n"), home
+        )
 
 
 @pytest.mark.parametrize("name", ["a", "scratch_root", "a1_b2"])
 def test_variable_names_follow_the_name_rule(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
-    text = f"version: 1\nvars: {{{name}: v}}\naccounts: {{}}\n"
+    text = (
+        f"version: 1\ndefault-account: a\nvars: {{{name}: v}}\n"
+        "accounts: {a: {agent: claude, dir: /a}}\n"
+    )
 
     assert load_registry(write_registry(text), home).vars == {name: "v"}
 
@@ -371,7 +403,7 @@ def test_variable_names_that_break_the_rule_are_refused(
     write_registry: RegistryWriter, home: Path, name: str
 ) -> None:
     account = f'{{agent: claude, dir: /a, vars: {{"{name}": v}}}}'
-    text = f"version: 1\naccounts: {{a: {account}}}\n"
+    text = f"version: 1\ndefault-account: a\naccounts: {{a: {account}}}\n"
 
     with pytest.raises(RegistryError, match=f"/accounts/a/vars.*'{name}'.*not a valid"):
         _ = load_registry(write_registry(text), home)
@@ -380,7 +412,192 @@ def test_variable_names_that_break_the_rule_are_refused(
 def test_variable_values_are_not_converted_to_strings(
     write_registry: RegistryWriter, home: Path
 ) -> None:
-    text = "version: 1\nvars: {n: 5}\naccounts: {}\n"
+    text = (
+        "version: 1\ndefault-account: a\nvars: {n: 5}\n"
+        "accounts: {a: {agent: claude, dir: /a}}\n"
+    )
 
     with pytest.raises(RegistryError, match="/vars/n"):
+        _ = load_registry(write_registry(text), home)
+
+
+def with_project(entry: str) -> str:
+    """Add the account `work` and a project, `bar`, set up by `entry`, to MINIMAL."""
+    return (
+        MINIMAL_REGISTRY
+        + "      work: {agent: claude, dir: ~/.config/work}\n"
+        + f"    projects:\n      bar: {{{entry}}}\n"
+    )
+
+
+def test_default_account_is_required(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = "version: 1\naccounts: {a: {agent: claude, dir: /a}}\n"
+
+    with pytest.raises(RegistryError, match="/default-account: Field required"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_default_account_must_exist(write_registry: RegistryWriter, home: Path) -> None:
+    text = MINIMAL_REGISTRY.replace("account: personal", "account: nope")
+
+    with pytest.raises(
+        RegistryError, match=r"/default-account: no account named 'nope'.*personal"
+    ):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize(
+    ("entry", "pointer"),
+    [
+        ("repo: /r, account: nope", "/projects/bar/account"),
+        ("repo: /r, accounts: [work, nope]", "/projects/bar/accounts"),
+    ],
+)
+def test_every_mentioned_account_must_exist(
+    write_registry: RegistryWriter, home: Path, entry: str, pointer: str
+) -> None:
+    with pytest.raises(RegistryError, match=rf"{pointer}: no account named 'nope'"):
+        _ = load_registry(write_registry(with_project(entry)), home)
+
+
+def test_project_account_must_be_in_its_accounts(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, account: work, accounts: [personal]")
+
+    with pytest.raises(
+        RegistryError, match=r"/projects/bar/account: 'work' is not one of .* personal"
+    ):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_projects_are_read(write_registry: RegistryWriter, home: Path) -> None:
+    entry = "repo: ~/src/bar.git/, account: work, accounts: [work], vars: {team: ci}"
+
+    registry = load_registry(write_registry(with_project(entry)), home)
+
+    project = registry.projects["bar"]
+    assert registry.default_account == "personal"
+    assert project.name == "bar"
+    assert project.repo == home / "src" / "bar.git"
+    assert project.account == "work"
+    assert project.accounts == ("work",)
+    assert (project.unit, project.unit_is_default) == ("projects/bar.json", True)
+    assert project.vars == {"team": "ci"}
+
+
+def test_a_project_needs_only_a_repo(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(with_project("repo: /r")), home)
+    project = registry.projects["bar"]
+
+    assert (project.account, project.accounts, project.vars) == (None, None, {})
+    assert load_registry(write_registry(MINIMAL_REGISTRY), home).projects == {}
+
+
+def test_project_unit_defaults_and_is_marked_default(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r") + '      x: {repo: /x, unit: "@c/p/x.json"}\n'
+
+    registry = load_registry(write_registry(text), home)
+
+    bar, other = registry.projects["bar"], registry.projects["x"]
+    assert (bar.unit, bar.unit_is_default) == ("projects/bar.json", True)
+    assert (other.unit, other.unit_is_default) == ("@c/p/x.json", False)
+
+
+@pytest.mark.parametrize("name", ["Bar", "-a", "a.b"])
+def test_project_names_that_break_the_rule_are_refused(
+    write_registry: RegistryWriter, home: Path, name: str
+) -> None:
+    text = MINIMAL_REGISTRY + f'    projects:\n      "{name}": {{repo: /r}}\n'
+
+    with pytest.raises(RegistryError, match=f"'{name}'.*not a valid project name"):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize(
+    ("entry", "pointer"),
+    [
+        ("repo: r", "/projects/bar/repo.*absolute"),
+        ("repo: /r, vars: {A: x}", "/projects/bar/vars.*'A'.*not a valid"),
+    ],
+)
+def test_project_repo_and_variables_are_checked(
+    write_registry: RegistryWriter, home: Path, entry: str, pointer: str
+) -> None:
+    with pytest.raises(RegistryError, match=pointer):
+        _ = load_registry(write_registry(with_project(entry)), home)
+
+
+def test_an_unknown_project_lists_the_known_ones(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(with_project("repo: /r")), home)
+
+    assert registry.project("bar").name == "bar"
+    with pytest.raises(RegistryError, match=r"no project named 'nope'.*bar"):
+        _ = registry.project("nope")
+    with pytest.raises(RegistryError, match="defines no projects"):
+        _ = load_registry(write_registry(MINIMAL_REGISTRY), home).project("bar")
+
+
+def test_account_precedence_is_option_then_project_then_default(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, account: work") + "      plain: {repo: /p}\n"
+    registry = load_registry(write_registry(text), home)
+    bar, plain = registry.projects["bar"], registry.projects["plain"]
+
+    assert choose_account(registry, None, None).name == "personal"
+    assert choose_account(registry, plain, None).name == "personal"
+    assert choose_account(registry, bar, None).name == "work"
+    assert choose_account(registry, None, "work").name == "work"
+    assert choose_account(registry, bar, "personal").name == "personal"
+
+
+def test_the_chosen_account_must_exist_and_be_allowed(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(
+        write_registry(with_project("repo: /r, account: work, accounts: [work]")), home
+    )
+    bar = registry.projects["bar"]
+
+    with pytest.raises(RegistryError, match="no account named 'nope'"):
+        _ = choose_account(registry, bar, "nope")
+    with pytest.raises(
+        RegistryError, match=r"project 'bar' does not allow account 'personal'.*work"
+    ):
+        _ = choose_account(registry, bar, "personal")
+
+
+def test_a_project_without_an_account_must_allow_the_default_account(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, accounts: [work]")
+
+    with pytest.raises(
+        RegistryError,
+        match=r"/projects/bar/accounts: .*default account 'personal'.*work",
+    ):
+        _ = load_registry(write_registry(text), home)
+
+    fixed = with_project("repo: /r, accounts: [work, personal]")
+    assert load_registry(write_registry(fixed), home).projects["bar"].accounts == (
+        "work",
+        "personal",
+    )
+
+
+def test_a_project_must_allow_at_least_one_account(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, account: work, accounts: []")
+
+    with pytest.raises(RegistryError, match=r"/projects/bar/accounts: .*at least one"):
         _ = load_registry(write_registry(text), home)

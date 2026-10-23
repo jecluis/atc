@@ -214,7 +214,8 @@ projects:
 - **Consistency checks:**
   - Every account name that is mentioned must exist.
   - No two accounts may share a `dir`.
-  - Each project's `account` must be in its `accounts`, if that is set.
+  - A project's `accounts`, if set, must not be empty, and must include the
+    project's effective account: its `account`, or else `default-account`.
   - An account that sets both `agents-md-file` and
     `use-default-agents-md: true` gets a warning, since the flag then has no
     effect.

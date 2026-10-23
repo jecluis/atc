@@ -5,18 +5,21 @@ from pathlib import Path
 
 from atc.backends import backend_for
 from atc.context import BuildContext
-from atc.registry import Account
+from atc.registry import Account, Project
 from atc.sources import Source
 from atc.template import VarValue
 
 
-def layer_variables(ctx: BuildContext, account: Account) -> dict[str, VarValue]:
+def layer_variables(
+    ctx: BuildContext, account: Account, project: Project | None = None
+) -> dict[str, VarValue]:
     """
-    Make the variables of the account layer built for ``account``.
+    Make the variables of a layer built for ``account``.
 
     These are every variable except the ones that depend on the unit being
-    expanded (see :func:`with_source`) and the project ones. The named
-    ``sources.<name>.*`` variables exist only in the multi layout.
+    expanded (see :func:`with_source`). The ``project.*`` ones exist when a
+    ``project`` is given, which is the project layer, and not otherwise. The
+    named ``sources.<name>.*`` variables exist only in the multi layout.
     """
     variables: dict[str, VarValue] = {
         "home": str(ctx.home),
@@ -42,6 +45,10 @@ def layer_variables(ctx: BuildContext, account: Account) -> dict[str, VarValue]:
         }
     )
     variables.update({f"account.vars.{n}": v for n, v in account.vars.items()})
+    if project is not None:
+        variables["project.name"] = project.name
+        variables["project.repo"] = str(project.repo)
+        variables.update({f"project.vars.{n}": v for n, v in project.vars.items()})
 
     peers = [
         peer for peer in ctx.registry.accounts.values() if peer.name != account.name

@@ -8,7 +8,7 @@ from atc.context import BuildContext
 from atc.errors import PolicyError
 from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located
-from atc.registry import Account, account_unit
+from atc.registry import Account, Project, account_unit, project_unit
 from atc.resolve import UnitTransform, resolve
 from atc.template import VarValue, expand
 from atc.variables import layer_variables, with_source
@@ -17,6 +17,7 @@ type LayerKind = Literal["account", "project", "session"]
 
 POLICY: Mapping[str, frozenset[LayerKind]] = {
     "/autoMemoryDirectory": frozenset({"account"}),
+    "/sandbox/allowUnsandboxedCommands": frozenset({"project", "session"}),
 }
 """JSON pointers to settings, each with the layers that must not set it."""
 
@@ -67,6 +68,38 @@ def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> La
     )
     resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
     return Layer("account", resolution.settings, resolution.warnings)
+
+
+def build_project_layer(
+    ctx: BuildContext, project: Project, account: Account, *, lax: bool
+) -> Layer | None:
+    """
+    Merge the unit of ``project`` and everything it imports, for ``account``.
+
+    Every unit is expanded with the project's variables as well as the
+    account's, and then checked against the policy for the project layer. The
+    result is ``None`` when the project has no unit: the registry left the unit
+    to the default, and no source has it. Set ``lax`` to report unknown
+    settings keys as warnings instead of errors.
+
+    Raises:
+        PathError: a unit the registry names does not exist, or several sources
+            have the project's unit.
+        TemplateError: a unit has a reference that cannot be expanded.
+        PolicyError: a unit sets a key the project layer must not.
+        ConfigError: as :func:`atc.resolve.resolve`, for the units themselves.
+
+    """
+    root = project_unit(ctx.sources, ctx.registry, project)
+    if root is None:
+        return None
+    transform = _unit_transform(
+        "project",
+        layer_variables(ctx, account, project),
+        f"project layer for {project.name} with account {account.name}",
+    )
+    resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
+    return Layer("project", resolution.settings, resolution.warnings)
 
 
 def _unit_transform(

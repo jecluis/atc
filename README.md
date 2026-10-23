@@ -7,7 +7,8 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc show account`, `atc src ls` and `atc src check`.
+Today the tool implements `atc show account`, `atc show project`, `atc src ls`
+and `atc src check`.
 The rest is being built step by step.
 
 ## Install
@@ -70,6 +71,7 @@ belongs to no config source, so it never lands in a git repository by accident.
 version: 1
 vars:
   scratch_root: /mnt/scratch
+default-account: personal
 accounts:
   personal:
     agent: claude
@@ -80,16 +82,29 @@ accounts:
     unit: "@work/accounts/work.json"
     vars:
       scratch: /mnt/scratch/work
+projects:
+  bar:
+    repo: ~/src/bar
+    account: work
+    accounts: [work, personal]
+    vars:
+      team: ci
 ```
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `version` | yes | Must be `1`. |
 | `vars` | no | Variables for every unit, as `{{vars.<name>}}` (see Templates). |
+| `default-account` | yes | The account used outside projects, and by projects that name none. It must be one of `accounts`. |
 | `accounts.<name>.agent` | yes | The coding agent the account is for. Only `claude` exists. |
 | `accounts.<name>.dir` | yes | The account's configuration directory. |
 | `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
 | `accounts.<name>.vars` | no | Variables for this account's units, as `{{account.vars.<name>}}`. |
+| `projects.<name>.repo` | yes | A checkout of the project's repository. |
+| `projects.<name>.account` | no | The account the project uses by default. Defaults to `default-account`. |
+| `projects.<name>.accounts` | no | The accounts allowed to work on the project. When set, it must name at least one and include the project's account: `account`, or `default-account` when the project sets none. Defaults to every account. |
+| `projects.<name>.unit` | no | The unit the project's settings are built from, as a unit reference (see Units). Defaults to `projects/<name>.json`. When that default does not exist, the project has no settings of its own. |
+| `projects.<name>.vars` | no | Variables for this project's units, as `{{project.vars.<name>}}`. |
 
 No other keys are accepted yet, and a misspelled key is an error. The rules:
 
@@ -99,8 +114,15 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
 - A leading `~` in a path stands for your home directory. Every path must then
   be absolute. Environment variables are not expanded, so `$HOME/x` is an
   error.
-- Account names are lowercase letters, digits, `_` and `-`, starting with a
-  letter or a digit.
+- Account and project names are lowercase letters, digits, `_` and `-`,
+  starting with a letter or a digit.
+- Every account that the registry mentions must exist: `default-account`, and
+  each project's `account` and `accounts`.
+- A project's `accounts` cannot be empty, and must include the account the
+  project uses by default: its `account`, or `default-account` when it sets
+  none.
+- A `repo` is a path like a `dir`: a leading `~` is expanded and it must then
+  be absolute.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or
   a symbolic link in the path makes no difference.
 - Variable names are lowercase letters, digits and `_`, starting with a letter,
@@ -133,7 +155,8 @@ of Claude Code settings and can import other units:
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
 
-**References.** An import, and an account's `unit` in the registry, is one of:
+**References.** An import, and the `unit` of an account or project in the
+registry, is one of:
 
 - `path/to/unit.json`: a path relative to the `conf/` of the same source.
 - `@name/path/to/unit.json`: a path relative to the `conf/` of the source
@@ -203,12 +226,17 @@ merged, so one unit can serve every account:
 | `source.root`, `source.conf`, `source.assets` | string | That source's directory, its `conf/` and its `assets/`. |
 | `sources.<name>.root`, `.conf`, `.assets` | string | The same for any source, by name. Only with several sources. |
 | `vars.<name>` | string | The registry's `vars`. |
-| `account.name`, `account.agent`, `account.dir` | string | The account being built. |
+| `account.name`, `account.agent`, `account.dir` | string | The account being built, or in a project's units the account chosen for the project. |
 | `account.files` | list | Files the account owns outside its `dir`. For Claude, `~/.claude.json` when `dir` is `~/.claude`, otherwise none. |
 | `account.secrets` | list | The account's credentials and state file, which its own sessions must not read. For Claude, `.credentials.json` in `dir` and the state file: `~/.claude.json` when `dir` is `~/.claude`, otherwise `.claude.json` in `dir`. |
 | `account.vars.<name>` | string | The account's `vars`. |
 | `peers.dir` | list | The `dir` of every other account. |
 | `peers.files` | list | The `files` of every other account, in one list. |
+| `project.name`, `project.repo` | string | The project being built. Only in a project's units. |
+| `project.vars.<name>` | string | The project's `vars`. Only in a project's units. |
+
+In an account's units, `project.*` does not exist, so using it there is an
+unknown-reference error.
 
 ## Usage
 
@@ -244,14 +272,18 @@ into other sources. It reports every problem it finds, not only the first:
 - values of different types for the same setting
 
 When the machine registry exists, it also builds the settings of every account,
-as `atc show account` does, and reports:
+as `atc show account` does, and of every project, as `atc show project` does,
+once for each account the project allows (every account when it names none). It
+reports:
 
-- an account whose unit does not exist, or exists in several sources
-- a unit with a reference that cannot be expanded for an account, such as an
-  unknown variable
+- an account whose unit does not exist, or exists in several sources, and the
+  same for a project whose registry entry names a `unit`
+- a unit with a reference that cannot be expanded for an account, or for a
+  project and one of its accounts, such as an unknown variable
 - a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
   refused in an account's settings, because the value is the memory directory
-  itself and every project would share it
+  itself and every project would share it, and `sandbox.allowUnsandboxedCommands`
+  is refused in a project's
 
 Without a registry, only the units are checked, with a warning saying so.
 
@@ -279,6 +311,28 @@ unknown `NAME` is an error that lists the accounts there are.
 
 | Option | Effect |
 | --- | --- |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
+| `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
+
+### `atc show project NAME [-a ACCOUNT] [--conf-d DIR] [--lax]`
+
+Builds the settings of the project `NAME`, one of the projects in the machine
+registry, and writes them to standard output as JSON, in the same format as
+`atc show account`. They are the project's unit merged together with everything
+it imports, with the references in each unit expanded for the project and the
+account that works on it (see Templates). Every unit is checked against what a
+project's settings may contain.
+
+The account is `ACCOUNT` when given, otherwise the project's `account`,
+otherwise `default-account`. If the project lists `accounts`, the account must
+be one of them. A project with no unit, because `projects/NAME.json` does not
+exist and the registry names none, has no settings of its own: the output is an
+empty object, and a warning says why. An unknown `NAME` or `ACCOUNT` is an error
+that lists the ones there are.
+
+| Option | Effect |
+| --- | --- |
+| `-a`, `--account ACCOUNT` | Build the settings for `ACCOUNT` instead of the project's own. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 

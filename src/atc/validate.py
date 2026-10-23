@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from atc.context import BuildContext
 from atc.errors import ConfigError
-from atc.layers import build_account_layer
+from atc.layers import build_account_layer, build_project_layer
 from atc.refs import locate
 from atc.resolve import resolve
 from atc.sources import Sources
@@ -54,12 +54,14 @@ def validate_sources(sources: Sources, *, lax: bool) -> Validation:
 
 def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     """
-    Check every unit in the sources, then every account's layer.
+    Check every unit in the sources, then every account's and project's layer.
 
     Building an account layer finds the account's unit, which must exist, and
-    checks each unit it merges against the policy for the layer. All problems
-    are collected, once each. Set ``lax`` to report unknown settings keys as
-    warnings instead of errors.
+    checks each unit it merges against the policy for the layer. A project's
+    layer is built once for each account the project allows, or for every
+    account when it allows none in particular. A project without a unit has no
+    layer to build. All problems are collected, once each. Set ``lax`` to report
+    unknown settings keys as warnings instead of errors.
     """
     checked = validate_sources(ctx.sources, lax=lax)
     errors = dict.fromkeys(checked.errors)
@@ -72,6 +74,22 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
             errors[str(exc)] = None
         else:
             warnings.update(dict.fromkeys(layer.warnings))
+    for project in ctx.registry.projects.values():
+        names = (
+            project.accounts
+            if project.accounts is not None
+            else tuple(ctx.registry.accounts)
+        )
+        for name in names:
+            try:
+                built = build_project_layer(
+                    ctx, project, ctx.registry.accounts[name], lax=lax
+                )
+            except ConfigError as exc:
+                errors[str(exc)] = None
+            else:
+                if built is not None:
+                    warnings.update(dict.fromkeys(built.warnings))
     return Validation(
         units=checked.units, errors=tuple(errors), warnings=tuple(warnings)
     )

@@ -181,3 +181,108 @@ def test_show_account_reports_an_unknown_reference(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "/model: unknown reference {{nope}}" in captured.err
+
+
+PROJECTS = (
+    MINIMAL_REGISTRY
+    + "      work: {agent: claude, dir: ~/.config/work}\n"
+    + "    projects:\n"
+    + "      bar: {repo: /r, account: work, accounts: [work, personal]}\n"
+    + "      strict: {repo: /s, account: work, accounts: [work]}\n"
+    + "      bare: {repo: /b}\n"
+)
+PROJECT_UNIT = unit({"env": {"WHO": "{{account.name}}", "WHAT": "{{project.name}}"}})
+
+
+def test_show_project_uses_the_projects_default_account(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/projects/bar.json": PROJECT_UNIT}, PROJECTS)
+
+    status = main(["show", "project", "bar"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert json.loads(captured.out) == {"env": {"WHO": "work", "WHAT": "bar"}}
+    assert captured.err == ""
+
+
+def test_show_project_option_a_picks_another_allowed_account(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/projects/bar.json": PROJECT_UNIT}, PROJECTS)
+
+    status = main(["show", "project", "bar", "-a", "personal"])
+
+    assert status == OK
+    assert json.loads(capsys.readouterr().out)["env"]["WHO"] == "personal"
+
+
+def test_show_project_refuses_an_account_the_project_does_not_allow(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/projects/strict.json": PROJECT_UNIT}, PROJECTS)
+
+    assert main(["show", "project", "strict", "-a", "personal"]) == CONFIG
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "project 'strict' does not allow account 'personal'" in captured.err
+
+
+def test_show_unknown_project_lists_the_projects(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({PERSONAL: unit()}, PROJECTS)
+
+    assert main(["show", "project", "nope"]) == CONFIG
+
+    assert "bar, strict, bare" in capsys.readouterr().err
+
+
+def test_show_project_without_a_unit_prints_no_settings_and_says_so(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/projects/bar.json": PROJECT_UNIT}, PROJECTS)
+
+    status = main(["show", "project", "bare"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert json.loads(captured.out) == {}
+    assert "warning: project 'bare' has no project layer" in captured.err
+    assert "projects/bare.json" in captured.err
+
+
+def test_show_project_reports_a_policy_error_naming_the_unit(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings: JsonObject = {"sandbox": {"allowUnsandboxedCommands": True}}
+    configure({"conf/projects/bar.json": unit(settings)}, PROJECTS)
+
+    assert main(["show", "project", "bar"]) == CONFIG
+
+    err = capsys.readouterr().err
+    assert "projects/bar.json: /sandbox/allowUnsandboxedCommands" in err
+
+
+def test_src_check_builds_every_project_with_each_allowed_account(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings: JsonObject = {"sandbox": {"allowUnsandboxedCommands": True}}
+    configure(
+        {
+            PERSONAL: unit(),
+            "conf/accounts/work.json": unit(),
+            "conf/projects/bar.json": unit(settings),
+        },
+        PROJECTS,
+    )
+
+    status = main(["src", "check"])
+
+    captured = capsys.readouterr()
+    assert status == CONFIG
+    assert captured.out == ""
+    assert "projects/bar.json: /sandbox/allowUnsandboxedCommands" in captured.err
+    assert "ok:" not in captured.err

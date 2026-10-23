@@ -61,7 +61,12 @@ def git_repo(path: Path) -> Path:
 # spaces for a top-level key, six for another account.
 MINIMAL_REGISTRY = """\
     version: 1
+    default-account: personal
     accounts:
       personal: {agent: claude, dir: ~/.claude}
 """
-"""A registry with one account, `personal`, whose unit is `accounts/personal.json`."""
+"""
+A registry with one account, `personal`, whose unit is `accounts/personal.json`.
+
+It is also the default account.
+"""

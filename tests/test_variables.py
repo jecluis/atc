@@ -17,6 +17,7 @@ from tests.helpers import UID, unit
 
 THREE_ACCOUNTS = """\
     version: 1
+    default-account: personal
     vars: {scratch_root: /mnt/s}
     accounts:
       personal: {agent: claude, dir: ~/.claude}
@@ -29,6 +30,7 @@ THREE_ACCOUNTS = """\
 
 ISOLATION_REGISTRY = """\
     version: 1
+    default-account: personal
     accounts:
       personal: {agent: claude, dir: ~/.claude, unit: isolation.json}
       bravo: {agent: claude, dir: ~/.config/bravo/claude, unit: isolation.json}
@@ -128,6 +130,7 @@ def test_source_variables_point_at_the_units_own_source(
 ) -> None:
     registry = """\
         version: 1
+        default-account: a
         accounts:
           a: {agent: claude, dir: /a, unit: "@bravo/accounts/a.json"}
         """
@@ -278,3 +281,25 @@ def test_the_isolation_unit_builds_the_personal_entries(
 
 def _deny(*paths: Path) -> list[JsonObject]:
     return [{"path": str(path), "mode": "deny"} for path in paths]
+
+
+def test_a_project_adds_its_name_repo_and_variables(
+    build_context: ContextBuilder,
+) -> None:
+    registry = THREE_ACCOUNTS + (
+        "    projects:\n      bar: {repo: ~/src/bar, vars: {team: ci, ci: x}}\n"
+    )
+    ctx = build_context({"conf/a.json": unit()}, registry)
+    account = ctx.registry.account("bravo")
+
+    plain = layer_variables(ctx, account)
+    got = layer_variables(ctx, account, ctx.registry.project("bar"))
+
+    assert not [name for name in plain if name.startswith("project.")]
+    assert got == {
+        **plain,
+        "project.name": "bar",
+        "project.repo": str(ctx.home / "src" / "bar"),
+        "project.vars.team": "ci",
+        "project.vars.ci": "x",
+    }

@@ -11,6 +11,7 @@ from atc.registry import Registry, parse_registry
 
 REGISTRY = """\
 version: 1
+default-account: personal
 accounts:
   personal: {agent: claude, dir: ~/.claude}
   bravo: {agent: claude, dir: ~/.config/bravo/claude}
@@ -54,7 +55,10 @@ def test_secrets_for_the_default_and_other_dirs(home: Path) -> None:
 
 
 def test_default_dir_detection_survives_a_trailing_slash(home: Path) -> None:
-    text = "version: 1\naccounts: {a: {agent: claude, dir: ~/.claude/}}\n"
+    text = (
+        "version: 1\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: ~/.claude/}}\n"
+    )
     account = load(home, text).account("a")
 
     assert ClaudeBackend(home).is_default(account)
