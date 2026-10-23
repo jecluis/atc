@@ -1,6 +1,6 @@
 """Settings layers, and the policy on which keys each layer may set."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -9,7 +9,7 @@ from atc.errors import PolicyError
 from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located
 from atc.registry import Account, Project, account_unit, project_unit
-from atc.resolve import UnitTransform, resolve
+from atc.resolve import Resolution, UnitTransform, resolve
 from atc.template import VarValue, expand
 from atc.variables import layer_variables, with_source
 
@@ -22,13 +22,28 @@ POLICY: Mapping[str, frozenset[LayerKind]] = {
 """JSON pointers to settings, each with the layers that must not set it."""
 
 
+RULE_LISTS = ("allow", "ask", "deny")
+"""The ``permissions`` lists that hold rules."""
+
+type Origins = Mapping[tuple[str, str], tuple[str, ...]]
+"""Rule origins: ``(list name, rule)`` to the units that gave the rule."""
+
+
 @dataclass(frozen=True, slots=True)
 class Layer:
-    """One layer of settings, merged. ``warnings`` did not stop the build."""
+    """
+    One layer of settings, merged. ``warnings`` did not stop the build.
+
+    ``origins`` says which units gave each permission rule, as the display names
+    of the units in merge order. Its keys are ``(list, rule)`` with ``list`` one
+    of ``allow``, ``ask`` and ``deny``, and a rule that several units give
+    appears once.
+    """
 
     kind: LayerKind
     settings: JsonObject
     warnings: tuple[str, ...]
+    origins: Origins
 
 
 def check_policy(settings: JsonObject, kind: LayerKind, origin: str) -> None:
@@ -63,11 +78,15 @@ def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> La
 
     """
     root = account_unit(ctx.sources, ctx.registry, account)
+    origins: dict[tuple[str, str], list[str]] = {}
     transform = _unit_transform(
-        "account", layer_variables(ctx, account), f"account layer for {account.name}"
+        "account",
+        layer_variables(ctx, account),
+        f"account layer for {account.name}",
+        origins,
     )
     resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
-    return Layer("account", resolution.settings, resolution.warnings)
+    return _layer("account", resolution, origins)
 
 
 def build_project_layer(
@@ -93,23 +112,39 @@ def build_project_layer(
     root = project_unit(ctx.sources, ctx.registry, project)
     if root is None:
         return None
+    origins: dict[tuple[str, str], list[str]] = {}
     transform = _unit_transform(
         "project",
         layer_variables(ctx, account, project),
         f"project layer for {project.name} with account {account.name}",
+        origins,
     )
     resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
-    return Layer("project", resolution.settings, resolution.warnings)
+    return _layer("project", resolution, origins)
+
+
+def _layer(
+    kind: LayerKind,
+    resolution: Resolution,
+    origins: Mapping[tuple[str, str], list[str]],
+) -> Layer:
+    """Make the layer that ``resolution`` built, with the ``origins`` it collected."""
+    frozen = {key: tuple(units) for key, units in origins.items()}
+    return Layer(kind, resolution.settings, resolution.warnings, frozen)
 
 
 def _unit_transform(
-    kind: LayerKind, variables: Mapping[str, VarValue], layer: str
+    kind: LayerKind,
+    variables: Mapping[str, VarValue],
+    layer: str,
+    origins: dict[tuple[str, str], list[str]],
 ) -> UnitTransform:
     """
     Make the transform that prepares a unit for layer ``kind``.
 
     It expands the unit's references, with ``variables`` and the unit's own
-    source, then applies the policy. ``layer`` names the layer in error messages.
+    source, applies the policy, and adds the unit's permission rules to
+    ``origins``. ``layer`` names the layer in error messages.
     """
 
     def prepare(unit: Located, settings: JsonObject) -> JsonObject:
@@ -119,9 +154,24 @@ def _unit_transform(
             origin=f"{unit.display} ({layer})",
         )
         check_policy(expanded, kind, unit.display)
+        for key in _rules(expanded):
+            units = origins.setdefault(key, [])
+            if unit.display not in units:
+                units.append(unit.display)
         return expanded
 
     return prepare
+
+
+def _rules(settings: JsonObject) -> Iterator[tuple[str, str]]:
+    """Yield ``(list, rule)`` for each string in the ``permissions`` rule lists."""
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return
+    for name in RULE_LISTS:
+        rules = permissions.get(name)
+        if isinstance(rules, list):
+            yield from ((name, rule) for rule in rules if isinstance(rule, str))
 
 
 def _is_set(settings: JsonObject, pointer: str) -> bool:

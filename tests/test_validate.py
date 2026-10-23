@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from atc.jsonval import JsonObject
 from atc.sources import discover
 from atc.validate import validate_config, validate_sources
 from tests.conftest import ContextBuilder
@@ -244,3 +245,75 @@ def test_validate_config_reports_a_missing_explicit_project_unit_once(
 
     assert len(result.errors) == 1
     assert "project 'both'" in result.errors[0]
+
+
+REBASE = "Bash(git rebase:*)"
+
+
+def rules(**lists: list[str]) -> JsonObject:
+    return unit({"permissions": {name: [*rule] for name, rule in lists.items()}})
+
+
+def test_validate_config_reports_a_dead_rule_once_however_many_layers_see_it(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": rules(allow=[REBASE], deny=[REBASE]),
+            "conf/profiles/work.json": unit(),
+            "conf/projects/both.json": unit(),
+            "conf/projects/only-work.json": unit(),
+        },
+        WITH_PROJECTS,
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert result.errors == ()
+    assert result.warnings == (
+        "allow Bash(git rebase:*) (accounts/personal.json) never applies: "
+        + "deny Bash(git rebase:*) (accounts/personal.json) takes precedence",
+    )
+
+
+def test_validate_config_checks_a_project_against_each_account_it_allows(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": rules(deny=[REBASE]),
+            "conf/profiles/work.json": unit(),
+            "conf/projects/both.json": rules(allow=[REBASE]),
+            "conf/projects/only-work.json": rules(allow=[REBASE]),
+        },
+        WITH_PROJECTS,
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert result.errors == ()
+    assert result.warnings == (
+        "allow Bash(git rebase:*) (projects/both.json) never applies: "
+        + "deny Bash(git rebase:*) (accounts/personal.json) takes precedence",
+    )
+
+
+def test_validate_config_checks_a_project_alone_when_its_account_layer_fails(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit({"autoMemoryDirectory": "/m"}),
+            "conf/profiles/work.json": unit(),
+            "conf/projects/both.json": rules(allow=[REBASE], deny=[REBASE]),
+        },
+        WITH_PROJECTS,
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert len(result.errors) == 1
+    assert result.warnings == (
+        "allow Bash(git rebase:*) (projects/both.json) never applies: "
+        + "deny Bash(git rebase:*) (projects/both.json) takes precedence",
+    )

@@ -285,7 +285,9 @@ reports:
   itself and every project would share it, and `sandbox.allowUnsandboxedCommands`
   is refused in a project's
 
-Without a registry, only the units are checked, with a warning saying so.
+It also warns about permission rules that can never apply (see Rule warnings),
+which never fails the check. Without a registry, only the units are checked,
+with a warning saying so.
 
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
 it prints each problem, once, and exits `1`. Everything goes to standard
@@ -306,8 +308,9 @@ is checked against what the account's settings may contain.
 
 The output has sorted keys and a trailing newline, and is the same every time
 for the same configuration. On a terminal it is coloured. Redirected, it is
-plain JSON, so it is safe to pipe. Warnings and errors go to standard error. An
-unknown `NAME` is an error that lists the accounts there are.
+plain JSON, so it is safe to pipe. Warnings and errors go to standard error,
+among them the permission rules of the account that can never apply (see Rule
+warnings). An unknown `NAME` is an error that lists the accounts there are.
 
 | Option | Effect |
 | --- | --- |
@@ -330,11 +333,57 @@ exist and the registry names none, has no settings of its own: the output is an
 empty object, and a warning says why. An unknown `NAME` or `ACCOUNT` is an error
 that lists the ones there are.
 
+The account's settings are built too, so that the permission rules of the
+account and of the project can be checked together (see Rule warnings). The
+output is still the project's settings alone. If the account's settings cannot
+be built, a warning says why and only the project's own rules are checked: the
+output and the exit status are the same as without the check.
+
 | Option | Effect |
 | --- | --- |
 | `-a`, `--account ACCOUNT` | Build the settings for `ACCOUNT` instead of the project's own. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
+
+### Rule warnings
+
+Claude Code applies permission rules deny first, then ask, then allow, whichever
+settings file each rule comes from. A rule that a stronger rule always overrides
+never takes effect, so atc warns about it:
+
+- an `allow` rule that a `deny` or an `ask` rule covers
+- an `ask` rule that a `deny` rule covers
+
+If `common/base.json` denies `Bash(git rebase:*)` and `projects/bar.json` allows
+it, every rebase in `bar` is still refused:
+
+```text
+warning: allow Bash(git rebase:*) (projects/bar.json) never applies: deny Bash(git rebase:*) (common/base.json) takes precedence
+```
+
+The warning names both rules and the units that gave them, and leaves the fix to
+you. A rule is reported once, naming the strongest rule that covers it: a `deny`
+over an `ask`, then the earliest in the merge order.
+
+A rule **covers** another when it matches everything the other one matches:
+
+- the two have the same text
+- it is a bare tool name, such as `Bash`, and the other is a rule for that tool
+- for `Bash` rules, its pattern, with `*` as a wildcard, matches the text of the
+  other read literally. A trailing `:*` means the same as a trailing ` *`, so
+  `Bash(git *)` covers `Bash(git rebase:*)`, and `Bash(rm:*)` covers
+  `Bash(rm -rf target:*)`
+
+The check is conservative: it can miss a conflict, but it does not report one
+that is not there. A partial overlap is not reported, so denying
+`Bash(git rebase -i:*)` does not make allowing `Bash(git rebase:*)` dead. Rules in
+a repository's own `.claude/settings*.json` are not considered.
+
+`atc show account` checks the account's settings alone. `atc show project`
+checks the account's and the project's together, as Claude Code sees them.
+`atc src check` checks every account, and every project with each account it
+allows. These warnings go to standard error. They never change what atc prints
+or writes, and never change the exit status.
 
 ### Output and exit status
 

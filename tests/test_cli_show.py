@@ -204,7 +204,7 @@ def test_show_project_uses_the_projects_default_account(
     captured = capsys.readouterr()
     assert status == OK
     assert json.loads(captured.out) == {"env": {"WHO": "work", "WHAT": "bar"}}
-    assert captured.err == ""
+    assert captured.err.startswith("warning: rule check skipped")
 
 
 def test_show_project_option_a_picks_another_allowed_account(
@@ -286,3 +286,107 @@ def test_src_check_builds_every_project_with_each_allowed_account(
     assert captured.out == ""
     assert "projects/bar.json: /sandbox/allowUnsandboxedCommands" in captured.err
     assert "ok:" not in captured.err
+
+
+def test_show_project_checks_the_project_alone_when_the_account_layer_fails(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/projects/bar.json": PROJECT_UNIT}, PROJECTS)
+
+    status = main(["show", "project", "bar"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert json.loads(captured.out) == {"env": {"WHO": "work", "WHAT": "bar"}}
+    assert captured.err.count("warning:") == 1
+    assert "warning: rule check skipped for the account layer: " in captured.err
+    assert "account 'work': 'accounts/work.json': no such unit" in captured.err
+
+
+def test_show_project_still_checks_its_own_rules_when_the_account_layer_fails(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    permissions: JsonObject = {"allow": ["Read(.env)"], "deny": ["Read"]}
+    configure({"conf/projects/bar.json": unit({"permissions": permissions})}, PROJECTS)
+
+    status = main(["show", "project", "bar"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == dumps({"permissions": permissions})
+    assert "warning: rule check skipped for the account layer: " in captured.err
+    assert (
+        "warning: allow Read(.env) (projects/bar.json) never applies: "
+        + "deny Read (projects/bar.json) takes precedence\n"
+    ) in captured.err
+
+
+REBASE = "Bash(git rebase:*)"
+REBASE_WARNING = (
+    "warning: allow Bash(git rebase:*) (projects/bar.json) never applies: "
+    "deny Bash(git rebase:*) (common/base.json) takes precedence\n"
+)
+RULES_REGISTRY = MINIMAL_REGISTRY + "    projects:\n      bar: {repo: /r}\n"
+RULES_UNITS: dict[str, JsonObject] = {
+    PERSONAL: unit(imports=["common/base.json"]),
+    "conf/common/base.json": unit({"permissions": {"deny": [REBASE]}}),
+    "conf/projects/bar.json": unit({"permissions": {"allow": [REBASE]}}),
+}
+
+
+def test_show_project_warns_without_changing_output_or_status(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(RULES_UNITS, RULES_REGISTRY)
+
+    status = main(["show", "project", "bar"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == dumps({"permissions": {"allow": [REBASE]}})
+    assert "never applies" in captured.err
+    assert captured.err == REBASE_WARNING
+
+
+def test_show_account_checks_the_account_layer_alone(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(RULES_UNITS, RULES_REGISTRY)
+
+    assert main(["show", "account", "personal"]) == OK
+
+    captured = capsys.readouterr()
+    assert captured.out == dumps({"permissions": {"deny": [REBASE]}})
+    assert captured.err == ""
+
+
+def test_show_account_warns_about_a_rule_that_never_applies(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    permissions: JsonObject = {"allow": ["Read(.env)"], "ask": ["Read"]}
+    configure({PERSONAL: unit({"permissions": permissions})})
+
+    status = main(["show", "account", "personal"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == dumps({"permissions": permissions})
+    assert captured.err == (
+        "warning: allow Read(.env) (accounts/personal.json) never applies: "
+        "ask Read (accounts/personal.json) takes precedence\n"
+    )
+
+
+def test_src_check_reports_rule_warnings_and_still_passes(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(RULES_UNITS, RULES_REGISTRY)
+
+    status = main(["src", "check"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == ""
+    assert captured.err.count("never applies") == 1
+    assert REBASE_WARNING in captured.err
+    assert "ok:" in captured.err

@@ -307,3 +307,82 @@ def test_a_project_template_error_names_the_project_and_the_account(
         "projects/bar.json (project layer for bar with account personal): "
         "/model: unknown reference {{account.vars.who}}"
     )
+
+
+def test_origins_name_the_units_that_gave_each_rule_in_merge_order(
+    build_context: ContextBuilder,
+) -> None:
+    def rules(allow: list[str], deny: list[str]) -> JsonObject:
+        return {"permissions": {"allow": [*allow], "deny": [*deny]}}
+
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(
+                rules(["Bash(b)", "Bash(a)"], []), imports=["common/base.json"]
+            ),
+            "conf/common/base.json": unit(rules(["Bash(a)"], ["Bash(a)"])),
+        }
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.origins == {
+        ("allow", "Bash(a)"): ("common/base.json", "accounts/personal.json"),
+        ("deny", "Bash(a)"): ("common/base.json",),
+        ("allow", "Bash(b)"): ("accounts/personal.json",),
+    }
+    assert list(layer.origins) == [
+        ("allow", "Bash(a)"),
+        ("deny", "Bash(a)"),
+        ("allow", "Bash(b)"),
+    ]
+
+
+def test_origins_record_the_rules_as_expanded_and_skip_what_is_not_a_rule(
+    build_context: ContextBuilder,
+) -> None:
+    permissions: JsonObject = {
+        "allow": ["Bash(echo {{account.name}})", 1, ["Bash(x)"]],
+        "ask": [],
+        "deny": "Bash(y)",
+        "defaultMode": "plan",
+    }
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"permissions": permissions})}
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.origins == {
+        ("allow", "Bash(echo personal)"): ("accounts/personal.json",)
+    }
+
+
+def test_origins_are_empty_without_permissions(build_context: ContextBuilder) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit({"permissions": "x"}),
+        }
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.origins == {}
+
+
+def test_the_project_layer_records_origins_with_the_project_unit(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/projects/bar.json": unit(
+                {"permissions": {"deny": ["Read({{project.repo}}/x)"]}}
+            )
+        },
+        PROJECT_REGISTRY,
+    )
+
+    layer = build_project(ctx)
+
+    assert layer is not None
+    assert layer.origins == {("deny", "Read(/r/x)"): ("projects/bar.json",)}

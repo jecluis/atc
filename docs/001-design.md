@@ -50,6 +50,7 @@ skills.
 | F11 | Claude Code loads user skills from `<dir>/skills/<name>/SKILL.md`, following symbolic links                                                                                                              | Both accounts' `skills/` hold links into this repository's `skills/`, and they load in sessions           |
 | F12 | `<dir>/skills/` also holds entries that nothing here created: `synced/` and `.trash/` in both accounts, and hand-made directories in the Acme one                                                        | Observed on this machine, 2026-10-23                                                                      |
 | F13 | Permission rules apply deny first, then ask, then allow, whichever settings file each comes from. A deny in any scope can't be overridden by an allow elsewhere                                          | Claude Code permissions documentation                                                                     |
+| F14 | `Bash` denies `echo a:*` and `echo a *` act alike: each refuses `echo a b` and bare `echo a`, not `echo ab`. `echo a*` refuses `echo ab`; `echo * b*` doesn't refuse `echo b c`. `*` spans spaces        | Headless probe, 2026-10-23; a `git * pull*` deny refused a commit with ` pulled` in its message           |
 
 **Not established yet:**
 
@@ -527,8 +528,10 @@ names both units and both rules, and leaves the fix to you.
 - **Effect:** warnings go to stderr. They never change what atc writes, and
   never change the exit status.
 
-How Claude Code reads a trailing `:*` and a space before `*` gets tested
-before the matcher relies on it ([open question 4](#19-open-questions)).
+Claude Code reads a trailing `:*` and a trailing ` *` alike (F14), so the
+matcher turns the first into the second in both rules before comparing them. A
+`*` in the middle needs the text around it to be there, which the comparison
+keeps: `Bash(git * push*)` doesn't cover `Bash(git push:*)`.
 
 ## 9. Backends
 
@@ -1293,10 +1296,6 @@ part is relied on.
    either way. It can be dropped if a test shows the claim is wrong.
 3. **Does Claude Code follow a link at `<dir>/CLAUDE.md`?** Expected, given
    F11. Settled by starting a session in each account (§17, step 4).
-4. **How does Claude Code match `:*` and a space before `*`?** The rule
-   warnings (§8) read a trailing `:*` as ` *`. A probe settles it before
-   warnings ship. If the two differ, the matcher follows what the probe
-   shows.
 
 **Decided 2026-10-23:**
 
@@ -1305,3 +1304,5 @@ part is relied on.
 - Each account's instructions file is chosen with `use-default-agents-md` and
   `agents-md-file`, and its skills with a per-account selection and a picker
   (§10.2, §10.10).
+- A trailing `:*` and a trailing ` *` match alike in a `Bash` rule (F14), so
+  the rule warnings read one as the other (§8). This was open question 4.

@@ -1,12 +1,14 @@
 """Checking every unit in every config source."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from atc.context import BuildContext
 from atc.errors import ConfigError
-from atc.layers import build_account_layer, build_project_layer
+from atc.layers import Layer, build_account_layer, build_project_layer
 from atc.refs import locate
 from atc.resolve import resolve
+from atc.rules import dead_rules
 from atc.sources import Sources
 
 
@@ -60,20 +62,25 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     checks each unit it merges against the policy for the layer. A project's
     layer is built once for each account the project allows, or for every
     account when it allows none in particular. A project without a unit has no
-    layer to build. All problems are collected, once each. Set ``lax`` to report
+    layer to build. Permission rules that can never apply are reported as
+    warnings, for each account layer and for each project layer together with
+    its account's. All problems are collected, once each. Set ``lax`` to report
     unknown settings keys as warnings instead of errors.
     """
     checked = validate_sources(ctx.sources, lax=lax)
     errors = dict.fromkeys(checked.errors)
     warnings = dict.fromkeys(checked.warnings)
     warnings.update(dict.fromkeys(ctx.registry.warnings))
+    account_layers: dict[str, Layer] = {}
     for account in ctx.registry.accounts.values():
         try:
             layer = build_account_layer(ctx, account, lax=lax)
         except ConfigError as exc:
             errors[str(exc)] = None
         else:
+            account_layers[account.name] = layer
             warnings.update(dict.fromkeys(layer.warnings))
+            warnings.update(_rule_warnings([layer]))
     for project in ctx.registry.projects.values():
         names = (
             project.accounts
@@ -90,6 +97,16 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
             else:
                 if built is not None:
                     warnings.update(dict.fromkeys(built.warnings))
+                    account_layer = account_layers.get(name)
+                    layers = (
+                        [built] if account_layer is None else [account_layer, built]
+                    )
+                    warnings.update(_rule_warnings(layers))
     return Validation(
         units=checked.units, errors=tuple(errors), warnings=tuple(warnings)
     )
+
+
+def _rule_warnings(layers: Sequence[Layer]) -> dict[str, None]:
+    """List the messages about rules that can never apply in ``layers``."""
+    return dict.fromkeys(warning.message() for warning in dead_rules(layers))
