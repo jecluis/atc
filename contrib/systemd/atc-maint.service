@@ -1,0 +1,8 @@
+[Unit]
+Description=Pack the git repositories atc sessions have used
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/atc maint
+Nice=10
+IOSchedulingClass=idle

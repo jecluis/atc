@@ -8,6 +8,7 @@ import rich_click
 
 from atc import exitcodes
 from atc.cli.check import check
+from atc.cli.maint import maint
 from atc.cli.options import HELP_OPTIONS
 from atc.cli.run import run
 from atc.cli.show import show
@@ -47,6 +48,7 @@ def app() -> None:
 
 
 app.add_command(check)
+app.add_command(maint)
 app.add_command(run)
 app.add_command(show)
 app.add_command(skills)

@@ -20,6 +20,8 @@ REGISTRY_FILE = "machine.yaml"
 """The registry's file name, in atc's configuration directory."""
 DEFAULT_AGENTS_MD = "AGENTS.md"
 """The asset that ``default-agents-md`` names when the registry says nothing."""
+DEFAULT_GC_HOURS = 24
+"""The hours between full ``git gc`` runs when the registry says nothing."""
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _VARIABLE_NAME = re.compile(r"[a-z][a-z0-9_]*")
@@ -60,6 +62,10 @@ class _ProjectModel(_Model):
     vars: dict[str, str] = Field(default_factory=dict)
 
 
+class _MaintModel(_Model):
+    gc_hours: int = Field(default=DEFAULT_GC_HOURS, ge=1)
+
+
 class _RegistryModel(_Model):
     version: int
     vars: dict[str, str] = Field(default_factory=dict)
@@ -68,6 +74,7 @@ class _RegistryModel(_Model):
     agents: dict[Literal["claude"], _AgentModel] = Field(default_factory=dict)
     accounts: dict[str, _AccountModel]
     projects: dict[str, _ProjectModel] = Field(default_factory=dict)
+    maint: _MaintModel = Field(default_factory=_MaintModel)
 
     @field_validator("version")
     @classmethod
@@ -147,7 +154,9 @@ class Registry:
     reference of the instructions file that accounts link when they ask for the
     default. ``agent_bins`` maps an agent to the binary the registry names for
     it: an absolute path, or a command name to look up on ``PATH``. An agent
-    that is not in it is looked up on ``PATH`` by its own name.
+    that is not in it is looked up on ``PATH`` by its own name. ``gc_hours`` is
+    the number of hours between the full ``git gc`` runs of ``atc maint``, at
+    least 1.
     """
 
     path: Path
@@ -158,6 +167,7 @@ class Registry:
     warnings: tuple[str, ...]
     default_agents_md: str = DEFAULT_AGENTS_MD
     agent_bins: Mapping[str, str] = field(default_factory=dict[str, str])
+    gc_hours: int = DEFAULT_GC_HOURS
 
     def account(self, name: str) -> Account:
         """
@@ -415,6 +425,7 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
             for agent, entry in model.agents.items()
             if entry.bin is not None
         },
+        gc_hours=model.maint.gc_hours,
     )
 
 

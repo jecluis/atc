@@ -1,4 +1,4 @@
-"""Guarding a repository's packed history while a session runs."""
+"""Guarding a repository's packed history, and keeping it packed."""
 
 import fcntl
 import hashlib
@@ -7,11 +7,14 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 
-from atc.errors import ConfigError
+from atc.errors import ConfigError, GitError
 from atc.fsutil import make_private_dir
+from atc.git import run_git
 from atc.paths import Dirs
+from atc.ui import Ui
 
 REPOS_FILE = "repos"
 """The list of guarded repositories, in the state directory."""
@@ -22,6 +25,7 @@ GC_SETTINGS = (("gc.auto", "0"), ("maintenance.auto", "false"))
 
 _COUNT = re.compile(r"\s*\+?(\d+)", re.ASCII)
 _POLL_SECONDS = 0.05
+_SECONDS_PER_HOUR = 3600
 
 
 def protected_paths(common_dir: Path) -> tuple[Path, ...]:
@@ -108,6 +112,28 @@ def register_repo(dirs: Dirs, common_dir: Path) -> None:
         _ = file.write(f"{separator}{line}\n")
 
 
+def registered_repos(dirs: Dirs) -> list[Path]:
+    """
+    List the repositories in the list in ``dirs.state_dir``, in its order.
+
+    There are none when the list does not exist yet.
+
+    Raises:
+        ConfigError: the list exists but cannot be read.
+
+    """
+    path = dirs.state_dir / REPOS_FILE
+    try:
+        with path.open(encoding="utf-8", errors="surrogateescape", newline="") as file:
+            fcntl.flock(file, fcntl.LOCK_SH)
+            content = file.read()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise ConfigError(f"{path}: cannot be read: {exc}") from exc
+    return [Path(line) for line in content.split("\n") if line]
+
+
 def open_session_lock(
     dirs: Dirs, common_dir: Path, *, timeout: float = 60.0
 ) -> tuple[int | None, str | None]:
@@ -123,7 +149,7 @@ def open_session_lock(
     Without a lock, the result is ``None`` and a warning: when the lock file
     cannot be made or opened, or maintenance is still running after ``timeout``.
     """
-    path = dirs.runtime_dir / f"{repo_key(common_dir)}.lock"
+    path = _lock_path(dirs, common_dir)
     try:
         make_private_dir(dirs.runtime_dir)
         descriptor = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
@@ -131,7 +157,7 @@ def open_session_lock(
         return None, f"cannot open the session lock {path}: {exc}; starting without it"
     deadline = time.monotonic() + timeout
     try:
-        while not _try_shared_lock(descriptor):
+        while not _try_lock(descriptor, fcntl.LOCK_SH):
             if time.monotonic() >= deadline:
                 os.close(descriptor)
                 return None, (
@@ -180,10 +206,84 @@ def run_command(command: Sequence[str]) -> int:
     return subprocess.run(command, check=False).returncode  # noqa: S603 - fixed program
 
 
-def _try_shared_lock(descriptor: int) -> bool:
-    """Try to take a shared lock without waiting, and say whether it was taken."""
+def maint_repo(dirs: Dirs, common_dir: Path, *, gc_hours: int, now: datetime) -> None:
+    """
+    Keep the repository with git directory ``common_dir`` packed.
+
+    Loose objects go into packs first. That only merges packs and never drops an
+    object, so it is safe while sessions run. Then, only if no session holds the
+    repository's lock, so the exclusive lock is free without waiting, the
+    references are packed and ``git gc`` runs when the repository's stamp in
+    ``dirs.state_dir`` is missing or older than ``gc_hours`` before ``now``, and
+    the stamp is renewed. Both rewrite ``packed-refs``, which a running session
+    must not see change.
+
+    Raises:
+        GitError: a git command failed.
+        OSError: the lock file or the stamp cannot be used.
+
+    """
+    env = {"GIT_DIR": str(common_dir)}
+    _ = run_git(["repack", "--geometric=2", "-d", "-q"], env=env)
+    make_private_dir(dirs.runtime_dir)
+    descriptor = os.open(_lock_path(dirs, common_dir), os.O_RDONLY | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        if not _try_lock(descriptor, fcntl.LOCK_EX):
+            return
+        _ = run_git(["pack-refs", "--all"], env=env)
+        stamp = dirs.state_dir / f"{repo_key(common_dir)}.gc"
+        if _gc_due(stamp, gc_hours, now):
+            _ = run_git(["gc", "--quiet"], env=env)
+            make_private_dir(dirs.state_dir)
+            stamp.touch(mode=0o600)
+            os.utime(stamp, (now.timestamp(), now.timestamp()))
+    finally:
+        os.close(descriptor)
+
+
+def maint(dirs: Dirs, *, gc_hours: int, now: datetime) -> list[str]:
+    """
+    Run :func:`maint_repo` on every repository in the list, and say what failed.
+
+    A repository without ``objects/`` is skipped with a warning on standard
+    error. The result has one message for each repository whose maintenance
+    failed, and the others are maintained all the same.
+
+    Raises:
+        ConfigError: the list of repositories cannot be read.
+
+    """
+    ui = Ui.default()
+    failures: list[str] = []
+    for common_dir in registered_repos(dirs):
+        if not (common_dir / "objects").is_dir():
+            ui.warning(f"skipping {common_dir}: not a repository any more")
+            continue
+        try:
+            maint_repo(dirs, common_dir, gc_hours=gc_hours, now=now)
+        except (GitError, OSError) as exc:
+            failures.append(f"maintenance failed for {common_dir}: {exc}")
+    return failures
+
+
+def _lock_path(dirs: Dirs, common_dir: Path) -> Path:
+    """Name the file whose lock says that sessions are using the repository."""
+    return dirs.runtime_dir / f"{repo_key(common_dir)}.lock"
+
+
+def _try_lock(descriptor: int, operation: int) -> bool:
+    """Try to take the lock ``operation`` without waiting, and say if it was taken."""
+    try:
+        fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
     except BlockingIOError:
         return False
     return True
+
+
+def _gc_due(stamp: Path, gc_hours: int, now: datetime) -> bool:
+    """Say whether ``stamp`` is missing or more than ``gc_hours`` older than ``now``."""
+    try:
+        renewed = stamp.stat().st_mtime
+    except FileNotFoundError:
+        return True
+    return renewed < now.timestamp() - gc_hours * _SECONDS_PER_HOUR

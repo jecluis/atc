@@ -7,9 +7,10 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc run`, `atc sync`, `atc check`, `atc show account`,
-`atc show project`, `atc skills ls`, `atc skills pick`, `atc skills add`,
-`atc skills rm`, `atc src ls`, `atc src check` and `atc src pull`.
+Today the tool implements `atc run`, `atc sync`, `atc check`, `atc maint`,
+`atc show account`, `atc show project`, `atc skills ls`, `atc skills pick`,
+`atc skills add`, `atc skills rm`, `atc src ls`, `atc src check` and
+`atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -126,6 +127,7 @@ projects:
 | `projects.<name>.unit` | no | The unit the project's settings are built from, as a unit reference (see Units). Defaults to `projects/<name>.json`. When that default does not exist, the project has no settings of its own. |
 | `projects.<name>.snapshot` | no | The name of a snapper config. `atc run` takes a snapshot with it before each session in the project (see The guard). Defaults to no snapshot. |
 | `projects.<name>.vars` | no | Variables for this project's units, as `{{project.vars.<name>}}`. |
+| `maint.gc-hours` | no | The hours between full `git gc` runs in `atc maint`. A whole number of at least 1. Defaults to `24`. |
 
 No other keys are accepted yet, and a misspelled key is an error. The rules:
 
@@ -422,7 +424,7 @@ branches. Inside a git repository, atc therefore guards the session:
   `maintenance.auto` for the session, since git can no longer write packs. The
   two entries are added after any that atc's own environment has.
 - **Repository list.** The shared `.git` is added to `<state_dir>/repos`, one
-  path per line, if it is not there. The list tells maintenance which
+  path per line, if it is not there. The list tells `atc maint` which
   repositories to keep packed. The list, and any directory atc makes for it or
   for the lock, is readable and writable by you alone.
 - **Lock.** atc takes a shared `flock` on `<runtime_dir>/<key>.lock`, where
@@ -905,6 +907,52 @@ The status is `0` when every check passes, and `3` when any fails. If the home
 directory can be written this is not a sandbox: `atc check` says so on standard
 error and exits with `2`. `PASS` and `FAIL` are coloured only on a terminal.
 
+### `atc maint`
+
+Keeps the repositories of guarded sessions packed. Sessions cannot write a
+repository's packed history and git's own automatic gc is off inside them (see
+The guard), so `atc maint` does the packing from outside. It reads the machine
+registry but none of the config sources, and prints nothing when all is well.
+
+For each repository in `<state_dir>/repos`, in order, it:
+
+1. skips it with a warning on standard error when it no longer has an
+   `objects/` directory.
+2. runs `git repack --geometric=2 -d -q`. Geometric repacking only merges packs
+   and never drops an object, so it is safe while sessions run.
+3. tries to take the repository's lock exclusively, without waiting (see The
+   guard). When a session holds it, that is all. Otherwise it runs
+   `git pack-refs --all`, and then `git gc --quiet` if the repository's stamp,
+   `<state_dir>/<key>.gc`, is missing or older than `maint.gc-hours` (see The
+   machine registry), and renews the stamp. Both rewrite `packed-refs`, which a
+   running session must not see change, so they wait for the sessions to end.
+
+A repository that fails is reported on standard error as
+`error: maintenance failed for <path>: <git's message>`, and the others are still
+maintained. The status is `1` when any repository failed, and `0` otherwise.
+
+Run it from your own terminal or a timer, not through the agent: it writes to
+the repositories. atc comes with a systemd user service and timer for it in
+`atc/contrib/systemd/`: the timer starts the service 5 minutes after boot and
+every 10 minutes after the last run, and the service runs
+`%h/.local/bin/atc maint` at low priority, which is where `uv tool install`
+puts atc. Install them by hand, changing `ExecStart` if atc is elsewhere:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp atc/contrib/systemd/atc-maint.service atc/contrib/systemd/atc-maint.timer \
+    ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now atc-maint.timer
+```
+
+If `claude-guard`'s maintenance timer is installed, disable it at the same time,
+so that only one of them packs the repositories:
+
+```sh
+systemctl --user disable --now claude-guard-maint.timer
+```
+
 ### Rule warnings
 
 Claude Code applies permission rules deny first, then ask, then allow, whichever
@@ -954,8 +1002,8 @@ Output is coloured only when it goes to a terminal. `NO_COLOR` and
 `FORCE_COLOR` are honoured.
 
 Exit status is `0` on success, `1` for a problem with the configuration, a
-config source or git, which includes a source `atc src pull` failed or refused
-and a file `atc sync` could not write, `2` for a problem with the command line or for
+config source or git, which includes a source `atc src pull` failed or refused,
+a repository `atc maint` could not maintain and a file `atc sync` could not write, `2` for a problem with the command line or for
 `atc check` outside a sandbox,
 `3` when `atc sync` left an account alone or, with `--check`, has something to
 write, or when a check of `atc check` fails, and `130` when the command is interrupted with Ctrl-C, after a short
