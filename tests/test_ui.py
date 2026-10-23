@@ -162,6 +162,31 @@ def test_dim_is_dimmed_on_a_terminal_and_shows_control_characters(
     assert ANSI.sub("", out) == "a\\x1b[2Jb\n"
 
 
+def test_verdict_is_plain_text_on_stdout_when_it_is_not_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    ui = Ui.default()
+    ui.verdict(True, "a [bold]is[/bold] fine")
+    ui.verdict(False, "b is not")
+    captured = capsys.readouterr()
+    assert captured.out == "PASS  a [bold]is[/bold] fine\nFAIL  b is not\n"
+    assert captured.err == ""
+
+
+def test_verdict_is_green_or_red_on_a_terminal_and_shows_control_characters(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    ui = terminal_ui()
+    ui.verdict(True, "a\x1b[2Jb")
+    ui.verdict(False, "c")
+    out = capsys.readouterr().out
+    assert "\x1b[32mPASS\x1b[0m" in out
+    assert "\x1b[31mFAIL\x1b[0m" in out
+    assert ANSI.sub("", out) == "PASS  a\\x1b[2Jb\nFAIL  c\n"
+
+
 type Answer = list[str] | BaseException | None
 """What a picker gives: the values ticked, an interrupt, or no answer."""
 

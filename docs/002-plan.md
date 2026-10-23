@@ -1351,13 +1351,13 @@ The design's `run` is split across Tasks 13–15, so each commit stays inside th
 **Interfaces:**
 
 - **`check`:**
-  - `Probe` protocol: `writable(path: Path) -> bool`, `readable_contents(path: Path) -> bool`, `exists(path: Path) -> bool`, `git(args: Sequence[str]) -> str | None`, `readlink(path: Path) -> Path | None`
+  - `Probe` protocol: `writable(path: Path) -> bool`, `readable_contents(path: Path) -> bool`, `exists(path: Path) -> bool`, `git(args: Sequence[str]) -> str | None`, `readlink(path: Path) -> Path | None`, `links(directory: Path) -> list[Path]` (every entry in a directory; empty if it doesn't exist)
   - `RealProbe` uses the same `os.access` and character-device logic as `claude-guard-check`
   - `CheckResult(ok: bool, what: str)`
   - `in_sandbox(probe: Probe, home: Path) -> bool`: false when home is writable
   - `current_account(registry: Registry, env: Mapping[str, str], home: Path) -> Account | None`: `ATC_ACCOUNT` first; otherwise the account whose normalized `dir` equals `CLAUDE_CONFIG_DIR`; or, if that is unset, the account using the backend's default directory
   - `run_checks(probe: Probe, *, registry: Registry, dirs: Dirs, install_dir: Path, home: Path, env: Mapping[str, str]) -> list[CheckResult]`. Every check in §10.7, in order:
-    - **Repository**, skipped with a note outside one: `objects/pack` and `packed-refs` read-only, `hooks` and `config` read-only when present, `objects` writable, `gc.auto` is `0`, the worktree's parent read-only.
+    - **Repository**, skipped with a plain note (never a `PASS` line) outside one; any git failure other than "not a git repository" is a `FAIL`: `objects/pack` and `packed-refs` read-only, `hooks` and `config` read-only when present, `objects` writable, `gc.auto` is `0`, the worktree's parent read-only.
     - **Accounts:** the current account's `secrets`, and every peer's `dir` and `files`, are unreadable.
     - **atc itself:** `config_dir`, `state_dir`, `runtime_dir` and `install_dir` are not writable.
     - **Instructions and skills:** the targets of `instructions_file` and of each link in `skills_dir` are not writable.

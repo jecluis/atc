@@ -64,6 +64,17 @@ class Ui:
         """Write one line of plain text on standard output."""
         self.out.print(Text(message), soft_wrap=True)
 
+    def verdict(self, ok: bool, message: str) -> None:
+        """
+        Write ``message`` on standard output, led by ``PASS`` or ``FAIL``.
+
+        The word is green or red on a terminal. A control character in
+        ``message`` is shown as its escape sequence, as :meth:`dim` shows it.
+        """
+        label, style = ("PASS", "green") if ok else ("FAIL", "red")
+        line = Text.assemble((label, style), "  ", _visible(message))
+        self.out.print(line, soft_wrap=True)
+
     def dim(self, message: str) -> None:
         """
         Write one dimmed line of plain text on standard output.

@@ -7,7 +7,7 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc run`, `atc sync`, `atc show account`,
+Today the tool implements `atc run`, `atc sync`, `atc check`, `atc show account`,
 `atc show project`, `atc skills ls`, `atc skills pick`, `atc skills add`,
 `atc skills rm`, `atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
@@ -868,6 +868,43 @@ differing, edited outside atc, or an instructions file or a skill link in
 conflict) and with `--check` when anything would be written, `1` when an
 account cannot be built, planned or written, and `0` otherwise.
 
+### `atc check`
+
+Checks, from inside a session, that its protections hold. Run it through the
+agent's shell tool, so that it runs in the sandbox: ask the agent to run
+`atc check` after the first session in a repository, and again whenever the
+sandbox settings change. It only inspects and never writes. It reads the machine
+registry, but none of the config sources.
+
+It prints one `PASS` or `FAIL` line for each check, in these groups:
+
+- **The repository:** `objects/pack` and `packed-refs` cannot be written, nor can
+  `hooks` and `config` when they exist, new objects can be written, git's
+  automatic gc is off, and the directory above the worktree cannot be written.
+  If git cannot inspect the repository, for example because it refuses one that
+  someone else owns, that is a `FAIL`, not a skip.
+- **The accounts:** the session's own account's credentials (`.credentials.json`
+  and the state file), and every other account's directory and
+  files, cannot be read. The session's account is `ATC_ACCOUNT`, otherwise the
+  account whose directory is `CLAUDE_CONFIG_DIR`, or the one in `~/.claude` when
+  that is unset. If none matches, a check fails and every account counts as
+  another one.
+- **atc itself:** atc's configuration directory, its `conf.d` of config sources,
+  its state and runtime directories, and the directory atc is installed in,
+  cannot be written.
+- **Instructions and skills:** what the account's instructions file and every
+  entry of its skills directory lead to cannot be written. That is a link's
+  target, or the entry itself when it is a file or a directory. This includes
+  links that `atc sync` did not make.
+
+A check that does not apply is not a `PASS`: a plain line says so instead. That
+is the case for the repository checks outside a repository, and for the
+instructions and skills checks when no account matches the session.
+
+The status is `0` when every check passes, and `3` when any fails. If the home
+directory can be written this is not a sandbox: `atc check` says so on standard
+error and exits with `2`. `PASS` and `FAIL` are coloured only on a terminal.
+
 ### Rule warnings
 
 Claude Code applies permission rules deny first, then ask, then allow, whichever
@@ -918,9 +955,10 @@ Output is coloured only when it goes to a terminal. `NO_COLOR` and
 
 Exit status is `0` on success, `1` for a problem with the configuration, a
 config source or git, which includes a source `atc src pull` failed or refused
-and a file `atc sync` could not write, `2` for a problem with the command line,
+and a file `atc sync` could not write, `2` for a problem with the command line or for
+`atc check` outside a sandbox,
 `3` when `atc sync` left an account alone or, with `--check`, has something to
-write, and `130` when the command is interrupted with Ctrl-C, after a short
+write, or when a check of `atc check` fails, and `130` when the command is interrupted with Ctrl-C, after a short
 `aborted` on standard error (`cancelled; nothing changed` for `atc skills pick`).
 
 ## Development

@@ -25,6 +25,11 @@ class BuildContext:
     install_dir: Path
 
 
+def current_install_dir() -> Path:
+    """Return the Python environment this process runs from."""
+    return Path(sys.prefix)
+
+
 def load_context(
     *, env: Mapping[str, str], home: Path, uid: int, conf_d: Path | None
 ) -> BuildContext:
@@ -50,5 +55,5 @@ def load_context(
         sources=sources,
         dirs=dirs,
         home=home,
-        install_dir=Path(sys.prefix),
+        install_dir=current_install_dir(),
     )

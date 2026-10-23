@@ -544,18 +544,18 @@ keeps: `Bash(git * push*)` doesn't cover `Bash(git push:*)`.
 
 A backend holds everything specific to one agent. Interface:
 
-| Member                             | Claude backend                                                                                                                       |
-| :--------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- |
-| `default_dir`                      | `~/.claude`                                                                                                                          |
-| `settings_file(account)`           | `<dir>/settings.json`                                                                                                                |
-| `instructions_file(account)`       | `<dir>/CLAUDE.md`                                                                                                                    |
-| `skills_dir(account)`              | `<dir>/skills` (F11)                                                                                                                 |
-| `files(account)`                   | `[~/.claude.json]` for the default directory, otherwise `[]` (F1)                                                                    |
+| Member                             | Claude backend                                                                                                                                |
+| :--------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default_dir`                      | `~/.claude`                                                                                                                                   |
+| `settings_file(account)`           | `<dir>/settings.json`                                                                                                                         |
+| `instructions_file(account)`       | `<dir>/CLAUDE.md`                                                                                                                             |
+| `skills_dir(account)`              | `<dir>/skills` (F11)                                                                                                                          |
+| `files(account)`                   | `[~/.claude.json]` for the default directory, otherwise `[]` (F1)                                                                             |
 | `secrets(account)`                 | `<dir>/.credentials.json` and the state file: `~/.claude.json` for the default directory, otherwise `<dir>/.claude.json`             |
-| `environment(account)`             | Sets `CLAUDE_CONFIG_DIR=<dir>`. For the default directory it removes the variable instead, which avoids the unestablished case in §2 |
-| `render(settings)` / `parse(text)` | JSON, sorted keys, two-space indent                                                                                                  |
-| `argv(bin, fragment, args)`        | `[bin, "--settings", <fragment JSON>, *args]`, leaving out `--settings` when the fragment is empty                                   |
-| `session_fragment(common_dir)`     | §10.3                                                                                                                                |
+| `environment(account)`             | Sets `CLAUDE_CONFIG_DIR=<dir>`. For the default directory it removes the variable instead, which avoids the unestablished case in §2          |
+| `render(settings)` / `parse(text)` | JSON, sorted keys, two-space indent                                                                                                           |
+| `argv(bin, fragment, args)`        | `[bin, "--settings", <fragment JSON>, *args]`, leaving out `--settings` when the fragment is empty                                            |
+| `session_fragment(common_dir)`     | §10.3                                                                                                                                         |
 
 **Codex, when its backend is designed.** These are working assumptions to
 check at that point:
@@ -842,9 +842,14 @@ says so and exits 2. These checks come from `claude-guard-check`:
   - Every peer's `dir` and `files` are unreadable.
 - **atc itself:** `config_dir` (and so `conf_d`), `state_dir`,
   `runtime_dir` and `install_dir` are not writable.
-- **Instructions and skills:** the targets of the account's instructions file
-  and skill links are not writable. This matters for an `agents-md-file`
-  outside `conf_d`, which the trust rules don't cover.
+- **Instructions and skills:** the account's instructions file and every
+  entry in its skills directory, or the target when it is a link, are not
+  writable. This matters for an `agents-md-file` outside `conf_d`, which the
+  trust rules don't cover, and for links that atc didn't make.
+
+A check that can't run is never a `PASS`. Outside a repository the repository
+checks are skipped with a plain note; a git failure other than "not a git
+repository" is a `FAIL`.
 
 It prints one `PASS` or `FAIL` line per check, and exits 0 when everything
 passes, 3 otherwise.
