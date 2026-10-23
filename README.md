@@ -11,7 +11,7 @@ Today the tool implements `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc prj ls`, `atc prj show`,
 `atc prj add`, `atc prj rm`, `atc wt new`, `atc wt ls`, `atc wt rm`,
 `atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
-`atc src ls`, `atc src check` and `atc src pull`.
+`atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
 The rest is being built step by step.
 
 ## Install
@@ -1086,6 +1086,43 @@ so that only one of them packs the repositories:
 ```sh
 systemctl --user disable --now claude-guard-maint.timer
 ```
+
+### `atc usage`
+
+Shows each account's recorded five-hour usage, as a table with one row per
+account of the machine registry, in the order of the file: the account, how much
+of its five-hour limit the last record says was used, and how long ago that was
+recorded (`just now`, `5m ago`, `3h 20m ago`, `2d 4h ago`). The percentage is
+rounded to a whole number. On a terminal it is yellow below 70 % and red from
+70 %, as in the statusline, and it has no colour otherwise. The table goes to
+standard output. Nothing is changed.
+
+- An account with no record shows `no data`.
+- A record with no five-hour figure shows `-` for the percentage, with its age.
+  Claude Code does not always give one.
+- A record that cannot be used shows `no data` too, and a warning on standard
+  error names the file and what is wrong with it. The exit status stays `0`.
+
+**The record.** The statusline of a session that atc started, which has
+`ATC_ACCOUNT` and `ATC_STATE_DIR` in its environment, writes
+`<state_dir>/usage/ACCOUNT.json` each time Claude Code gives it `rate_limits`:
+
+```json
+{ "recorded_at": "2026-10-23T09:00:00Z", "rate_limits": {} }
+```
+
+`recorded_at` is an ISO 8601 time with a UTC offset, `Z` as the statusline
+writes it. `rate_limits` is copied as the statusline received it. atc reads only
+`five_hour.used_percentage` in it, a number from 0 to 100 that may be missing.
+
+Nothing in the file is trusted, since anyone who can write the state directory
+can write it. The record cannot be used when the file is not valid JSON or not
+an object, when `recorded_at` is missing, is not a time with a UTC offset, or
+is in the future, when `rate_limits` or `five_hour` is not an object, or when
+the percentage is not a number from 0 to 100.
+
+Only usage from sessions that atc started on this machine is recorded. Usage
+from other machines, or from claude.ai, is not.
 
 ### Rule warnings
 
