@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from atc.cli import EXIT_CONFIG_ERROR, EXIT_OK, EXIT_USAGE_ERROR, main
+from atc.cli import main
+from atc.exitcodes import CONFIG, OK, USAGE
 from tests.conftest import UnitWriter
 
 
@@ -20,7 +21,7 @@ def test_build_prints_the_merged_settings(
     status = main(["build", "--root", str(root), "rust.json"])
 
     captured = capsys.readouterr()
-    assert status == EXIT_OK
+    assert status == OK
     assert json.loads(captured.out) == {
         "permissions": {"allow": ["Bash(cargo test *)"]}
     }
@@ -79,7 +80,7 @@ def test_a_config_error_keeps_standard_output_clean(
     status = main(["build", "--root", str(root), "a.json"])
 
     captured = capsys.readouterr()
-    assert status == EXIT_CONFIG_ERROR
+    assert status == CONFIG
     assert captured.out == ""
     assert "nowhere.json" in captured.err
 
@@ -89,7 +90,7 @@ def test_a_missing_root_is_a_usage_error(
 ) -> None:
     status = main(["build", "--root", str(tmp_path / "absent"), "a.json"])
 
-    assert status == EXIT_USAGE_ERROR
+    assert status == USAGE
     assert "no configuration root" in capsys.readouterr().err
 
 
@@ -101,7 +102,7 @@ def test_lax_warns_on_standard_error_and_still_builds(
     status = main(["build", "--root", str(root), "--lax", "a.json"])
 
     captured = capsys.readouterr()
-    assert status == EXIT_OK
+    assert status == OK
     assert json.loads(captured.out) == {"permisions": {}}
     assert "permisions" in captured.err
 
@@ -120,7 +121,7 @@ def test_several_units_merge_left_to_right(
 def test_an_empty_root_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
     status = main(["build", "--root", "", "a.json"])
 
-    assert status == EXIT_USAGE_ERROR
+    assert status == USAGE
     assert "--root requires a directory" in capsys.readouterr().err
 
 
@@ -128,4 +129,23 @@ def test_no_command_is_a_usage_error() -> None:
     with pytest.raises(SystemExit) as exit_info:
         _ = main([])
 
-    assert exit_info.value.code == EXIT_USAGE_ERROR
+    assert exit_info.value.code == USAGE
+
+
+def test_unknown_command_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["bulid"]) == 2
+    assert "No such command" in capsys.readouterr().err
+
+
+def test_version_names_the_program(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--version"]) == 0
+    assert "atc" in capsys.readouterr().out
+
+
+def test_a_config_error_exits_1_with_an_error_line(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["build", "missing.json", "--root", str(root)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("error:")

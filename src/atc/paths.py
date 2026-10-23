@@ -1,6 +1,7 @@
 """Where config units live, and which references are allowed to reach them."""
 
-import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from atc.errors import PathError
@@ -10,21 +11,31 @@ APP_NAME = "atc"
 UNIT_SUFFIX = ".json"
 
 
-def user_config_root() -> Path:
+@dataclass(frozen=True, slots=True)
+class Dirs:
     """
-    Return the directory holding installed config units.
+    The directories atc uses.
 
-    That is ``$XDG_CONFIG_HOME/atc/conf.d``, falling back to
-    ``~/.config/atc/conf.d`` when ``XDG_CONFIG_HOME`` is unset or is
-    not an absolute path, as the XDG Base Directory Specification requires.
+    ``config_dir`` holds atc's configuration, and ``conf_d`` inside it holds
+    the config sources.
     """
-    configured = os.environ.get("XDG_CONFIG_HOME", "")
-    base = (
-        Path(configured)
-        if configured and Path(configured).is_absolute()
-        else Path.home() / ".config"
-    )
-    return base / APP_NAME / "conf.d"
+
+    config_dir: Path
+    conf_d: Path
+
+
+def dirs_from_env(env: Mapping[str, str], home: Path) -> Dirs:
+    """
+    Work out atc's directories from the environment.
+
+    ``config_dir`` is ``$XDG_CONFIG_HOME/atc``, or ``~/.config/atc`` when
+    ``XDG_CONFIG_HOME`` is unset, empty or not an absolute path, as the XDG
+    Base Directory Specification requires.
+    """
+    configured = Path(env.get("XDG_CONFIG_HOME", ""))
+    base = configured if configured.is_absolute() else home / ".config"
+    config_dir = base / APP_NAME
+    return Dirs(config_dir=config_dir, conf_d=config_dir / "conf.d")
 
 
 def resolve_unit(root: Path, reference: str) -> Path:

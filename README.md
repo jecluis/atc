@@ -22,6 +22,8 @@ edit, and atc's code decides every session's protections.
 
 ## Usage
 
+Run `atc --help`, or `--help` after any command, for the options.
+
 ### `atc build UNIT...`
 
 Merges the named configuration units, together with everything they import, and
@@ -31,11 +33,14 @@ can be named at once, as paths relative to the configuration root, for example
 
 | Option | Effect |
 | --- | --- |
-| `--root DIR` | Read units from `DIR` instead of the default configuration root. |
+| `--root DIR` | Read units from `DIR` instead of the default, `conf.d` inside atc's configuration directory: `$XDG_CONFIG_HOME/atc`, or `~/.config/atc` when `XDG_CONFIG_HOME` is unset, empty or not an absolute path. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 
 Only the merged JSON goes to standard output, so it is safe to redirect or
 pipe. Warnings and errors go to standard error.
+
+Output is coloured only when it goes to a terminal. `NO_COLOR` and
+`FORCE_COLOR` are honoured.
 
 Exit status is `0` on success, `1` for a problem with the configuration, and
 `2` for a problem with the command line.

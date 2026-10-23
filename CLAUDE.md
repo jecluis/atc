@@ -31,10 +31,10 @@ as a design constraint, not a lint setting.
 
 - No `Any` and no bare `object` in normal code. The one sanctioned exception is
   the `json.loads` boundary in `jsonval.py`, which carries a scoped
-  `# pyright: ignore` and a comment explaining why the cast is sound.
-  `cli.py` narrows argparse's untyped attributes through the single `_raw`
-  helper for the same reason. Do not add a third such boundary without a
-  comparable justification.
+  `# pyright: ignore` and a comment explaining why the cast is sound. Do not
+  add another such boundary without a comparable justification. click passes
+  typed values to command functions, so the command line needs none; the one
+  typed view of click's `Any`-returning `main` is in `cli/__init__.py`.
 - Prefer `match` over a closed union to dispatch on JSON values, so the type
   checker can prove the dispatch is exhaustive.
 - A private class needs `@final` or per-attribute annotations to satisfy
