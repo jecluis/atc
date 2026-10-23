@@ -344,6 +344,8 @@ def test_a_missing_conf_d_says_how_to_add_a_source(tmp_path: Path) -> None:
         _ = discover(tmp_path / "nope", uid=UID)
 ```
 
+Also: `test_a_group_writable_conf_d_is_refused` (single and multi layout) and `test_a_group_or_world_writable_source_directory_is_refused`, each matching the path and `chmod go-w`.
+
 `test_paths.py`: `test_an_xdg_value_that_is_not_absolute_is_ignored`, `test_conf_d_sits_under_the_config_dir`.
 
 - [ ] **Step 4: Implement `paths.Dirs`, `dirs_from_env` and `sources`,** and run until green.
@@ -823,7 +825,7 @@ Also write:
   - `PullResult(name: str, status: Literal["updated", "current", "skipped", "refused", "failed"], detail: str, validation: Validation | None)`
   - `pull(sources: Sources, names: Sequence[str], validate: Callable[[Sources], Validation]) -> list[PullResult]`
 
-  It runs §10.1's four steps per source. The tree is exported with `git archive --format=tar <upstream commit>`, extracted with `tarfile` (`filter="data"`) into a `tempfile.TemporaryDirectory`. Untracked files outside `conf/`, `assets/` and `skills/` don't count as uncommitted changes.
+  It runs §10.1's four steps per source. The tree is exported with `git archive --format=tar <upstream commit>`, extracted with `tarfile` (`filter="data"`) into a `tempfile.TemporaryDirectory`. Untracked files outside `conf/`, `assets/` and `skills/` don't count as uncommitted changes. After the fast-forward, the `conf/`, `assets/` and `skills/` directories and everything under them lose group and world write (`chmod go-w`, skipping symbolic links), because git applies the umask to what it writes. If that chmod fails, the status is `failed`, with the path in `detail`.
 
 - **CLI:** `atc src pull [NAME...]` prints one line per source, plus the validation errors of any that failed. It exits 1 if any source failed or was refused.
 
@@ -835,6 +837,7 @@ Also write:
   - `test_a_source_that_is_not_a_git_clone_is_skipped`
   - `test_already_current_is_reported`
   - `test_validation_sees_the_other_sources_unchanged`: the incoming commit imports `@other/x.json`, which exists only in the other source; status `updated`
+  - `test_a_pull_under_umask_002_leaves_a_trusted_tree`: with `os.umask(0o002)` around the pull, a commit that adds `conf/new/x.json` and a first `skills/a/SKILL.md` (new directories at both levels) is deployed, and `discover` accepts the source afterwards
 - [ ] **Step 2: Implement,** and run until green.
 - [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: deploy config sources with a checked src pull`.
 
@@ -983,7 +986,7 @@ At this point the registry accepts `version`, `default-account`, `vars`, `accoun
 **You:**
 
 1. `uv tool install ./atc`.
-2. `git clone <this repository> ~/.config/atc/conf.d`, and write `~/.config/atc/machine.yaml` with `version`, `default-account`, `vars`, and both accounts' `agent`, `dir` and `vars`.
+2. `git clone <this repository> ~/.config/atc/conf.d`, then `chmod -R go-w ~/.config/atc/conf.d` (with Fedora's umask 002 a fresh clone is group-writable, which the trust rules refuse). Write `~/.config/atc/machine.yaml` with `version`, `default-account`, `vars`, and both accounts' `agent`, `dir` and `vars`.
 3. `atc src check`, `atc sync --diff`, then `atc sync --take-over`.
 4. Start a session in each account, and confirm that the hook refuses a `cd … && …` command and that the statusline shows.
 

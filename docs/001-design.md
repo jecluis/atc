@@ -255,18 +255,25 @@ to other sources need no changes (§7.2).
 
 **Trust rules.** Hooks and the statusline run from `assets/` outside the
 sandbox, and instructions files and skills tell every session what to do. So
-everything under a source's `conf/`, `assets/` and `skills/` must meet these
-rules, or atc refuses to load it:
+`conf_d` itself, each source directory, and everything under a source's
+`conf/`, `assets/` and `skills/` must meet these rules, or atc refuses to load
+it:
 
-- **No symbolic links,** whether `conf_d` itself, a source directory, or any
-  entry under `conf/`, `assets/` and `skills/`. A link would let a working
-  checkout, which an agent may be editing, stand in for deployed
-  configuration.
-- **Owned by you,** and **not group- or world-writable.**
+- **No symbolic links.** A link would let a working checkout, which an agent
+  may be editing, stand in for deployed configuration.
+- **Owned by you,** and **not group- or world-writable.** This covers the
+  parent directories too: whoever can write `conf_d` or a source directory
+  can rename the checked tree away and put another in its place.
+
+With a umask of 002 (Fedora's default with per-user groups), a fresh clone is
+group-writable. Run `chmod -R go-w` on `conf_d` once after cloning. The trust
+error names the offending path and the `chmod go-w` to run, and `-R` covers
+the rest. `atc src pull` keeps the modes correct from then on.
 
 **Deploying and updating.**
 
-- **Add a source:** `git clone <url> ~/.config/atc/conf.d[/<name>]`.
+- **Add a source:** `git clone <url> ~/.config/atc/conf.d[/<name>]`, then
+  `chmod -R go-w ~/.config/atc/conf.d` if your umask is 002.
 - **Update one:** `atc src pull` (§10.1). It checks the incoming commit before
   fast-forwarding to it.
 
@@ -594,7 +601,11 @@ a known command. A typo is an error; it never starts a session.
      fast-forward.
   3. Export the fetched commit's tree into a temporary directory, and run
      `src check` on `conf_d` with this source replaced by that tree.
-  4. Only if the check passes, `git merge --ff-only`.
+  4. Only if the check passes, `git merge --ff-only`. Then remove group and
+     world write from the `conf/`, `assets/` and `skills/` directories and
+     everything under them, skipping symbolic links, since git applies the
+     umask to what the merge writes. If that fails, the source is reported
+     as failed, naming the path.
 
   A source that fails is left as it was, and its problems are shown. Sources
   that aren't git clones are skipped, with a note.
