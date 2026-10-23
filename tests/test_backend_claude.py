@@ -109,3 +109,15 @@ def test_parse_reads_an_object_strictly(home: Path) -> None:
 def test_parse_refuses_what_is_not_an_object(home: Path) -> None:
     with pytest.raises(UnitError, match=r"^live: .*object.*array"):
         _ = ClaudeBackend(home).parse("[1]", "live")
+
+
+def test_the_instructions_file_lives_in_the_account_directory(home: Path) -> None:
+    registry = load(home)
+    backend = ClaudeBackend(home)
+
+    assert backend.instructions_file(registry.account("personal")) == (
+        home / ".claude" / "CLAUDE.md"
+    )
+    assert backend.instructions_file(registry.account("bravo")) == (
+        home / ".config" / "bravo" / "claude" / "CLAUDE.md"
+    )

@@ -176,3 +176,126 @@ def test_locate_does_not_read_an_at_in_a_directory_name(tmp_path: Path) -> None:
     located = locate(source, "@odd/a.json")
 
     assert located.path == source.conf / "@odd" / "a.json"
+
+
+def assets(conf_d: Path, *files: str) -> Sources:
+    """Make sources `personal` and `bravo`, both holding every asset in `files`."""
+    for name in ("personal", "bravo"):
+        _ = make_source(conf_d / name, {f"assets/{path}": "x\n" for path in files})
+    return discover(conf_d, uid=UID)
+
+
+def test_an_asset_is_found_in_the_single_layout(tmp_path: Path) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"assets/docs/AGENTS.md": "x\n"})
+    sources = discover(conf_d, uid=UID)
+
+    located = resolve_registry(sources, "docs/AGENTS.md", "asset")
+
+    assert located is not None
+    assert located.path == conf_d / "assets" / "docs" / "AGENTS.md"
+    assert located.display == "docs/AGENTS.md"
+    assert located.source == sources.items[0]
+
+
+def test_an_asset_is_looked_up_in_assets_not_in_conf(tmp_path: Path) -> None:
+    conf_d = make_source(
+        tmp_path / "conf.d",
+        {"conf/AGENTS.md": "x\n", "assets/units/a.json": "{}"},
+    )
+    sources = discover(conf_d, uid=UID)
+
+    assert resolve_registry(sources, "AGENTS.md", "asset") is None
+    assert resolve_registry(sources, "a.json", "asset") is None
+    located = resolve_registry(sources, "units/a.json", "asset")
+    assert located is not None
+    assert located.path == conf_d / "assets" / "units" / "a.json"
+
+
+def test_an_asset_lookup_finds_the_one_source_that_has_it(tmp_path: Path) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / "personal", {"assets/x.md": "x\n"})
+    _ = make_source(conf_d / "bravo", {"assets/y.md": "y\n"})
+    sources = discover(conf_d, uid=UID)
+
+    located = resolve_registry(sources, "y.md", "asset")
+
+    assert located is not None
+    assert located.source == sources.named("bravo")
+    assert located.display == "@bravo/y.md"
+
+
+def test_an_asset_lookup_needs_exactly_one_match(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+
+    with pytest.raises(
+        PathError, match=r"'AGENTS.md' exists as .*add an @name/ prefix"
+    ):
+        _ = resolve_registry(sources, "AGENTS.md", "asset")
+
+
+def test_a_qualified_asset_lookup_picks_the_named_source(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+
+    located = resolve_registry(sources, "@personal/AGENTS.md", "asset")
+
+    assert located is not None
+    assert located.source == sources.named("personal")
+
+
+def test_a_qualified_asset_lookup_of_a_missing_asset_is_an_error(
+    tmp_path: Path,
+) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+
+    with pytest.raises(PathError, match=r"'@personal/gone\.md': no such asset"):
+        _ = resolve_registry(sources, "@personal/gone.md", "asset")
+
+
+def test_an_asset_that_is_a_directory_is_not_found(tmp_path: Path) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"assets/docs/AGENTS.md": "x\n"})
+
+    assert resolve_registry(discover(conf_d, uid=UID), "docs", "asset") is None
+
+
+def test_asset_references_must_be_relative_and_non_empty(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+
+    with pytest.raises(PathError, match="asset references must be relative"):
+        _ = resolve_registry(sources, "/etc/passwd", "asset")
+    with pytest.raises(PathError, match="empty asset reference"):
+        _ = resolve_registry(sources, "", "asset")
+
+
+def test_asset_references_cannot_escape_assets(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+    _ = make_source(sources.named("bravo").root, {"conf/a.json": "{}"})
+
+    with pytest.raises(PathError, match="resolves outside"):
+        _ = resolve_registry(sources, "../conf/a.json", "asset")
+
+
+def test_a_symlink_cannot_lead_out_of_assets(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+    bravo = sources.named("bravo")
+    outside = tmp_path / "outside.md"
+    _ = outside.write_text("x\n", encoding="utf-8")
+    (bravo.assets / "link.md").symlink_to(outside)
+
+    with pytest.raises(PathError, match="resolves outside"):
+        _ = resolve_registry(sources, "@bravo/link.md", "asset")
+
+
+def test_a_malformed_qualified_asset_reference_is_refused(tmp_path: Path) -> None:
+    sources = assets(tmp_path / "conf.d", "AGENTS.md")
+
+    with pytest.raises(PathError, match="@name/"):
+        _ = resolve_registry(sources, "@bravo", "asset")
+
+
+def test_a_qualified_asset_lookup_is_an_error_in_the_single_layout(
+    tmp_path: Path,
+) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"assets/AGENTS.md": "x\n"})
+
+    with pytest.raises(PathError, match="@"):
+        _ = resolve_registry(discover(conf_d, uid=UID), "@bravo/AGENTS.md", "asset")

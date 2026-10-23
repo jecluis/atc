@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from atc.context import BuildContext
 from atc.errors import ConfigError
 from atc.layers import Layer, build_account_layer, build_project_layer
+from atc.links import wanted_instructions
 from atc.refs import locate
 from atc.resolve import resolve
 from atc.rules import dead_rules
@@ -58,7 +59,8 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     """
     Check every unit in the sources, then every account's and project's layer.
 
-    Building an account layer finds the account's unit, which must exist, and
+    Each account's instructions file, if it asks for one, must exist. Building an
+    account layer finds the account's unit, which must exist, and
     checks each unit it merges against the policy for the layer. A project's
     layer is built once for each account the project allows, or for every
     account when it allows none in particular. A project without a unit has no
@@ -73,6 +75,10 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     warnings.update(dict.fromkeys(ctx.registry.warnings))
     account_layers: dict[str, Layer] = {}
     for account in ctx.registry.accounts.values():
+        try:
+            _ = wanted_instructions(ctx, account)
+        except ConfigError as exc:
+            errors[str(exc)] = None
         try:
             layer = build_account_layer(ctx, account, lax=lax)
         except ConfigError as exc:

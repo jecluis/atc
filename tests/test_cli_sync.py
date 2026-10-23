@@ -11,7 +11,7 @@ from atc.exitcodes import CHECK, CONFIG, OK, USAGE
 from atc.jsonval import JsonObject, dumps
 from atc.paths import Dirs
 from atc.state import SyncState
-from tests.conftest import ConfigWriter
+from tests.conftest import ConfigWriter, RegistryWriter
 from tests.helpers import MINIMAL_REGISTRY, make_source, unit
 
 PERSONAL = "conf/accounts/personal.json"
@@ -414,3 +414,377 @@ def test_a_write_that_fails_exits_1_with_an_error_line(
     assert "Permission denied" in captured.err
     assert "Traceback" not in captured.err
     assert live.read_text() == '{"model": "x"}'
+
+
+LINKED_REGISTRY = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal: {agent: claude, dir: ~/.claude, use-default-agents-md: true}
+"""
+MISSING_FILE_REGISTRY = LINKED_REGISTRY + (
+    "      work: {agent: claude, dir: ~/.config/work, "
+    "agents-md-file: /nowhere/AGENTS.md}\n"
+)
+AGENTS = "assets/AGENTS.md"
+CONFLICT = "(conflict; --take-over replaces a file or link, never a directory)"
+
+
+def set_up_linked(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    registry: str = LINKED_REGISTRY,
+) -> tuple[Path, Path]:
+    """
+    Make the account's directory, its unit and the default instructions file.
+
+    Returns the instructions file's path in the account, and the asset it links to.
+    """
+    (home / ".claude").mkdir()
+    configure({PERSONAL: unit(SETTINGS), AGENTS: "shared rules\n"}, registry)
+    return home / ".claude" / "CLAUDE.md", dirs.conf_d / AGENTS
+
+
+def test_an_account_without_claude_md_gets_the_link(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+
+    status = main(["sync"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == (
+        f"personal: written\npersonal: CLAUDE.md: (none) → {asset} (changed)\n"
+    )
+    assert captured.err == ""
+    assert claude_md.readlink() == asset
+    assert claude_md.read_text() == "shared rules\n"
+    assert state(dirs).links() == {str(claude_md): str(asset)}
+    assert not state(dirs).backups_dir.exists()
+
+
+def test_a_second_sync_finds_the_link_current(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str], dirs: Dirs
+) -> None:
+    _ = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    _ = capsys.readouterr()
+
+    assert main(["sync"]) == OK
+
+    assert capsys.readouterr().out == "personal: current\n"
+
+
+def test_a_hand_written_claude_md_is_a_conflict_and_left_alone(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = claude_md.write_text("my rules\n")
+
+    status = main(["sync"])
+
+    out = capsys.readouterr().out
+    assert status == CHECK
+    assert out == (
+        f"personal: written\npersonal: CLAUDE.md: (not made by atc) → {asset} "
+        f"{CONFLICT}\n"
+    )
+    assert not claude_md.is_symlink()
+    assert claude_md.read_text() == "my rules\n"
+    assert state(dirs).links() == {}
+    assert not state(dirs).backups_dir.exists()
+    assert main(["sync", "--check"]) == CHECK
+
+
+def test_take_over_replaces_it_with_a_link_and_keeps_a_backup(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = claude_md.write_text("my rules\n")
+
+    status = main(["sync", "--take-over"])
+
+    out = capsys.readouterr().out
+    assert status == OK
+    assert out == (
+        f"personal: written\n"
+        f"personal: CLAUDE.md: (a file, backed up first) → {asset} (changed)\n"
+    )
+    assert claude_md.readlink() == asset
+    (saved,) = state(dirs).backups_dir.iterdir()
+    assert saved.name.endswith("Z-CLAUDE.md")
+    assert saved.read_text() == "my rules\n"
+    assert state(dirs).links() == {str(claude_md): str(asset)}
+
+
+def test_take_over_replaces_a_link_atc_did_not_make(
+    configure: ConfigWriter, home: Path, dirs: Dirs, tmp_path: Path
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    mine = tmp_path / "mine.md"
+    _ = mine.write_text("my rules\n")
+    claude_md.symlink_to(mine)
+
+    assert main(["sync"]) == CHECK
+    assert claude_md.readlink() == mine
+
+    assert main(["sync", "--take-over"]) == OK
+
+    assert claude_md.readlink() == asset
+    assert mine.read_text() == "my rules\n"
+    assert not state(dirs).backups_dir.exists()
+
+
+def test_take_over_never_replaces_a_directory(
+    configure: ConfigWriter, home: Path, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    claude_md.mkdir()
+    _ = (claude_md / "keep.txt").write_text("keep\n")
+
+    status = main(["sync", "--take-over"])
+
+    assert status == CHECK
+    assert (
+        f"personal: CLAUDE.md: (not made by atc) → {asset} " in capsys.readouterr().out
+    )
+    assert (claude_md / "keep.txt").read_text() == "keep\n"
+    assert state(dirs).links() == {}
+
+
+def test_turning_the_flag_off_removes_atcs_link(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    _ = capsys.readouterr()
+    _ = write_registry(MINIMAL_REGISTRY)
+
+    status = main(["sync"])
+
+    assert status == OK
+    assert capsys.readouterr().out == (
+        f"personal: current\npersonal: CLAUDE.md: {asset} → (none) (changed)\n"
+    )
+    assert not claude_md.is_symlink()
+    assert not claude_md.exists()
+    assert asset.read_text() == "shared rules\n"
+    assert state(dirs).links() == {}
+
+
+def test_turning_the_flag_off_leaves_a_hand_written_file(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, _asset = set_up_linked(configure, home, dirs)
+    _ = claude_md.write_text("my rules\n")
+    _ = write_registry(MINIMAL_REGISTRY)
+
+    status = main(["sync"])
+
+    assert status == OK
+    assert capsys.readouterr().out == "personal: written\n"
+    assert claude_md.read_text() == "my rules\n"
+    assert not state(dirs).backups_dir.exists()
+
+
+def test_turning_the_flag_off_leaves_a_link_atc_did_not_make(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    tmp_path: Path,
+    dirs: Dirs,
+) -> None:
+    claude_md, _asset = set_up_linked(configure, home, dirs)
+    mine = tmp_path / "mine.md"
+    _ = mine.write_text("my rules\n")
+    claude_md.symlink_to(mine)
+    _ = write_registry(MINIMAL_REGISTRY)
+
+    assert main(["sync"]) == OK
+
+    assert claude_md.readlink() == mine
+
+
+def test_a_link_that_was_made_by_atc_but_edited_since_is_left_alone(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    tmp_path: Path,
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    mine = tmp_path / "mine.md"
+    _ = mine.write_text("my rules\n")
+    claude_md.unlink()
+    claude_md.symlink_to(mine)
+    _ = write_registry(MINIMAL_REGISTRY)
+
+    assert main(["sync"]) == OK
+
+    assert claude_md.readlink() == mine
+    assert state(dirs).links() == {str(claude_md): str(asset)}
+
+
+def test_a_moved_source_repoints_the_link(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    other = home / "elsewhere" / "AGENTS.md"
+    other.parent.mkdir()
+    _ = other.write_text("moved rules\n")
+    registry = LINKED_REGISTRY.replace(
+        "use-default-agents-md: true", f"agents-md-file: {other}"
+    )
+    _ = write_registry(registry)
+    _ = capsys.readouterr()
+
+    assert main(["sync"]) == OK
+
+    assert capsys.readouterr().out == (
+        f"personal: current\npersonal: CLAUDE.md: {asset} → {other} (changed)\n"
+    )
+    assert claude_md.readlink() == other
+    assert state(dirs).links() == {str(claude_md): str(other)}
+
+
+def test_diff_lists_the_link_change_and_writes_nothing(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+
+    status = main(["sync", "--diff"])
+
+    out = capsys.readouterr().out
+    assert status == OK
+    assert f"personal: CLAUDE.md: (none) → {asset} (would change)\n" in out
+    assert not claude_md.exists()
+    assert not claude_md.is_symlink()
+    assert not dirs.state_dir.exists()
+
+
+def test_check_exits_3_when_only_a_link_is_pending(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    claude_md, asset = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    claude_md.unlink()
+    _ = capsys.readouterr()
+
+    status = main(["sync", "--check"])
+
+    assert status == CHECK
+    assert capsys.readouterr().out == (
+        f"personal: current\npersonal: CLAUDE.md: (none) → {asset} (would change)\n"
+    )
+    assert not claude_md.is_symlink()
+
+
+def test_check_exits_3_for_a_conflict_with_nothing_else_to_do(
+    configure: ConfigWriter, home: Path, dirs: Dirs
+) -> None:
+    claude_md, _asset = set_up_linked(configure, home, dirs)
+    _ = main(["sync"])
+    claude_md.unlink()
+    _ = claude_md.write_text("my rules\n")
+
+    assert main(["sync", "--check"]) == CHECK
+
+
+def test_src_check_fails_when_the_default_instructions_file_is_missing(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (home / ".claude").mkdir()
+    configure({PERSONAL: unit(SETTINGS)}, LINKED_REGISTRY)
+
+    status = main(["src", "check"])
+
+    captured = capsys.readouterr()
+    assert status == CONFIG
+    assert "error: " in captured.err
+    assert "account 'personal': default-agents-md: 'AGENTS.md': no such asset" in (
+        captured.err
+    )
+
+
+def test_src_check_passes_when_the_default_instructions_file_exists(
+    configure: ConfigWriter, home: Path, dirs: Dirs
+) -> None:
+    _ = set_up_linked(configure, home, dirs)
+
+    assert main(["src", "check"]) == OK
+
+
+def test_an_account_whose_instructions_file_is_missing_stops_every_account(
+    configure: ConfigWriter,
+    home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (home / ".claude").mkdir()
+    (home / ".config" / "work").mkdir(parents=True)
+    configure(
+        {PERSONAL: unit(SETTINGS), WORK: unit(SETTINGS), AGENTS: "shared rules\n"},
+        MISSING_FILE_REGISTRY,
+    )
+
+    status = main(["sync"])
+
+    captured = capsys.readouterr()
+    assert status == CONFIG
+    assert captured.out == ""
+    assert "account 'work': agents-md-file: /nowhere/AGENTS.md is not a file" in (
+        captured.err
+    )
+    assert not (home / ".claude" / "CLAUDE.md").is_symlink()
+    assert not settings_file(home).exists()
+
+
+def test_both_keys_set_warns(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str], dirs: Dirs
+) -> None:
+    registry = LINKED_REGISTRY.replace(
+        "use-default-agents-md: true",
+        "use-default-agents-md: true, agents-md-file: AGENTS.md",
+    )
+    claude_md, asset = set_up_linked(configure, home, dirs, registry)
+
+    status = main(["sync"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert (
+        "warning: "
+        f"{dirs.config_dir / 'machine.yaml'}: /accounts/personal: "
+        "agents-md-file is set, so use-default-agents-md has no effect\n"
+    ) in captured.err
+    assert claude_md.readlink() == asset

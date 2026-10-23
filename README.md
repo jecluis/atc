@@ -26,8 +26,8 @@ edit, and atc's code decides every session's protections.
 atc reads its configuration from `$XDG_CONFIG_HOME/atc`, which is `~/.config/atc`
 when `XDG_CONFIG_HOME` is unset, empty or not an absolute path. Inside it,
 `conf.d/` holds the **config sources**: directories that contain at least one of
-`conf/` (units), `assets/` (files the units point at) and `skills/`. Anything
-else in a source is ignored, so a whole repository can be a source as it is.
+`conf/` (units), `assets/` (files the units and the registry point at) and
+`skills/`. Anything else in a source is ignored, so a whole repository can be a source as it is.
 
 A source is normally a git clone. There are two layouts:
 
@@ -77,14 +77,17 @@ version: 1
 vars:
   scratch_root: /mnt/scratch
 default-account: personal
+default-agents-md: AGENTS.md
 accounts:
   personal:
     agent: claude
     dir: ~/.claude
+    use-default-agents-md: true
   work:
     agent: claude
     dir: ~/.config/work/claude
     unit: "@work/accounts/work.json"
+    agents-md-file: "@work/AGENTS.md"
     vars:
       scratch: /mnt/scratch/work
 projects:
@@ -101,9 +104,12 @@ projects:
 | `version` | yes | Must be `1`. |
 | `vars` | no | Variables for every unit, as `{{vars.<name>}}` (see Templates). |
 | `default-account` | yes | The account used outside projects, and by projects that name none. It must be one of `accounts`. |
+| `default-agents-md` | no | The file that `use-default-agents-md` links, as an asset reference (see Units). Defaults to `AGENTS.md`. |
 | `accounts.<name>.agent` | yes | The coding agent the account is for. Only `claude` exists. |
 | `accounts.<name>.dir` | yes | The account's configuration directory. |
 | `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
+| `accounts.<name>.use-default-agents-md` | no | `true` links `default-agents-md` as the account's instructions file (see `atc sync`). Defaults to `false`. |
+| `accounts.<name>.agents-md-file` | no | The file to link as the account's instructions file instead of the default: an absolute or `~/` path, or an asset reference (see Units). `null` means not set. |
 | `accounts.<name>.vars` | no | Variables for this account's units, as `{{account.vars.<name>}}`. |
 | `projects.<name>.repo` | yes | A checkout of the project's repository. |
 | `projects.<name>.account` | no | The account the project uses by default. Defaults to `default-account`. |
@@ -128,6 +134,10 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
   none.
 - A `repo` is a path like a `dir`: a leading `~` is expanded and it must then
   be absolute.
+- An `agents-md-file` that starts with `/` or `~` is a path, treated like a
+  `dir`. Anything else is an asset reference.
+- An account that sets both `agents-md-file` and `use-default-agents-md: true`
+  gets a warning, since the flag then has no effect.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or
   a symbolic link in the path makes no difference.
 - Variable names are lowercase letters, digits and `_`, starting with a letter,
@@ -175,6 +185,13 @@ Outside a unit, as in the registry, a reference without `@` is looked up in
 every source, and exactly one must contain it. If none does the unit does not
 exist, and if several do you are asked to add an `@name/` prefix. With a single
 source, or with names that never collide, the prefix is never needed.
+
+**Asset references** name a file under a source's `assets/` instead: the
+registry's `default-agents-md`, and an `agents-md-file` that is not a path, such
+as `AGENTS.md` or `@work/docs/AGENTS.md`. They follow the same rules as unit
+references, with `assets/` in place of `conf/` and with no extension required:
+a reference must be relative and must stay inside the `assets/` of its source,
+links included, and without `@` exactly one source must contain the file.
 
 **Merging.** Imports are followed depth-first and in order, each before the
 unit's own `settings`, so an importing unit overrides what it imports and a
@@ -288,6 +305,8 @@ reports:
 
 - an account whose unit does not exist, or exists in several sources, and the
   same for a project whose registry entry names a `unit`
+- an account that asks for an instructions file (`use-default-agents-md` or
+  `agents-md-file`) that does not exist, or that several sources have
 - a unit with a reference that cannot be expanded for an account, or for a
   project and one of its accounts, such as an unknown variable
 - a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
@@ -410,11 +429,19 @@ output and the exit status are the same as without the check.
 
 ### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 
-Writes `settings.json` in the directory of each account named, or of every
-account, from the settings atc builds for it (see `atc show account`). The
-directory must exist already, because creating an account means logging in,
-which atc does not do. Every account is built before any is written, so an error
-in one leaves all of them as they were, and every account that fails is reported.
+Brings two things in the directory of each account named, or of every account,
+in line with the configuration:
+
+- `settings.json`, written from the settings atc builds for the account (see
+  `atc show account`)
+- the instructions file (`CLAUDE.md`), as a symbolic link
+
+The directory must exist already, because creating an account means logging in,
+which atc does not do. Every account is planned before any is changed, so an
+error in one leaves all of them as they were, and every account that fails is
+reported.
+
+#### Settings
 
 Three versions are involved: the **new** settings the units produce, the **live**
 file, and the **last** settings atc wrote, which it remembers. They are compared
@@ -444,9 +471,16 @@ one of:
 - `never synced and differs (--take-over writes it)`
 - `edited outside atc (--discard-live overwrites it)`
 
-An account that is left alone also gets a unified diff. Warnings about the
-account's settings, among them permission rules that can never apply (see Rule
-warnings), go to standard error.
+Each link that changes, or is in conflict, gets one more line, for the file's
+name: `ACCOUNT: CLAUDE.md: BEFORE → AFTER STATUS`. `BEFORE` is `(none)`, the target
+atc made, or a note that something else is there, and `AFTER` is the new target
+or `(none)`. The status is `(would change)` with `--check` or `--diff`,
+`(changed)`, or `(conflict; --take-over replaces a file or link, never a
+directory)`.
+
+An account whose settings are left alone also gets a unified diff. Warnings
+about the account's settings, among them permission rules that can never apply
+(see Rule warnings), go to standard error.
 
 **Every write** first copies the live file, when there is one, to
 `<state_dir>/sync/ACCOUNT/backups/<UTC time>-settings.json`, such as
@@ -460,19 +494,55 @@ are readable by you alone, because settings can hold secrets.
 Run `atc sync` from your own terminal: Claude Code does not let commands in its
 sandbox write `settings.json`.
 
+#### Instructions file
+
+An account's instructions file is the `CLAUDE.md` in its directory. It becomes a
+link to:
+
+1. the account's `agents-md-file`, if it sets one: a path, or an asset
+2. otherwise, if `use-default-agents-md` is `true`, the asset that
+   `default-agents-md` names, which is `AGENTS.md` unless the registry says
+   otherwise
+3. otherwise nothing: atc creates nothing and leaves alone any file it did not
+   make, while a link it made earlier is removed
+
+The link is symbolic and its target is absolute. The target must exist, or the
+account cannot be planned (and so none is changed). An `agents-md-file` that
+is the account's own `CLAUDE.md` is refused too, as it would link to itself.
+
+`<state_dir>/sync/ACCOUNT/links.json` records each link atc made and its target,
+as paths. That tells atc's links from everything else, the way the last settings
+do for `settings.json`. A record that cannot be read is ignored, so atc then
+claims no link. Each entry is in one of these situations:
+
+| Entry | Situation | What happens |
+| --- | --- | --- |
+| missing | Not created yet | The link is created, with any directories above it that are missing, if one is wanted. |
+| a link to the wanted file | Already current | Nothing is written, and the link is recorded. |
+| a link to the recorded file | The configuration changed, or a source moved | It is re-pointed, or removed when no link is wanted any more. |
+| anything else | Not made by atc | It is left alone. If a link is wanted, that is a conflict, and `--take-over` replaces a link, or backs a regular file up and replaces it. A directory is never replaced. |
+
+A link is made beside the entry under a temporary name and renamed over it, so
+the entry is never missing and never dangling while it changes. A regular file
+that `--take-over` replaces is first copied to
+`<state_dir>/sync/ACCOUNT/backups/<UTC time>-CLAUDE.md`, and the last ten
+backups of each file name are kept.
+
+#### Options
+
 | Option | Effect |
 | --- | --- |
-| `--check` | Write nothing. Exit `3` if any account would be written or was left alone. |
-| `--diff` | Write nothing, and show the settings diff of each account that would change. |
-| `--take-over` | Write settings that were never synced but differ from new. |
+| `--check` | Write nothing. Exit `3` if anything would be written, or was left alone. |
+| `--diff` | Write nothing, and show the settings diff of each account that would change, and each link that would change. |
+| `--take-over` | Write settings that were never synced but differ from new, and replace a link or a file that is in the way of the instructions file link. |
 | `--discard-live` | Write settings that were edited outside atc, discarding the edit. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--check` or `--diff`: `sync` writes only what the default sources build. |
 
 The exit status is `3` when an account was left alone (never synced and
-differing, or edited outside atc) and with `--check` when anything would be
-written, `1` when an account cannot be built, planned or written, and `0`
-otherwise.
+differing, edited outside atc, or an instructions file in conflict) and with
+`--check` when anything would be written, `1` when an account cannot be built,
+planned or written, and `0` otherwise.
 
 ### Rule warnings
 

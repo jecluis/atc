@@ -601,3 +601,141 @@ def test_a_project_must_allow_at_least_one_account(
 
     with pytest.raises(RegistryError, match=r"/projects/bar/accounts: .*at least one"):
         _ = load_registry(write_registry(text), home)
+
+
+def test_instructions_settings_default_to_none(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
+
+    account = registry.accounts["personal"]
+    assert registry.default_agents_md == "AGENTS.md"
+    assert account.use_default_agents_md is False
+    assert account.agents_md_file is None
+    assert registry.warnings == ()
+
+
+def test_the_instructions_keys_are_read(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        default-account: a
+        default-agents-md: "@bravo/AGENTS.md"
+        accounts:
+          a: {agent: claude, dir: /a, use-default-agents-md: true}
+          b: {agent: claude, dir: /b, agents-md-file: ~/notes/AGENTS.md}
+          c: {agent: claude, dir: /c, agents-md-file: /etc/rules.md}
+          d: {agent: claude, dir: /d, agents-md-file: "@bravo/docs/RULES.md"}
+          e: {agent: claude, dir: /e, agents-md-file: docs/RULES.md}
+          f: {agent: claude, dir: /f, agents-md-file: null}
+        """
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.default_agents_md == "@bravo/AGENTS.md"
+    accounts = registry.accounts
+    assert accounts["a"].use_default_agents_md is True
+    assert accounts["a"].agents_md_file is None
+    assert accounts["b"].agents_md_file == home / "notes" / "AGENTS.md"
+    assert accounts["c"].agents_md_file == Path("/etc/rules.md")
+    assert accounts["d"].agents_md_file == "@bravo/docs/RULES.md"
+    assert accounts["e"].agents_md_file == "docs/RULES.md"
+    assert accounts["f"].agents_md_file is None
+    assert registry.warnings == ()
+
+
+def test_an_agents_md_file_path_is_normalized_like_a_dir(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        "version: 1\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: /a, agents-md-file: /x/../y/./AGENTS.md}}\n"
+    )
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.accounts["a"].agents_md_file == Path("/y/AGENTS.md")
+
+
+def test_an_agents_md_file_that_is_neither_a_path_nor_an_asset_is_refused(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        "version: 1\ndefault-account: a\n"
+        "accounts: {a: {agent: claude, dir: /a, agents-md-file: '~other/x'}}\n"
+    )
+
+    with pytest.raises(RegistryError, match=r"/accounts/a/agents-md-file: .*absolute"):
+        _ = load_registry(write_registry(text), home)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "use-default-agents-md: yes",
+        "use-default-agents-md: 1",
+        'use-default-agents-md: "true"',
+        "agents-md-file: 5",
+        "agents-md-file: [a]",
+        "use_default_agents_md: true",
+    ],
+)
+def test_the_instructions_keys_are_checked_strictly(
+    write_registry: RegistryWriter, home: Path, entry: str
+) -> None:
+    text = (
+        "version: 1\ndefault-account: a\n"
+        f"accounts: {{a: {{agent: claude, dir: /a, {entry}}}}}\n"
+    )
+
+    with pytest.raises(RegistryError, match="/accounts/a/"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_default_agents_md_must_be_a_string(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        "version: 1\ndefault-account: a\ndefault-agents-md: 3\n"
+        "accounts: {a: {agent: claude, dir: /a}}\n"
+    )
+
+    with pytest.raises(RegistryError, match="/default-agents-md"):
+        _ = load_registry(write_registry(text), home)
+
+
+def test_both_a_file_and_the_flag_warn(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        default-account: a
+        accounts:
+          a:
+            agent: claude
+            dir: /a
+            agents-md-file: /x.md
+            use-default-agents-md: true
+          b: {agent: claude, dir: /b, agents-md-file: /x.md}
+          c: {agent: claude, dir: /c, use-default-agents-md: true}
+          d:
+            agent: claude
+            dir: /d
+            agents-md-file: null
+            use-default-agents-md: true
+          e:
+            agent: claude
+            dir: /e
+            agents-md-file: /x.md
+            use-default-agents-md: false
+        """
+    path = write_registry(text)
+
+    registry = load_registry(path, home)
+
+    warning = (
+        f"{path}: /accounts/a: agents-md-file is set, so use-default-agents-md "
+        "has no effect"
+    )
+    assert registry.warnings == (warning,)

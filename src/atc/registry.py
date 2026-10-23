@@ -17,6 +17,8 @@ from atc.yamlval import load_yaml, parse_yaml
 REGISTRY_VERSION = 1
 REGISTRY_FILE = "machine.yaml"
 """The registry's file name, in atc's configuration directory."""
+DEFAULT_AGENTS_MD = "AGENTS.md"
+"""The asset that ``default-agents-md`` names when the registry says nothing."""
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _VARIABLE_NAME = re.compile(r"[a-z][a-z0-9_]*")
@@ -38,6 +40,8 @@ class _AccountModel(_Model):
     agent: Literal["claude"]
     dir: str
     unit: str | None = None
+    use_default_agents_md: bool = False
+    agents_md_file: str | None = None
     vars: dict[str, str] = Field(default_factory=dict)
 
 
@@ -53,6 +57,7 @@ class _RegistryModel(_Model):
     version: int
     vars: dict[str, str] = Field(default_factory=dict)
     default_account: str
+    default_agents_md: str = DEFAULT_AGENTS_MD
     accounts: dict[str, _AccountModel]
     projects: dict[str, _ProjectModel] = Field(default_factory=dict)
 
@@ -76,6 +81,12 @@ class Account:
     directory, absolute and normalized. ``unit`` is the unit reference that its
     settings are built from, in the form references take outside a unit.
     ``vars`` are its own variables.
+
+    ``use_default_agents_md`` asks for the registry's default instructions file
+    to be linked into the account. ``agents_md_file`` is linked instead of that
+    default: a ``Path`` when the registry gave a filesystem path, absolute and
+    normalized, and a ``str`` when it gave an asset reference, as written.
+    ``None`` means the registry set none.
     """
 
     name: str
@@ -83,6 +94,8 @@ class Account:
     dir: Path
     unit: str
     vars: Mapping[str, str]
+    use_default_agents_md: bool = False
+    agents_md_file: Path | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +129,9 @@ class Registry:
     ``vars`` are the machine-wide variables. ``default_account`` is the account
     used outside projects, and by projects that name none. ``accounts`` and
     ``projects`` are in the order of the file. ``warnings`` are problems that do
-    not stop atc from using the registry.
+    not stop atc from using the registry. ``default_agents_md`` is the asset
+    reference of the instructions file that accounts link when they ask for the
+    default.
     """
 
     path: Path
@@ -125,6 +140,7 @@ class Registry:
     accounts: Mapping[str, Account]
     projects: Mapping[str, Project]
     warnings: tuple[str, ...]
+    default_agents_md: str = DEFAULT_AGENTS_MD
 
     def account(self, name: str) -> Account:
         """
@@ -296,6 +312,7 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
 
     _check_variables(model.vars, "/vars", origin)
     accounts: dict[str, Account] = {}
+    warnings: list[str] = []
     owners: dict[Path, str] = {}
     for name, entry in model.accounts.items():
         _check_name("account", name, f"/accounts/{name}", origin)
@@ -312,12 +329,23 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
         owners[directory] = name
         _check_variables(entry.vars, f"/accounts/{name}/vars", origin)
         unit = entry.unit if entry.unit is not None else f"accounts/{name}.json"
+        agents_md_file = _agents_md_file(
+            entry.agents_md_file, f"/accounts/{name}/agents-md-file", origin, home
+        )
+        if agents_md_file is not None and entry.use_default_agents_md:
+            message = (
+                f"{origin}: /accounts/{name}: agents-md-file is set, so "
+                "use-default-agents-md has no effect"
+            )
+            warnings.append(message)
         accounts[name] = Account(
             name=name,
             agent=entry.agent,
             dir=directory,
             unit=unit,
             vars=dict(entry.vars),
+            use_default_agents_md=entry.use_default_agents_md,
+            agents_md_file=agents_md_file,
         )
 
     _check_account(model.default_account, accounts, "/default-account", origin)
@@ -331,8 +359,25 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
         default_account=model.default_account,
         accounts=accounts,
         projects=projects,
-        warnings=(),
+        warnings=tuple(warnings),
+        default_agents_md=model.default_agents_md,
     )
+
+
+def _agents_md_file(
+    text: str | None, pointer: str, origin: Path, home: Path
+) -> Path | str | None:
+    """
+    Read an ``agents-md-file``: a path if it starts with ``/`` or ``~``, else an asset.
+
+    A path is normalized as ``dir`` is. An asset reference is kept as written.
+    """
+    if text is None or not text.startswith(("/", "~")):
+        return text
+    try:
+        return normalize_path(text, home)
+    except RegistryError as exc:
+        raise RegistryError(f"{origin}: {pointer}: {exc}") from exc
 
 
 def _build_project(

@@ -42,6 +42,10 @@ class ClaudeBackend:
         """``settings.json`` in the account's directory."""
         return account.dir / "settings.json"
 
+    def instructions_file(self, account: Account) -> Path:
+        """``CLAUDE.md`` in the account's directory."""
+        return account.dir / "CLAUDE.md"
+
     def render(self, settings: JsonObject) -> str:
         return dumps(settings)
 
