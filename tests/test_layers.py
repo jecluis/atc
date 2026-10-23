@@ -6,13 +6,14 @@ import pytest
 
 from atc import layers
 from atc.context import BuildContext
-from atc.errors import PathError, PolicyError, TemplateError
+from atc.errors import MergeError, PathError, PolicyError, TemplateError
 from atc.jsonval import JsonObject
 from atc.layers import (
     Layer,
     build_account_layer,
     build_project_layer,
     check_policy,
+    merge_fragment,
     session_layer,
 )
 from tests.conftest import ContextBuilder
@@ -404,3 +405,52 @@ def test_the_session_layer_is_the_settings_checked_against_the_policy() -> None:
         _ = session_layer(
             {"sandbox": {"allowUnsandboxedCommands": False}}, "--settings"
         )
+
+
+def test_the_session_layer_records_the_rules_it_sets_with_where_they_are_from() -> None:
+    settings: JsonObject = {
+        "permissions": {"allow": ["Read"], "deny": ["Bash(rm:*)"], "defaultMode": "x"}
+    }
+
+    layer = session_layer(settings, "--settings")
+
+    assert layer.origins == {
+        ("allow", "Read"): ("--settings",),
+        ("deny", "Bash(rm:*)"): ("--settings",),
+    }
+
+
+def test_a_fragment_merges_the_layers_in_the_order_given() -> None:
+    first = Layer(
+        "project", {"model": "sonnet", "permissions": {"allow": ["a"]}}, (), {}
+    )
+    second = Layer(
+        "session", {"model": "opus", "permissions": {"allow": ["b"]}}, (), {}
+    )
+
+    assert merge_fragment([first, second]) == {
+        "model": "opus",
+        "permissions": {"allow": ["a", "b"]},
+    }
+    assert merge_fragment([second, first])["model"] == "sonnet"
+    assert merge_fragment([]) == {}
+
+
+def test_a_fragment_does_not_change_its_layers() -> None:
+    settings: JsonObject = {"permissions": {"allow": ["a"]}}
+    first = Layer("project", settings, (), {})
+    second = Layer("session", {"permissions": {"allow": ["b"]}}, (), {})
+
+    _ = merge_fragment([first, second])
+
+    assert settings == {"permissions": {"allow": ["a"]}}
+
+
+def test_a_fragment_names_the_layer_whose_value_has_another_type() -> None:
+    first = Layer("project", {"model": "opus"}, (), {})
+    second = Layer("session", {"model": 1}, (), {})
+
+    with pytest.raises(
+        MergeError, match=r"^session layer: conflicting types at /model"
+    ):
+        _ = merge_fragment([first, second])

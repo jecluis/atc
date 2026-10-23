@@ -1,22 +1,28 @@
 """``atc run``, and the rule that makes it the default command."""
 
+import json
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, Protocol
 
 import pytest
 
 from atc import launch
 from atc.cli import main
 from atc.exitcodes import CONFIG, OK, USAGE
-from atc.jsonval import canonical
+from atc.jsonval import JsonObject, canonical
 from atc.launch import LaunchPlan
 from atc.paths import Dirs
 from tests.conftest import ConfigWriter
 from tests.helpers import StopError, git_repo, make_source, unit
 
-FILES = {"conf/accounts/personal.json": unit({})}
+FILES = {
+    "conf/accounts/personal.json": unit({}),
+    "conf/accounts/bravo.json": unit({}),
+}
+PROJECT = "conf/projects/bar.json"
+REBASE = "Bash(git rebase:*)"
 DASH = "\N{EN DASH}"
 REGISTRY = """\
 version: 1
@@ -139,7 +145,14 @@ def test_run_has_its_own_help(
     assert main(["run", "--help"]) == OK
 
     out = capsys.readouterr().out
-    for option in ("--account", "--settings", "--print", "--quiet", "--conf-d"):
+    for option in (
+        "--account",
+        "--settings",
+        "--print",
+        "--quiet",
+        "--lax",
+        "--conf-d",
+    ):
         assert option in out
     assert executed == []
 
@@ -433,3 +446,154 @@ def test_a_registered_repository_git_cannot_read_is_a_warning(
     assert err.startswith("warning: ")
     assert "project 'bar'" in err
     assert err.endswith(f"atc: project {DASH} · account personal\n")
+
+
+class ProjectConfigurer(Protocol):
+    def __call__(
+        self, project: JsonObject, *, bravo: JsonObject | None = None
+    ) -> None: ...
+
+
+@pytest.fixture
+def configure_project(
+    configure: ConfigWriter, agent: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> ProjectConfigurer:
+    """Give ``bar`` the unit ``project``, and ``bravo`` ``bravo``; work in ``bar``."""
+
+    def write(project: JsonObject, *, bravo: JsonObject | None = None) -> None:
+        files = {**FILES, PROJECT: project}
+        if bravo is not None:
+            files["conf/accounts/bravo.json"] = bravo
+        configure(files, REGISTRY.format(agent=agent, repo=repo))
+        monkeypatch.chdir(repo)
+
+    return write
+
+
+def test_the_projects_settings_start_the_session(
+    executed: list[LaunchPlan], configure_project: ProjectConfigurer
+) -> None:
+    configure_project(unit({"model": "sonnet", "theme": "dark"}))
+
+    plan = start(executed, ["--settings", '{"model": "opus"}'])
+
+    assert plan.fragment == {"model": "opus", "theme": "dark"}
+    assert plan.argv[1:3] == ["--settings", canonical(plan.fragment)]
+
+
+def test_print_shows_the_projects_settings_in_the_fragment(
+    configure_project: ProjectConfigurer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_project(unit({"env": {"WHO": "{{account.name}}"}}))
+
+    assert main(["--print"]) == OK
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.endswith('{\n  "env": {\n    "WHO": "bravo"\n  }\n}\n')
+
+
+def test_a_project_layer_that_cannot_be_built_is_a_config_error(
+    executed: list[LaunchPlan],
+    configure_project: ProjectConfigurer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_project(unit({"sandbox": {"allowUnsandboxedCommands": True}}))
+
+    assert main([]) == CONFIG
+
+    err = capsys.readouterr().err
+    assert err.startswith("error: projects/bar.json: /sandbox/allowUnsandboxedCommands")
+    assert executed == []
+
+
+def test_lax_turns_unknown_project_keys_into_warnings(
+    executed: list[LaunchPlan],
+    configure_project: ProjectConfigurer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_project(unit({"modle": "opus"}))
+
+    assert main([]) == CONFIG
+    assert "unknown settings key(s): modle" in capsys.readouterr().err
+    assert executed == []
+
+    plan = start(executed, ["--lax"])
+
+    assert plan.fragment == {"modle": "opus"}
+    assert capsys.readouterr().err == (
+        "warning: projects/bar.json: unknown settings key(s): modle\n"
+        "atc: project bar · account bravo\n"
+    )
+
+
+def test_print_warns_about_a_rule_that_never_applies(
+    configure_project: ProjectConfigurer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_project(
+        unit({"permissions": {"allow": [REBASE]}}),
+        bravo=unit({"permissions": {"deny": [REBASE]}}),
+    )
+
+    assert main(["--print"]) == OK
+
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"warning: allow {REBASE} (projects/bar.json) never applies: "
+        f"deny {REBASE} (accounts/bravo.json) takes precedence\n"
+    )
+    assert f'"allow": [\n      "{REBASE}"' in captured.out
+
+
+def test_print_checks_the_rules_of_your_settings_too(
+    configure_project: ProjectConfigurer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_project(unit({"permissions": {"allow": [REBASE]}}))
+    settings = json.dumps({"permissions": {"deny": [REBASE]}})
+
+    assert main(["--print", "--settings", settings]) == OK
+
+    assert capsys.readouterr().err == (
+        f"warning: allow {REBASE} (projects/bar.json) never applies: "
+        f"deny {REBASE} (--settings) takes precedence\n"
+    )
+
+
+def test_a_launch_says_nothing_about_rules(
+    executed: list[LaunchPlan],
+    configure_project: ProjectConfigurer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_project(
+        unit({"permissions": {"allow": [REBASE]}}),
+        bravo=unit({"permissions": {"deny": [REBASE]}}),
+    )
+
+    plan = start(executed, [])
+
+    assert plan.rule_warnings == ()
+    assert capsys.readouterr().err == "atc: project bar · account bravo\n"
+
+
+def test_a_broken_account_unit_stops_neither_print_nor_a_launch(
+    executed: list[LaunchPlan],
+    configure_project: ProjectConfigurer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_project(
+        unit({"model": "opus"}), bravo=unit({"autoMemoryDirectory": "/m"})
+    )
+
+    plan = start(executed, [])
+
+    assert plan.fragment == {"model": "opus"}
+    assert capsys.readouterr().err == "atc: project bar · account bravo\n"
+    assert main(["--print"]) == OK
+    captured = capsys.readouterr()
+    skipped = "warning: rule check skipped for the account layer: "
+    assert captured.err.startswith(
+        f"{skipped}accounts/bravo.json: /autoMemoryDirectory"
+    )
+    assert captured.err.count("warning:") == 1
+    assert "argv: " in captured.out
+    assert captured.out.endswith('{\n  "model": "opus"\n}\n')

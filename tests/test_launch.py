@@ -11,7 +11,14 @@ import pytest
 
 from atc import git
 from atc.context import BuildContext
-from atc.errors import ConfigError, GitError, PolicyError, RegistryError, UnitError
+from atc.errors import (
+    ConfigError,
+    GitError,
+    MergeError,
+    PolicyError,
+    RegistryError,
+    UnitError,
+)
 from atc.git import run_git
 from atc.jsonval import JsonObject, canonical
 from atc.launch import (
@@ -27,6 +34,10 @@ from tests.helpers import StopError, git_repo, make_source, unit
 CLAUDE = "/opt/agents/claude"
 ATC = Path("/opt/bin/atc")
 FILES = {"conf/accounts/personal.json": unit({})}
+BRAVO = "conf/accounts/bravo.json"
+PROJECT = "conf/projects/bar.json"
+REBASE = "Bash(git rebase:*)"
+PUSH = "Bash(git push:*)"
 
 
 def registry_text(repo: Path | None = None, *, top: str = "") -> str:
@@ -57,6 +68,8 @@ def plan(
     which: Callable[[str], str | None] = found,
     self_path: Path = ATC,
     git_common_dir: Callable[[Path], Path | None] = git.common_dir,
+    lax: bool = False,
+    explain: bool = False,
 ) -> LaunchPlan:
     return plan_launch(
         ctx,
@@ -68,6 +81,8 @@ def plan(
         self_path=self_path,
         which=which,
         git_common_dir=git_common_dir,
+        lax=lax,
+        explain=explain,
     )
 
 
@@ -385,6 +400,8 @@ def test_a_configured_binary_that_resolves_to_atc_is_refused_by_path(
             settings=None,
             agent_args=[],
             self_path=atc,
+            lax=False,
+            explain=False,
         )
 
 
@@ -410,6 +427,8 @@ def test_a_configured_binary_found_on_path_that_is_atc_is_refused(
             settings=None,
             agent_args=[],
             self_path=atc,
+            lax=False,
+            explain=False,
         )
 
 
@@ -480,6 +499,251 @@ def test_your_settings_cannot_set_allow_unsandboxed_commands(
 
     with pytest.raises(PolicyError, match=r"^--settings: .*session layer"):
         _ = plan(ctx, plain, settings=settings)
+
+
+def test_fragment_order_is_project_then_your_settings(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    project: JsonObject = {
+        "model": "sonnet",
+        "theme": "dark",
+        "permissions": {"allow": ["Read"]},
+    }
+    ctx = build_context({**FILES, PROJECT: unit(project)}, registry_text(repo))
+    settings: JsonObject = {"model": "opus", "permissions": {"allow": ["Edit"]}}
+
+    result = plan(ctx, repo, settings=settings)
+
+    assert result.fragment == {
+        "model": "opus",
+        "theme": "dark",
+        "permissions": {"allow": ["Read", "Edit"]},
+    }
+    assert result.argv == [CLAUDE, "--settings", canonical(result.fragment)]
+
+
+def test_the_project_layer_is_built_for_the_account_that_is_chosen(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    unit_with_account = unit({"env": {"WHO": "{{account.name}}"}})
+    ctx = build_context({PROJECT: unit_with_account}, registry_text(repo))
+
+    assert plan(ctx, repo).fragment == {"env": {"WHO": "bravo"}}
+    assert plan(ctx, repo, account="personal").fragment == {"env": {"WHO": "personal"}}
+
+
+def test_a_project_without_a_unit_contributes_nothing(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, registry_text(repo))
+
+    inside = plan(ctx, repo)
+
+    assert inside.project is not None
+    assert inside.fragment == {}
+    assert inside.warnings == ()
+    assert inside.argv == [CLAUDE]
+    assert plan(ctx, repo, settings={"model": "opus"}).fragment == {"model": "opus"}
+
+
+def test_outside_a_project_there_is_no_project_layer(
+    build_context: ContextBuilder, plain: Path, repo: Path
+) -> None:
+    ctx = build_context({PROJECT: unit({"model": "sonnet"})}, registry_text(repo))
+
+    assert plan(ctx, plain).fragment == {}
+
+
+def test_a_project_layer_that_cannot_be_built_stops_the_plan(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    settings: JsonObject = {"sandbox": {"allowUnsandboxedCommands": True}}
+    ctx = build_context({PROJECT: unit(settings)}, registry_text(repo))
+
+    with pytest.raises(PolicyError, match=r"^projects/bar.json: .*project layer"):
+        _ = plan(ctx, repo)
+
+
+def test_a_setting_that_is_another_type_in_your_settings_is_an_error(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context({PROJECT: unit({"model": "sonnet"})}, registry_text(repo))
+
+    with pytest.raises(MergeError, match=r"^session layer: .*at /model"):
+        _ = plan(ctx, repo, settings={"model": 1})
+
+
+def test_lax_turns_unknown_project_keys_into_warnings(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context({PROJECT: unit({"modle": "opus"})}, registry_text(repo))
+
+    with pytest.raises(UnitError, match=r"projects/bar.json: unknown settings key"):
+        _ = plan(ctx, repo)
+    result = plan(ctx, repo, lax=True)
+
+    assert result.fragment == {"modle": "opus"}
+    assert result.warnings == ("projects/bar.json: unknown settings key(s): modle",)
+
+
+def test_rule_warnings_are_computed_only_when_explaining(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    files = {
+        BRAVO: unit({"permissions": {"deny": [REBASE]}}),
+        PROJECT: unit({"permissions": {"allow": [REBASE]}}),
+    }
+    ctx = build_context(files, registry_text(repo))
+
+    quiet = plan(ctx, repo)
+    explained = plan(ctx, repo, explain=True)
+
+    assert quiet.rule_warnings == ()
+    assert [warning.message() for warning in explained.rule_warnings] == [
+        (
+            f"allow {REBASE} (projects/bar.json) never applies: "
+            f"deny {REBASE} (accounts/bravo.json) takes precedence"
+        )
+    ]
+    assert explained.fragment == quiet.fragment == {"permissions": {"allow": [REBASE]}}
+    assert explained.warnings == quiet.warnings == ()
+
+
+def test_rule_warnings_look_at_the_account_the_project_and_your_settings_together(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    files = {
+        BRAVO: unit({"permissions": {"allow": [PUSH]}}),
+        PROJECT: unit({"permissions": {"allow": [REBASE]}}),
+    }
+    ctx = build_context(files, registry_text(repo))
+    settings: JsonObject = {"permissions": {"deny": [PUSH, REBASE]}}
+
+    result = plan(ctx, repo, settings=settings, explain=True)
+
+    assert [warning.message() for warning in result.rule_warnings] == [
+        (
+            f"allow {PUSH} (accounts/bravo.json) never applies: "
+            f"deny {PUSH} (--settings) takes precedence"
+        ),
+        (
+            f"allow {REBASE} (projects/bar.json) never applies: "
+            f"deny {REBASE} (--settings) takes precedence"
+        ),
+    ]
+
+
+def test_rule_warnings_outside_a_project_check_the_account_alone(
+    build_context: ContextBuilder, plain: Path
+) -> None:
+    permissions: JsonObject = {"allow": ["Read(.env)"], "deny": ["Read"]}
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit({"permissions": permissions})},
+        registry_text(),
+    )
+
+    result = plan(ctx, plain, explain=True)
+
+    assert [warning.message() for warning in result.rule_warnings] == [
+        (
+            "allow Read(.env) (accounts/personal.json) never applies: "
+            "deny Read (accounts/personal.json) takes precedence"
+        )
+    ]
+
+
+def test_a_broken_account_unit_does_not_block_a_plain_launch(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    files = {
+        BRAVO: unit({"autoMemoryDirectory": "/m"}),
+        PROJECT: unit({"model": "opus"}),
+    }
+    ctx = build_context(files, registry_text(repo))
+
+    result = plan(ctx, repo)
+    explained = plan(ctx, repo, explain=True)
+
+    assert result.fragment == explained.fragment == {"model": "opus"}
+    assert result.warnings == ()
+    assert result.rule_warnings == ()
+    assert len(explained.warnings) == 1
+    skipped = "rule check skipped for the account layer: "
+    assert explained.warnings[0].startswith(
+        f"{skipped}accounts/bravo.json: /autoMemoryDirectory"
+    )
+
+
+def test_an_account_without_a_unit_does_not_block_a_plain_launch(
+    build_context: ContextBuilder, plain: Path
+) -> None:
+    ctx = build_context({"conf/accounts/other.json": unit({})}, registry_text())
+
+    result = plan(ctx, plain)
+    explained = plan(ctx, plain, explain=True)
+
+    assert result.warnings == ()
+    assert result.rule_warnings == explained.rule_warnings == ()
+    assert len(explained.warnings) == 1
+    assert explained.warnings[0].startswith("rule check skipped for the account layer")
+    assert "account 'personal'" in explained.warnings[0]
+    assert "no such unit" in explained.warnings[0]
+
+
+def test_an_unknown_key_in_the_account_unit_skips_the_check_unless_lax(
+    build_context: ContextBuilder, plain: Path
+) -> None:
+    files = {"conf/accounts/personal.json": unit({"modle": "opus"})}
+    ctx = build_context(files, registry_text())
+
+    strict = plan(ctx, plain, explain=True)
+    lax = plan(ctx, plain, explain=True, lax=True)
+
+    assert len(strict.warnings) == 1
+    assert strict.warnings[0].startswith("rule check skipped for the account layer: ")
+    assert "unknown settings key(s): modle" in strict.warnings[0]
+    assert all("skipped" not in warning for warning in lax.warnings)
+
+
+def test_the_rules_of_the_project_and_your_settings_are_checked_without_the_account(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    files = {
+        BRAVO: unit({"autoMemoryDirectory": "/m"}),
+        PROJECT: unit({"permissions": {"allow": [REBASE]}}),
+    }
+    ctx = build_context(files, registry_text(repo))
+    settings: JsonObject = {"permissions": {"deny": [REBASE]}}
+
+    result = plan(ctx, repo, settings=settings, explain=True)
+
+    assert [warning.message() for warning in result.rule_warnings] == [
+        (
+            f"allow {REBASE} (projects/bar.json) never applies: "
+            f"deny {REBASE} (--settings) takes precedence"
+        )
+    ]
+    assert len(result.warnings) == 1
+    assert "rule check skipped for the account layer" in result.warnings[0]
+
+
+def test_a_project_without_a_unit_is_checked_with_the_account_and_your_settings(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    files = {BRAVO: unit({"permissions": {"allow": [PUSH]}})}
+    ctx = build_context(files, registry_text(repo))
+    settings: JsonObject = {"permissions": {"deny": [PUSH]}}
+
+    result = plan(ctx, repo, settings=settings, explain=True)
+
+    assert result.project is not None
+    assert result.warnings == ()
+    assert [warning.message() for warning in result.rule_warnings] == [
+        (
+            f"allow {PUSH} (accounts/bravo.json) never applies: "
+            f"deny {PUSH} (--settings) takes precedence"
+        )
+    ]
 
 
 def test_an_unknown_account_is_a_config_error(

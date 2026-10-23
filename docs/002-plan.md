@@ -1286,14 +1286,14 @@ The design's `run` is split across Tasks 13–15, so each commit stays inside th
 - **`layers`:** `merge_fragment(layers: Sequence[Layer]) -> JsonObject` merges in the given order.
 - **`launch`:**
   - `plan_launch(..., lax: bool, explain: bool)`. The fragment is the project layer, then your `--settings`.
-  - `LaunchPlan.rule_warnings: tuple[RuleWarning, ...]`. It is computed only when `explain` is true (`--print`), over the account layer (built from the units), the project layer and the session layer together. A plain launch never builds the account layer, so it can't fail on an account unit; Claude Code uses the synced `settings.json`.
+  - `LaunchPlan.rule_warnings: tuple[RuleWarning, ...]`. It is computed only when `explain` is true (`--print`), over the account layer (built from the units), the project layer and the session layer together. A plain launch never builds the account layer, so it can't fail on an account unit; Claude Code uses the synced `settings.json`. Under `--print`, an account layer that can't be built gives the warning `rule check skipped for the account layer: …` and the project and session layers are checked alone, as in `show project`; `--print` still exits 0.
 - **CLI:** `run` gains `--lax`. `--print` also prints rule warnings.
 
 - [ ] **Step 1: Write the failing tests:**
   - `test_fragment_order_is_project_then_your_settings`: your `--settings` wins on a scalar
   - `test_a_project_without_a_unit_contributes_nothing`
   - `test_rule_warnings_are_computed_only_when_explaining`
-  - `test_a_broken_account_unit_does_not_block_a_plain_launch`: it does fail with `explain=True`
+  - `test_a_broken_account_unit_does_not_block_a_plain_launch`: with `explain=True` the plan still succeeds, with the rule-check-skipped warning
   - `test_lax_turns_unknown_project_keys_into_warnings`
 - [ ] **Step 2: Implement,** and run until green.
 - [ ] **Step 3: Run `./atc/check-and-fix.sh`,** then **commit** `atc: apply the project layer to sessions started by atc`.

@@ -1,12 +1,13 @@
 """Settings layers, and the policy on which keys each layer may set."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from atc.context import BuildContext
-from atc.errors import PolicyError
+from atc.errors import MergeError, PolicyError
 from atc.jsonval import JsonObject, JsonValue
+from atc.merge import merge_objects
 from atc.refs import Located
 from atc.registry import Account, Project, account_unit, project_unit
 from atc.resolve import Resolution, UnitTransform, resolve
@@ -127,14 +128,37 @@ def session_layer(settings: JsonObject, origin: str) -> Layer:
     """
     Make the layer of ``settings`` that are given for one session.
 
-    ``origin`` names where they are from, for the message.
+    ``origin`` names where they are from, for the message and as the origin of
+    the permission rules they give.
 
     Raises:
         PolicyError: ``settings`` set a key that the session layer must not.
 
     """
     check_policy(settings, "session", origin)
-    return Layer("session", settings, (), {})
+    origins = dict.fromkeys(_rules(settings), (origin,))
+    return Layer("session", settings, (), origins)
+
+
+def merge_fragment(layers: Sequence[Layer]) -> JsonObject:
+    """
+    Merge the settings of ``layers``, in the order given, into one document.
+
+    A later layer wins over an earlier one, by the usual merge rules. The result
+    is the one ``--settings`` that an agent is started with.
+
+    Raises:
+        MergeError: a layer gives a key a value of another JSON type than the
+            layers before it do. The message names that layer.
+
+    """
+    fragment: JsonObject = {}
+    for layer in layers:
+        try:
+            fragment = merge_objects(fragment, layer.settings)
+        except MergeError as exc:
+            raise MergeError(f"{layer.kind} layer: {exc}") from exc
+    return fragment
 
 
 def _layer(

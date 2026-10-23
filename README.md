@@ -308,7 +308,7 @@ unknown-reference error.
 Run `atc --help`, or `--help` after any command, for the options. `-h` means
 `--help` too.
 
-### `atc [run] [-a ACCOUNT] [--settings FILE|JSON] [--print] [-q] [--conf-d DIR] [-- AGENT-ARGS]...`
+### `atc [run] [-a ACCOUNT] [--settings FILE|JSON] [--print] [-q] [--lax] [--conf-d DIR] [-- AGENT-ARGS]...`
 
 Starts the agent in the right account, replacing atc with it. It works out:
 
@@ -374,17 +374,35 @@ the one atc passes. Give `--settings` to `atc`, before `--`.
 Every other `ATC_` variable is removed, so a session started from inside another
 one never inherits the outer one's values.
 
-**Settings.** With `--settings`, the agent is started as
-`claude --settings '<settings as JSON>' …`. They are read as strict JSON, are
-not templates, and must not set `sandbox.allowUnsandboxedCommands`. Without it
-there is no `--settings` argument.
+**Settings.** The agent is started as `claude --settings '<settings as JSON>' …`.
+The settings are one document, made of two layers, the second winning over the
+first by the merge rules that `atc show` uses:
+
+1. **The project's settings,** built as `atc show project` builds them, for the
+   account that was chosen. A project with no unit contributes nothing, and a
+   session outside a registered project has no project settings. If they cannot
+   be built, for instance because a unit sets a key the project's settings must
+   not, atc stops with exit status `1` and the agent does not start.
+2. **Your `--settings`,** read as strict JSON. They are not templates, and must
+   not set `sandbox.allowUnsandboxedCommands`. A key that has one type in the
+   project's settings and another in yours is an error.
+
+When both are empty there is no `--settings` argument.
+
+atc does not build the account's settings to start a session. The agent reads
+them from the account's directory, where `atc sync` wrote them, so a unit that
+the account's settings are built from cannot stop a launch. `--print` does build
+them, to check the permission rules (see Rule warnings). If they cannot be
+built, a warning says why, only the project's rules and those of your
+`--settings` are checked, and the plan is printed all the same.
 
 | Option | Effect |
 | --- | --- |
 | `-a`, `--account ACCOUNT` | Use `ACCOUNT` instead of the project's own account. |
-| `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. |
-| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, the changes to the environment, the command, and the settings as JSON. |
+| `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. They win over the project's settings. |
+| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, the changes to the environment, the command, and the settings as JSON. Warnings about permission rules that never apply go to standard error. |
 | `-q`, `--quiet` | Leave out the line that names the project and the account. |
+| `--lax` | Report settings keys Claude Code does not define in the project's units, and under `--print` in the account's unit too, as warnings rather than errors. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--print`. |
 
 ### `atc src ls [--conf-d DIR]`
@@ -823,10 +841,12 @@ a repository's own `.claude/settings*.json` are not considered.
 
 `atc show account` checks the account's settings alone. `atc show project`
 checks the account's and the project's together, as Claude Code sees them.
-`atc src check` checks every account, and every project with each account it
-allows. `atc sync` checks the account it writes. These warnings go to standard
-error. They never change what atc prints
-or writes, and never change the exit status.
+`atc run --print` checks the account's, the project's and the `--settings` it
+was given together, and names `--settings` as the origin of a rule that comes
+from there. `atc src check` checks every account, and every project with each
+account it allows. `atc sync` checks the account it writes. A launch without
+`--print` does not check. These warnings go to standard error. They never change
+what atc prints or writes, and never change the exit status.
 
 ### Output and exit status
 

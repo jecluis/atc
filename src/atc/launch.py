@@ -14,8 +14,14 @@ from atc.backends import backend_for
 from atc.context import BuildContext
 from atc.errors import ConfigError, GitError, RegistryError, UnitError
 from atc.jsonval import JsonObject, json_kind, load_json, parse_json
-from atc.layers import session_layer
+from atc.layers import (
+    build_account_layer,
+    build_project_layer,
+    merge_fragment,
+    session_layer,
+)
 from atc.registry import Account, Project, Registry, choose_account
+from atc.rules import RuleWarning, dead_rules
 
 SETTINGS_OPTION = "--settings"
 ENV_PREFIX = "ATC_"
@@ -34,6 +40,8 @@ class LaunchPlan:
     them. ``env`` is the environment the agent gets, and ``env_changes`` is how
     it differs from the one atc was given: a variable's new value, or ``None``
     for one that is removed. ``warnings`` are problems that did not stop atc.
+    ``rule_warnings`` are the permission rules that can never apply, found only
+    when the plan was made to explain itself.
     """
 
     cwd: Path
@@ -45,6 +53,7 @@ class LaunchPlan:
     env_changes: dict[str, str | None]
     argv: list[str]
     warnings: tuple[str, ...]
+    rule_warnings: tuple[RuleWarning, ...]
 
 
 def find_project(
@@ -120,27 +129,39 @@ def plan_launch(
     self_path: Path,
     which: Callable[[str], str | None] = shutil.which,
     git_common_dir: Callable[[Path], Path | None] = git.common_dir,
+    lax: bool,
+    explain: bool,
 ) -> LaunchPlan:
     """
     Plan how to start the agent in ``cwd``, with the environment ``env``.
 
     The account is ``account`` if given, else the project's, else the default.
-    ``settings`` are the settings for this session, and ``agent_args`` go to
-    the agent. ``self_path`` is atc's own executable, which the agent's binary
-    must not be. ``which`` finds a binary on ``PATH``.
+    The settings for the session are those of the project's unit, if it has
+    one, with ``settings`` merged over them. ``agent_args`` go to the agent.
+    ``self_path`` is atc's own executable, which the agent's binary must not
+    be. ``which`` finds a binary on ``PATH``. Set ``lax`` to report unknown
+    settings keys in the project's units as warnings instead of errors.
+
+    Set ``explain`` to find the rules that can never apply, in the account's
+    settings, the project's and ``settings`` together. Only then is the
+    account's unit built. The agent reads the account's synced settings, so a
+    launch has no need of the unit. If it cannot be built, even then, the plan
+    has a warning that says why, and only the other rules are checked.
 
     Raises:
         click.UsageError: ``agent_args`` has a ``--settings``.
         GitError: git cannot tell whether ``cwd`` is in a repository.
         RegistryError: there is no such account, the project does not allow it,
             or several projects are the same repository.
-        PolicyError: ``settings`` set a key the session layer must not.
-        ConfigError: the agent's binary is not found, or is atc.
+        PolicyError: ``settings`` set a key the session layer must not, or a
+            unit sets one that its layer must not.
+        MergeError: ``settings`` give a key another type than the project does.
+        ConfigError: the agent's binary is not found, or is atc, or a unit of
+            the project cannot be built.
 
     """
     _refuse_settings(agent_args)
-    layer = None if settings is None else session_layer(settings, SETTINGS_OPTION)
-    fragment: JsonObject = {} if layer is None else layer.settings
+    session = None if settings is None else session_layer(settings, SETTINGS_OPTION)
 
     common = git_common_dir(cwd)
     warnings: list[str] = [*ctx.sources.warnings, *ctx.registry.warnings]
@@ -148,6 +169,18 @@ def plan_launch(
         ctx.registry, common, git_common_dir=git_common_dir, warn=warnings.append
     )
     chosen = choose_account(ctx.registry, project, account)
+    project_layer = (
+        None if project is None else build_project_layer(ctx, project, chosen, lax=lax)
+    )
+    layers = [layer for layer in (project_layer, session) if layer is not None]
+    fragment = merge_fragment(layers)
+    warnings.extend(warning for layer in layers for warning in layer.warnings)
+    checked = layers
+    if explain:
+        try:
+            checked = [build_account_layer(ctx, chosen, lax=lax), *layers]
+        except ConfigError as exc:
+            warnings.append(f"rule check skipped for the account layer: {exc}")
     backend = backend_for(chosen.agent, ctx.home)
     selected = backend.environment(chosen, _atc_environment(env, ctx, chosen, project))
     binary = _agent_binary(ctx.registry, chosen.agent, self_path, which)
@@ -160,7 +193,8 @@ def plan_launch(
         env=selected,
         env_changes=_changes(env, selected),
         argv=backend.argv(binary, fragment, agent_args),
-        warnings=(*warnings, *(() if layer is None else layer.warnings)),
+        warnings=tuple(warnings),
+        rule_warnings=dead_rules(checked) if explain else (),
     )
 
 

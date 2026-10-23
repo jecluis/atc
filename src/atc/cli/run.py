@@ -13,7 +13,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from atc import launch
-from atc.cli.options import HELP_OPTIONS, conf_d_option, load_build_context
+from atc.cli.options import HELP_OPTIONS, conf_d_option, lax_option, load_build_context
 from atc.launch import LaunchPlan
 from atc.ui import Ui
 
@@ -59,8 +59,8 @@ class _RunCommand(rich_click.RichCommand):
     metavar="FILE|JSON",
     help=(
         "Settings for this session only: the path of a JSON file, or JSON text "
-        "that starts with {. They are not templates, and cannot set "
-        "sandbox.allowUnsandboxedCommands."
+        "that starts with {. They win over the project's settings. They are not "
+        "templates, and cannot set sandbox.allowUnsandboxedCommands."
     ),
 )
 @click.option(
@@ -76,6 +76,7 @@ class _RunCommand(rich_click.RichCommand):
     help="Do not print the line that names the project and the account.",
 )
 @conf_d_option
+@lax_option
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -84,6 +85,7 @@ def run(
     show_plan: bool,
     quiet: bool,
     conf_d: Path | None,
+    lax: bool,
 ) -> None:
     """
     Start the agent in the right account.
@@ -96,6 +98,15 @@ def run(
     ATC_PROJECT and ATC_STATE_DIR set. Any other ATC_ variable it was started
     with is dropped. It prints one line on standard error naming the project
     and the account.
+
+    The agent is given the project's settings, if the project has a unit, as
+    its --settings, with the ones given to atc merged over them. The account's
+    own settings are not built: the agent reads them from the account's
+    directory, as sync wrote them. --print builds them too, to warn about a
+    permission rule that can never apply because another rule overrides it,
+    whether it is the account's, the project's or one given with --settings. If
+    the account's settings cannot be built, a warning says why and the other
+    rules are still checked.
 
     Everything after -- is for the agent, so a --settings there is refused: the
     agent takes only one, and it would replace the one atc passes. Give
@@ -118,11 +129,15 @@ def run(
         settings=settings,
         agent_args=ctx.args,
         self_path=_self_path(),
+        lax=lax,
+        explain=show_plan,
     )
 
     ui = Ui.default()
     for warning in plan.warnings:
         ui.warning(warning)
+    for rule_warning in plan.rule_warnings:
+        ui.warning(rule_warning.message())
     if show_plan:
         _show(ui, plan)
         return
