@@ -8,11 +8,15 @@ import click
 import rich_click
 
 from atc import exitcodes
-from atc.cli.options import conf_d_option, lax_option, load_build_context
-from atc.context import BuildContext
+from atc.cli.options import (
+    chosen_accounts,
+    conf_d_option,
+    lax_option,
+    load_build_context,
+)
 from atc.errors import ConfigError
 from atc.links import LinkPlan
-from atc.registry import Account
+from atc.skills import discover_skills
 from atc.sync import AccountPlan, SettingsPlan, apply_account, plan_account
 from atc.ui import Ui
 
@@ -35,7 +39,8 @@ from atc.ui import Ui
     is_flag=True,
     help=(
         "Write settings that atc never wrote but that differ from what it builds, "
-        "and replace a link or file in the way of the instructions file link."
+        "and replace a link or file in the way of the instructions file or of a "
+        "skill link."
     ),
 )
 @click.option(
@@ -55,7 +60,7 @@ def sync(
     conf_d: Path | None,
 ) -> None:
     """
-    Write each account's settings, and link its instructions file.
+    Write each account's settings, and link its instructions file and skills.
 
     Builds the settings of each ACCOUNT, or of every account, and writes them to
     settings.json in the account's directory. The directory must exist already:
@@ -89,8 +94,16 @@ def sync(
     conflict, which --take-over resolves by replacing a link, or by backing a file
     up and replacing it. A directory is never replaced.
 
+    An account's registry entry may also select skills. Each one becomes a link
+    named for the skill in the skills directory of the account's directory,
+    which is created when it is missing. A skill that is deselected loses its
+    link in the same way. Entries in that directory that atc did not make, such as
+    Claude Code's own, are never touched, except that a link or file where a
+    selected skill is to go is a conflict, as above.
+
     Prints one line per account, one more for each link that changes or is in
-    conflict, and the warnings of the account's settings on standard error. Exits
+    conflict, and on standard error the warnings of the account's settings and
+    of the skills that were skipped or whose front matter looks wrong. Exits
     with status 3 when something was left alone, or with --check when anything
     would be written. Run it from your own terminal: Claude Code does not let its
     sandboxed commands write settings.json.
@@ -102,9 +115,10 @@ def sync(
         )
     ctx = load_build_context(conf_d)
     ui = Ui.default()
-    for warning in (*ctx.sources.warnings, *ctx.registry.warnings):
+    catalog = discover_skills(ctx.sources)
+    for warning in (*ctx.sources.warnings, *ctx.registry.warnings, *catalog.warnings):
         ui.warning(warning)
-    accounts = _accounts(ctx, names)
+    accounts = chosen_accounts(ctx, names)
     plans: list[AccountPlan] = []
     for account in accounts:
         try:
@@ -115,6 +129,7 @@ def sync(
                     take_over=take_over,
                     discard_live=discard_live,
                     lax=lax,
+                    catalog=catalog,
                 )
             )
         except ConfigError as exc:
@@ -146,13 +161,6 @@ def sync(
     pending = check and any(plan.pending for plan in plans)
     if pending or any(plan.blocked for plan in plans):
         raise click.exceptions.Exit(exitcodes.CHECK)
-
-
-def _accounts(ctx: BuildContext, names: tuple[str, ...]) -> list[Account]:
-    """Find the accounts called ``names``, or every account when there are none."""
-    if not names:
-        return list(ctx.registry.accounts.values())
-    return [ctx.registry.account(name) for name in dict.fromkeys(names)]
 
 
 def _status(settings: SettingsPlan, *, dry: bool) -> str:

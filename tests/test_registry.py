@@ -739,3 +739,37 @@ def test_both_a_file_and_the_flag_warn(
         "has no effect"
     )
     assert registry.warnings == (warning,)
+
+
+def test_the_skills_are_read_in_order_as_references(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = """\
+        version: 1
+        default-account: a
+        accounts:
+          a: {agent: claude, dir: /a, skills: [git-commits, "@bravo/review", b]}
+          b: {agent: claude, dir: /b, skills: []}
+          c: {agent: claude, dir: /c}
+        """
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.accounts["a"].skills == ("git-commits", "@bravo/review", "b")
+    assert registry.accounts["b"].skills == ()
+    assert registry.accounts["c"].skills == ()
+
+
+@pytest.mark.parametrize(
+    "entry", ["skills: a", "skills: [1]", "skills: [[a]]", "skills: {a: b}"]
+)
+def test_skills_must_be_a_list_of_strings(
+    write_registry: RegistryWriter, home: Path, entry: str
+) -> None:
+    text = (
+        "version: 1\ndefault-account: a\n"
+        f"accounts: {{a: {{agent: claude, dir: /a, {entry}}}}}\n"
+    )
+
+    with pytest.raises(RegistryError, match="/accounts/a/skills"):
+        _ = load_registry(write_registry(text), home)

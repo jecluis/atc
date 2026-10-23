@@ -46,6 +46,10 @@ class ClaudeBackend:
         """``CLAUDE.md`` in the account's directory."""
         return account.dir / "CLAUDE.md"
 
+    def skills_dir(self, account: Account) -> Path:
+        """``skills`` in the account's directory."""
+        return account.dir / "skills"
+
     def render(self, settings: JsonObject) -> str:
         return dumps(settings)
 

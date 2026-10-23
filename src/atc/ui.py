@@ -46,6 +46,16 @@ class Ui:
         """Write one line of plain text on standard output."""
         self.out.print(Text(message), soft_wrap=True)
 
+    def dim(self, message: str) -> None:
+        """
+        Write one dimmed line of plain text on standard output.
+
+        A control character in it, such as the escape that starts a terminal
+        command, is shown as its escape sequence, since the text can name a file
+        that someone else made.
+        """
+        self.out.print(Text(_visible(message), style="dim"), soft_wrap=True)
+
     def json(self, value: JsonValue) -> None:
         """
         Write ``value`` as JSON on standard output.

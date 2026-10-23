@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,18 +13,20 @@ from atc.backends.claude import ClaudeBackend
 from atc.context import BuildContext
 from atc.errors import ConfigError, WriteError
 from atc.jsonval import JsonObject, dumps
-from atc.links import LinkAction, LinkPlan
+from atc.links import LinkAction, LinkPlan, apply_link
+from atc.skills import Catalog
 from atc.state import SyncState
 from atc.sync import (
     ALL_PARTS,
     AccountPlan,
+    Part,
     SettingsPlan,
     apply_account,
     decide_settings,
     plan_account,
 )
 from tests.conftest import ContextBuilder
-from tests.helpers import MINIMAL_REGISTRY, unit
+from tests.helpers import LINKED_REGISTRY, MINIMAL_REGISTRY, registry, skill_files, unit
 
 NEW: JsonObject = {"a": 1}
 CLAUDE = ClaudeBackend(Path("/h"))
@@ -344,12 +347,6 @@ def test_the_link_record_is_private_whatever_the_umask(tmp_path: Path) -> None:
     assert stat.S_IMODE((state.root / "links.json").stat().st_mode) == 0o600
 
 
-LINKED = """\
-    version: 1
-    default-account: personal
-    accounts:
-      personal: {agent: claude, dir: ~/.claude, use-default-agents-md: true}
-"""
 AGENTS = "assets/AGENTS.md"
 
 
@@ -361,11 +358,11 @@ def linked_context(
     files: dict[str, str | JsonObject] = {AGENTS: "shared rules\n"}
     if with_unit:
         files[PERSONAL] = unit(SETTINGS)
-    return build_context(files, LINKED)
+    return build_context(files, LINKED_REGISTRY)
 
 
-def test_all_parts_are_the_settings_and_the_instructions() -> None:
-    assert {"settings", "instructions"} == ALL_PARTS
+def test_all_parts_are_the_settings_the_instructions_and_the_skills() -> None:
+    assert {"settings", "instructions", "skills"} == ALL_PARTS
 
 
 def test_the_plan_links_the_instructions_file(
@@ -447,7 +444,7 @@ def test_planning_only_the_settings_plans_no_link(
     build_context: ContextBuilder, home: Path
 ) -> None:
     (home / ".claude").mkdir()
-    ctx = build_context({PERSONAL: unit(SETTINGS)}, LINKED)
+    ctx = build_context({PERSONAL: unit(SETTINGS)}, LINKED_REGISTRY)
 
     account_plan = plan_account(
         ctx,
@@ -467,7 +464,7 @@ def test_an_instructions_file_that_is_missing_is_a_config_error(
     build_context: ContextBuilder, home: Path
 ) -> None:
     (home / ".claude").mkdir()
-    ctx = build_context({PERSONAL: unit(SETTINGS)}, LINKED)
+    ctx = build_context({PERSONAL: unit(SETTINGS)}, LINKED_REGISTRY)
 
     with pytest.raises(ConfigError, match=r"account 'personal': default-agents-md"):
         _ = plan_for(ctx)
@@ -564,7 +561,7 @@ def test_applying_a_removal_drops_the_record(
 
 @pytest.mark.parametrize(
     ("registry_text", "action"),
-    [(LINKED, "conflict"), (MINIMAL_REGISTRY, "leave")],
+    [(LINKED_REGISTRY, "conflict"), (MINIMAL_REGISTRY, "leave")],
 )
 def test_a_conflict_and_a_leave_keep_their_records(
     build_context: ContextBuilder, home: Path, registry_text: str, action: LinkAction
@@ -611,3 +608,178 @@ def test_a_link_that_fails_is_a_write_error_naming_the_account(
 
     assert not (home / ".claude" / "CLAUDE.md").is_symlink()
     assert SyncState(ctx.dirs.state_dir, "personal").links() == {}
+
+
+SKILLS = skill_files("a", "b", "c")
+
+
+def skills_context(
+    build_context: ContextBuilder, home: Path, *selected: str
+) -> BuildContext:
+    """Set up an account that selects ``selected`` of the skills a, b and c."""
+    (home / ".claude").mkdir()
+    return build_context(
+        {PERSONAL: unit(SETTINGS), **SKILLS},
+        registry(f"skills: [{', '.join(selected)}]"),
+    )
+
+
+def skill_links(account_plan: AccountPlan, home: Path) -> list[LinkPlan]:
+    """Give the link plans for entries in the account's skills directory."""
+    skills = home / ".claude" / "skills"
+    return [link for link in account_plan.links if link.entry.parent == skills]
+
+
+def test_the_plan_links_each_selected_skill(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = skills_context(build_context, home, "b", "a")
+
+    account_plan = plan_for(ctx)
+
+    skills, source = home / ".claude" / "skills", ctx.dirs.conf_d / "skills"
+    assert skill_links(account_plan, home) == [
+        LinkPlan(skills / "b", source / "b", None, "create"),
+        LinkPlan(skills / "a", source / "a", None, "create"),
+    ]
+    assert account_plan.pending
+    assert not account_plan.blocked
+
+
+def test_a_recorded_skill_that_is_no_longer_selected_is_removed(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = skills_context(build_context, home, "a")
+    skills = home / ".claude" / "skills"
+    skills.mkdir()
+    made = ctx.dirs.conf_d / "skills" / "b"
+    (skills / "b").symlink_to(made)
+    SyncState(ctx.dirs.state_dir, "personal").record_links(
+        {str(skills / "b"): str(made)}
+    )
+
+    links = {link.entry.name: link for link in skill_links(plan_for(ctx), home)}
+
+    assert links["a"].action == "create"
+    assert links["b"] == LinkPlan(skills / "b", None, made, "remove")
+
+
+def test_nothing_else_in_the_skills_directory_is_looked_at(
+    build_context: ContextBuilder, home: Path, tmp_path: Path
+) -> None:
+    ctx = skills_context(build_context, home, "a")
+    skills = home / ".claude" / "skills"
+    for name in ("synced", ".trash", "phase-review"):
+        (skills / name).mkdir(parents=True)
+    (skills / "c").symlink_to(tmp_path)
+    _ = (skills / "notes.md").write_text("mine\n")
+    outside, deeper = home / ".claude" / "other", skills / "synced" / "x"
+    SyncState(ctx.dirs.state_dir, "personal").record_links(
+        {str(outside): "/t/o", str(deeper): "/t/x"}
+    )
+
+    account_plan = plan_for(ctx)
+
+    assert [link.entry.name for link in skill_links(account_plan, home)] == ["a"]
+    assert {link.entry for link in account_plan.links} == {
+        home / ".claude" / "CLAUDE.md",
+        skills / "a",
+    }
+
+
+@pytest.mark.parametrize(
+    ("parts", "names"),
+    [
+        (frozenset({"skills"}), ["a"]),
+        (frozenset({"settings", "instructions"}), ["CLAUDE.md"]),
+        (frozenset({"instructions", "skills"}), ["CLAUDE.md", "a"]),
+    ],
+)
+def test_skill_links_are_planned_only_with_the_skills_part(
+    build_context: ContextBuilder, home: Path, parts: frozenset[Part], names: list[str]
+) -> None:
+    ctx = skills_context(build_context, home, "a")
+
+    account_plan = plan_account(
+        ctx,
+        ctx.registry.account("personal"),
+        take_over=False,
+        discard_live=False,
+        lax=False,
+        parts=parts,
+    )
+
+    assert [link.entry.name for link in account_plan.links] == names
+
+
+def test_a_catalog_that_is_given_is_the_one_used(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = skills_context(build_context, home, "a")
+
+    with pytest.raises(ConfigError, match=r"skills: 'a': no such skill"):
+        _ = plan_account(
+            ctx,
+            ctx.registry.account("personal"),
+            take_over=False,
+            discard_live=False,
+            lax=False,
+            parts=frozenset({"skills"}),
+            catalog=Catalog((), ()),
+        )
+
+
+def test_a_skill_entry_that_cannot_be_read_is_a_config_error(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = skills_context(build_context, home, "a")
+    _ = (home / ".claude" / "skills").write_text("not a directory\n")
+
+    with pytest.raises(ConfigError, match=r"skills/a: cannot be read"):
+        _ = plan_for(ctx)
+
+
+def link_b_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``apply_link`` work for every link but the one named ``b``."""
+
+    def refuse_b(plan: LinkPlan, backups_dir: Path, now: datetime) -> Path | None:
+        if plan.entry.name == "b":
+            raise PermissionError(13, "Permission denied", str(plan.entry))
+        return apply_link(plan, backups_dir, now)
+
+    monkeypatch.setattr("atc.sync.apply_link", refuse_b)
+
+
+def test_links_made_before_a_failure_are_still_recorded(
+    build_context: ContextBuilder, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = skills_context(build_context, home, "a", "b")
+    skills, source = home / ".claude" / "skills", ctx.dirs.conf_d / "skills"
+    link_b_fails(monkeypatch)
+
+    with pytest.raises(WriteError, match=r"account 'personal'.*Permission denied"):
+        apply_account(plan_for(ctx), ctx, NOW)
+
+    assert (skills / "a").is_symlink()
+    assert not (skills / "b").is_symlink()
+    state = SyncState(ctx.dirs.state_dir, "personal")
+    assert state.links() == {str(skills / "a"): str(source / "a")}
+
+
+def test_a_record_that_cannot_be_written_does_not_hide_the_failure_before_it(
+    build_context: ContextBuilder, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = skills_context(build_context, home, "a", "b")
+    link_b_fails(monkeypatch)
+
+    def disk_full(_state: SyncState, _links: Mapping[str, str]) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(SyncState, "record_links", disk_full)
+
+    with pytest.raises(WriteError, match=r"Permission denied") as raised:
+        apply_account(plan_for(ctx), ctx, NOW)
+
+    cause = raised.value.__cause__
+    assert cause is not None
+    assert any("No space left on device" in note for note in cause.__notes__)

@@ -42,6 +42,7 @@ class _AccountModel(_Model):
     unit: str | None = None
     use_default_agents_md: bool = False
     agents_md_file: str | None = None
+    skills: list[str] = Field(default_factory=list)
     vars: dict[str, str] = Field(default_factory=dict)
 
 
@@ -87,6 +88,9 @@ class Account:
     default: a ``Path`` when the registry gave a filesystem path, absolute and
     normalized, and a ``str`` when it gave an asset reference, as written.
     ``None`` means the registry set none.
+
+    ``skills`` are the references, as written, of the skills to link into the
+    account, in the registry's order.
     """
 
     name: str
@@ -96,6 +100,7 @@ class Account:
     vars: Mapping[str, str]
     use_default_agents_md: bool = False
     agents_md_file: Path | str | None = None
+    skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +351,7 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
             vars=dict(entry.vars),
             use_default_agents_md=entry.use_default_agents_md,
             agents_md_file=agents_md_file,
+            skills=tuple(entry.skills),
         )
 
     _check_account(model.default_account, accounts, "/default-account", origin)

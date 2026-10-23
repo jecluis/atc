@@ -10,6 +10,7 @@ from atc.links import wanted_instructions
 from atc.refs import locate
 from atc.resolve import resolve
 from atc.rules import dead_rules
+from atc.skills import discover_skills, wanted_skill_links
 from atc.sources import Sources
 
 
@@ -59,7 +60,9 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     """
     Check every unit in the sources, then every account's and project's layer.
 
-    Each account's instructions file, if it asks for one, must exist. Building an
+    Each account's instructions file, if it asks for one, must exist, and so must
+    each skill it selects, with no two sharing a name. Skills that are skipped,
+    or whose front matter looks wrong, are reported as warnings. Building an
     account layer finds the account's unit, which must exist, and
     checks each unit it merges against the policy for the layer. A project's
     layer is built once for each account the project allows, or for every
@@ -73,10 +76,16 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     errors = dict.fromkeys(checked.errors)
     warnings = dict.fromkeys(checked.warnings)
     warnings.update(dict.fromkeys(ctx.registry.warnings))
+    catalog = discover_skills(ctx.sources)
+    warnings.update(dict.fromkeys(catalog.warnings))
     account_layers: dict[str, Layer] = {}
     for account in ctx.registry.accounts.values():
         try:
             _ = wanted_instructions(ctx, account)
+        except ConfigError as exc:
+            errors[str(exc)] = None
+        try:
+            _ = wanted_skill_links(ctx, account, catalog)
         except ConfigError as exc:
             errors[str(exc)] = None
         try:

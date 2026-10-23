@@ -16,7 +16,7 @@ from atc.links import (
     wanted_instructions,
 )
 from tests.conftest import ContextBuilder
-from tests.helpers import MINIMAL_REGISTRY
+from tests.helpers import MINIMAL_REGISTRY, registry
 
 NOW = datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC)
 WANTED = Path("/atc/assets/AGENTS.md")
@@ -198,24 +198,35 @@ def test_deciding_writes_nothing(entry: Path, target: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("action", "pending", "blocked"),
+    ("action", "pending", "blocked", "keeps_record", "owned"),
     [
-        ("none", False, False),
-        ("create", True, False),
-        ("repoint", True, False),
-        ("remove", True, False),
-        ("replace-link", True, False),
-        ("replace-file", True, False),
-        ("conflict", False, True),
-        ("leave", False, False),
+        ("none", False, False, False, True),
+        ("create", True, False, False, False),
+        ("repoint", True, False, False, True),
+        ("remove", True, False, False, True),
+        ("replace-link", True, False, False, False),
+        ("replace-file", True, False, False, False),
+        ("conflict", False, True, True, False),
+        ("leave", False, False, True, False),
     ],
 )
-def test_pending_and_blocked(
-    entry: Path, action: LinkAction, *, pending: bool, blocked: bool
+def test_what_a_plan_says_about_its_entry(
+    entry: Path,
+    action: LinkAction,
+    *,
+    pending: bool,
+    blocked: bool,
+    keeps_record: bool,
+    owned: bool,
 ) -> None:
     plan = LinkPlan(entry, WANTED, RECORDED, action)
 
-    assert (plan.pending, plan.blocked) == (pending, blocked)
+    assert (plan.pending, plan.blocked, plan.keeps_record, plan.owned) == (
+        pending,
+        blocked,
+        keeps_record,
+        owned,
+    )
 
 
 @pytest.mark.parametrize(
@@ -506,21 +517,6 @@ def test_a_plan_that_went_stale_cannot_replace_a_link_that_changed(
 
 OTHER = {"assets/other.md": "x\n"}
 """A source that has no AGENTS.md."""
-
-PERSONAL_REGISTRY = (
-    "version: 1\n"
-    "default-account: personal\n"
-    "accounts:\n"
-    "  personal:\n"
-    "    agent: claude\n"
-    "    dir: ~/.claude\n"
-)
-
-
-def registry(*account_lines: str, top: str = "") -> str:
-    """Write a registry with one account, with ``account_lines`` besides its dir."""
-    lines = "".join(f"    {line}\n" for line in account_lines)
-    return top + PERSONAL_REGISTRY + lines
 
 
 def test_agents_md_file_path_wins_over_the_flag(

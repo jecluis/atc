@@ -41,6 +41,10 @@ class Backend(Protocol):
         """Return the file ``account``'s instructions are read from."""
         ...
 
+    def skills_dir(self, account: Account) -> Path:
+        """Return the directory ``account``'s skills are read from."""
+        ...
+
     def render(self, settings: JsonObject) -> str:
         """Return ``settings`` as the text of that file."""
         ...

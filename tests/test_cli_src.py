@@ -51,7 +51,7 @@ def test_src_ls_lists_every_source(
     assert "bravo" in out
 
 
-def test_src_ls_counts_units_and_assets(
+def test_src_ls_counts_units_assets_and_skills(
     dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _ = make_source(
@@ -63,11 +63,25 @@ def test_src_ls_counts_units_and_assets(
             "assets/hooks/two.sh": "x",
             "assets/three.txt": "x",
             "skills/review/SKILL.md": "x",
+            "skills/review/extra.md": "x",
+            "skills/notes/SKILL.md": "x",
+            "skills/draft/notes.md": "x",
+            "skills/Bad/SKILL.md": "x",
         },
     )
-    _, path, layout, units, assets = row_of(run_ls(capsys), "personal")[:5]
+    _, path, layout, units, assets, skills = row_of(run_ls(capsys), "personal")[:6]
     assert path == str(dirs.conf_d / "personal")
-    assert (layout, units, assets) == ("multi", "2", "3")
+    assert (layout, units, assets, skills) == ("multi", "2", "3", "2")
+
+
+def test_src_ls_warns_about_a_skill_it_skipped(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d, {"skills/Bad/SKILL.md": "x"})
+
+    assert main(["src", "ls"]) == 0
+
+    assert "'Bad' is not a valid skill name" in capsys.readouterr().err
 
 
 def test_src_ls_shows_a_source_without_a_name(
@@ -84,7 +98,7 @@ def test_src_ls_shows_branch_and_commit_of_git_clones(
     source = git_repo(make_source(dirs.conf_d / "personal", {"conf/a.json": unit()}))
     commit = run_git(["rev-parse", "--short", "HEAD"], cwd=source)
     row = row_of(run_ls(capsys), "personal")
-    assert row[5:7] == ["main", commit]
+    assert row[6:8] == ["main", commit]
 
 
 def test_src_ls_marks_uncommitted_changes(
@@ -130,14 +144,14 @@ def test_src_ls_shows_how_far_a_clone_is_from_its_upstream(
     _ = run_git(["fetch", "-q"], cwd=source)
     for message in ("one", "two"):
         _ = run_git(["commit", "-q", "--allow-empty", "-m", message], cwd=source)
-    assert row_of(run_ls(capsys), "personal")[7:] == ["2/1"]
+    assert row_of(run_ls(capsys), "personal")[8:] == ["2/1"]
 
 
 def test_src_ls_leaves_ahead_and_behind_blank_without_an_upstream(
     dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _ = git_repo(make_source(dirs.conf_d / "personal", {"conf/a.json": unit()}))
-    assert len(row_of(run_ls(capsys), "personal")) == 7
+    assert len(row_of(run_ls(capsys), "personal")) == 8
 
 
 def test_src_ls_reports_a_trust_violation_as_a_config_error(

@@ -20,6 +20,7 @@ from atc.cli.options import (
 from atc.git import git_or_none
 from atc.pull import pull
 from atc.registry import REGISTRY_FILE
+from atc.skills import Catalog, discover_skills
 from atc.sources import SOURCE_DIRS, Source, Sources
 from atc.ui import Ui
 from atc.validate import Validation, validate_config, validate_sources
@@ -36,16 +37,17 @@ def ls(conf_d: Path | None) -> None:
     """
     List the config sources.
 
-    Shows each source's name, path and layout, how many units and asset files it
-    has, and, for git clones, the branch, the commit, whether conf, assets or
-    skills have uncommitted changes, and how many commits it is ahead of and
-    behind its upstream at the last fetch.
+    Shows each source's name, path and layout, how many units, asset files and
+    skills it has, and, for git clones, the branch, the commit, whether conf,
+    assets or skills have uncommitted changes, and how many commits it is ahead
+    of and behind its upstream at the last fetch.
     """
     found = load_sources(conf_d)
+    catalog = discover_skills(found)
     ui = Ui.default()
-    for warning in found.warnings:
+    for warning in (*found.warnings, *catalog.warnings):
         ui.warning(warning)
-    ui.table(_sources_table(found))
+    ui.table(_sources_table(found, catalog))
 
 
 @src.command(cls=rich_click.RichCommand, name="check")
@@ -60,8 +62,9 @@ def check(conf_d: Path | None) -> None:
     values of conflicting types. When the machine registry (machine.yaml in
     atc's configuration directory) exists, it also builds the settings of every
     account, which finds accounts whose unit is missing and units that set a
-    key their layer does not allow. Prints a summary line when all is well and
-    exits with status 1 otherwise.
+    key their layer does not allow. It also finds accounts that select a skill,
+    or ask for an instructions file, that does not exist. Prints a summary line
+    when all is well and exits with status 1 otherwise.
     """
     ui = Ui.default()
     found, validate = _checker(conf_d, ui)
@@ -148,7 +151,7 @@ class _Clone:
     ahead_behind: str
 
 
-def _sources_table(found: Sources) -> Table:
+def _sources_table(found: Sources, catalog: Catalog) -> Table:
     table = Table(box=box.SIMPLE_HEAD, pad_edge=False, padding=(0, 1, 0, 0))
     table.add_column("Name", no_wrap=True)
     # In a narrow terminal the path folds, down to a width that is still
@@ -157,6 +160,7 @@ def _sources_table(found: Sources) -> Table:
     table.add_column("Layout", no_wrap=True)
     table.add_column("Units", justify="right", no_wrap=True)
     table.add_column("Assets", justify="right", no_wrap=True)
+    table.add_column("Skills", justify="right", no_wrap=True)
     table.add_column("Branch", no_wrap=True)
     table.add_column("Commit", no_wrap=True)
     table.add_column("Changes", no_wrap=True)
@@ -169,6 +173,7 @@ def _sources_table(found: Sources) -> Table:
             Text(found.layout),
             Text(str(_count(source.conf, "*.json"))),
             Text(str(_count(source.assets, "*"))),
+            Text(str(sum(1 for skill in catalog.skills if skill.source == source))),
             Text(clone.branch if clone else ""),
             Text(clone.commit if clone else ""),
             Text("dirty", style="yellow") if clone and clone.dirty else Text(),

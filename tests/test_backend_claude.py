@@ -121,3 +121,15 @@ def test_the_instructions_file_lives_in_the_account_directory(home: Path) -> Non
     assert backend.instructions_file(registry.account("bravo")) == (
         home / ".config" / "bravo" / "claude" / "CLAUDE.md"
     )
+
+
+def test_skills_live_in_a_directory_of_the_account(home: Path) -> None:
+    registry = load(home)
+    backend = ClaudeBackend(home)
+
+    assert (
+        backend.skills_dir(registry.account("personal")) == home / ".claude" / "skills"
+    )
+    assert backend.skills_dir(registry.account("bravo")) == (
+        home / ".config" / "bravo" / "claude" / "skills"
+    )

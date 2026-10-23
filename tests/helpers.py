@@ -106,3 +106,42 @@ A registry with one account, `personal`, whose unit is `accounts/personal.json`.
 
 It is also the default account.
 """
+
+
+_PERSONAL_ACCOUNT = (
+    "version: 1\n"
+    "default-account: personal\n"
+    "accounts:\n"
+    "  personal:\n"
+    "    agent: claude\n"
+    "    dir: ~/.claude\n"
+)
+
+
+def registry(*account_lines: str, top: str = "") -> str:
+    """
+    Write a registry with one account, `personal`, in `~/.claude`.
+
+    ``account_lines`` are further keys of the account, such as ``skills: [a]``,
+    and ``top`` is put before the ``version`` line.
+    """
+    lines = "".join(f"    {line}\n" for line in account_lines)
+    return top + _PERSONAL_ACCOUNT + lines
+
+
+def skill_md(name: str | None = None, description: str | None = None) -> str:
+    """Write a SKILL.md with front matter that sets whichever fields are given."""
+    fields = {"name": name, "description": description}
+    shown = "".join(f"{key}: {value}\n" for key, value in fields.items() if value)
+    return f"---\n{shown}---\n# Body\n"
+
+
+LINKED_REGISTRY = registry("use-default-agents-md: true")
+"""A registry whose `personal` account links the default instructions file."""
+
+
+def skill_files(*names: str) -> dict[str, str | JsonObject]:
+    """Write a skill for each of ``names``, as the files of a source."""
+    return {
+        f"skills/{name}/SKILL.md": skill_md(name, f"The {name} skill") for name in names
+    }

@@ -299,3 +299,31 @@ def test_a_qualified_asset_lookup_is_an_error_in_the_single_layout(
 
     with pytest.raises(PathError, match="@"):
         _ = resolve_registry(discover(conf_d, uid=UID), "@bravo/AGENTS.md", "asset")
+
+
+def test_a_skill_is_a_directory_with_skill_md_under_skills(tmp_path: Path) -> None:
+    conf_d = make_source(
+        tmp_path / "conf.d",
+        {
+            "skills/review/SKILL.md": "x\n",
+            "skills/draft/notes.md": "x\n",
+            "conf/review/SKILL.md": "x\n",
+        },
+    )
+    sources = discover(conf_d, uid=UID)
+
+    located = resolve_registry(sources, "review", "skill")
+
+    assert located is not None
+    assert located.path == conf_d / "skills" / "review"
+    assert located.display == "review"
+    assert resolve_registry(sources, "draft", "skill") is None
+    assert resolve_registry(sources, "SKILL.md", "skill") is None
+
+
+def test_a_malformed_qualified_skill_reference_is_refused(tmp_path: Path) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / "bravo", {"skills/a/SKILL.md": "x\n"})
+
+    with pytest.raises(PathError, match=r"@name/<skill>"):
+        _ = resolve_registry(discover(conf_d, uid=UID), "@bravo", "skill")

@@ -137,3 +137,22 @@ def test_diff_shows_control_characters_as_escapes(
     terminal_ui().diff(["+a\x1b[2Jb\x07"])
     out = ANSI.sub("", capsys.readouterr().out)
     assert out == "+a\\x1b[2Jb\\x07\n"
+
+
+def test_dim_is_plain_text_on_stdout_when_it_is_not_a_terminal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    Ui.default().dim("  notes -> [bold]x[/bold]")
+    captured = capsys.readouterr()
+    assert captured.out == "  notes -> [bold]x[/bold]\n"
+    assert captured.err == ""
+
+
+def test_dim_is_dimmed_on_a_terminal_and_shows_control_characters(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    terminal_ui().dim("a\x1b[2Jb")
+    out = capsys.readouterr().out
+    assert "\x1b[2m" in out
+    assert ANSI.sub("", out) == "a\\x1b[2Jb\n"

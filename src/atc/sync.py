@@ -1,6 +1,6 @@
 """Bringing an account's settings and links in line with the configuration."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,12 +15,16 @@ from atc.layers import build_account_layer
 from atc.links import LinkPlan, apply_link, decide_link, wanted_instructions
 from atc.registry import Account
 from atc.rules import RuleWarning, dead_rules
+from atc.skills import Catalog, discover_skills, wanted_skill_links
 from atc.state import SyncState
 
-type Part = Literal["settings", "instructions"]
-"""What ``sync`` brings in line: the ``settings``, or the ``instructions`` link."""
+type Part = Literal["settings", "instructions", "skills"]
+"""
+What ``sync`` brings in line: the ``settings``, the ``instructions`` link, or
+the links of the selected ``skills``.
+"""
 
-ALL_PARTS: frozenset[Part] = frozenset({"settings", "instructions"})
+ALL_PARTS: frozenset[Part] = frozenset({"settings", "instructions", "skills"})
 """Every part, which is what ``sync`` handles unless told otherwise."""
 
 type Situation = Literal["missing", "current", "never-synced", "unchanged", "edited"]
@@ -138,19 +142,23 @@ def plan_account(
     discard_live: bool,
     lax: bool,
     parts: frozenset[Part] = ALL_PARTS,
+    catalog: Catalog | None = None,
 ) -> AccountPlan:
     """
     Work out what ``sync`` does for ``account``, changing nothing.
 
     Only the ``parts`` are planned: nothing is read, built or checked for the
     others. ``take_over`` also allows replacing a link or a file atc did not
-    make.
+    make. The skills are looked for in ``catalog``, or in the sources when it is
+    ``None``.
 
     Raises:
         ConfigError: the account's directory does not exist, a live file cannot
             be read, the account's settings cannot be built, as
-            :func:`atc.layers.build_account_layer` raises, or a file to link to
-            does not exist, as :func:`atc.links.wanted_instructions` raises.
+            :func:`atc.layers.build_account_layer` raises, a file to link to
+            does not exist, as :func:`atc.links.wanted_instructions` raises, or
+            a selected skill does not, as :func:`atc.skills.wanted_skill_links`
+            raises.
 
     """
     if not account.dir.is_dir():
@@ -176,26 +184,31 @@ def plan_account(
         )
         rule_warnings = dead_rules([layer])
         warnings = layer.warnings
-    links: tuple[LinkPlan, ...] = ()
+    links: list[LinkPlan] = []
+    recorded = state.links()
     if "instructions" in parts:
         entry = backend.instructions_file(account)
-        recorded = state.links().get(str(entry))
-        try:
-            links = (
-                decide_link(
-                    entry,
-                    wanted_instructions(ctx, account),
-                    None if recorded is None else Path(recorded),
-                    take_over=take_over,
-                ),
+        links.append(
+            _plan_link(
+                entry, wanted_instructions(ctx, account), recorded, take_over=take_over
             )
-        except OSError as exc:
-            raise ConfigError(f"{entry}: cannot be read: {exc}") from exc
+        )
+    if "skills" in parts:
+        links.extend(
+            _plan_skills(
+                ctx,
+                account,
+                backend.skills_dir(account),
+                catalog if catalog is not None else discover_skills(ctx.sources),
+                recorded,
+                take_over=take_over,
+            )
+        )
     return AccountPlan(
         account=account,
         settings_path=path,
         settings=settings,
-        links=links,
+        links=tuple(links),
         rule_warnings=rule_warnings,
         warnings=warnings,
     )
@@ -267,23 +280,91 @@ def _apply_settings(
     state.record_settings(settings.new)
 
 
+def _plan_link(
+    entry: Path, wanted: Path | None, recorded: Mapping[str, str], *, take_over: bool
+) -> LinkPlan:
+    """Decide what happens to ``entry``, given the links atc has recorded."""
+    made = recorded.get(str(entry))
+    try:
+        return decide_link(
+            entry, wanted, None if made is None else Path(made), take_over=take_over
+        )
+    except OSError as exc:
+        raise ConfigError(f"{entry}: cannot be read: {exc}") from exc
+
+
+def _plan_skills(
+    ctx: BuildContext,
+    account: Account,
+    directory: Path,
+    catalog: Catalog,
+    recorded: Mapping[str, str],
+    *,
+    take_over: bool,
+) -> list[LinkPlan]:
+    """
+    Plan a link for each selected skill, and the removal of those no longer wanted.
+
+    Of the other entries in ``directory``, only the links atc recorded are looked
+    at. The rest is not atc's.
+
+    Raises:
+        ConfigError: ``directory`` is a symbolic link, which atc does not follow,
+            or a selected skill is missing or ambiguous.
+
+    """
+    if directory.is_symlink():
+        message = (
+            f"account '{account.name}': {directory} is a symbolic link, and atc "
+            "makes skill links only in a directory; replace the link with a "
+            "directory"
+        )
+        raise ConfigError(message)
+    wanted = wanted_skill_links(ctx, account, catalog)
+    plans = [
+        _plan_link(entry, target, recorded, take_over=take_over)
+        for entry, target in wanted.items()
+    ]
+    plans.extend(
+        _plan_link(entry, None, recorded, take_over=take_over)
+        for entry in map(Path, recorded)
+        if entry.parent == directory and entry not in wanted
+    )
+    return plans
+
+
 def _apply_links(links: tuple[LinkPlan, ...], state: SyncState, now: datetime) -> None:
     """Change the link entries, and keep the record of the links atc made."""
     recorded = state.links()
     updated = dict(recorded)
     try:
         for link in links:
-            if link.action in {"conflict", "leave"}:
+            if link.keeps_record:
                 continue
             owned = apply_link(link, state.backups_dir, now)
             if owned is None:
                 _ = updated.pop(str(link.entry), None)
             else:
                 updated[str(link.entry)] = str(owned)
-    finally:
-        # Also when a later entry failed, so that a link made already is known.
-        if updated != recorded:
-            state.record_links(updated)
+    except BaseException as failure:
+        # The links made before the failure are recorded all the same, but not
+        # being able to record them must not hide what stopped the rest.
+        try:
+            _record(state, recorded, updated)
+        except OSError as unrecorded:
+            failure.add_note(
+                f"the links made so far could not be recorded: {unrecorded}"
+            )
+        raise
+    _record(state, recorded, updated)
+
+
+def _record(
+    state: SyncState, recorded: Mapping[str, str], updated: Mapping[str, str]
+) -> None:
+    """Write the record of links when it changed."""
+    if updated != recorded:
+        state.record_links(updated)
 
 
 def _parsed(text: str, parse: Callable[[str], JsonObject]) -> JsonObject | None:

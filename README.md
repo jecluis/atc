@@ -8,7 +8,7 @@ shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
 Today the tool implements `atc sync`, `atc show account`, `atc show project`,
-`atc src ls`, `atc src check` and `atc src pull`.
+`atc skills ls`, `atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -83,11 +83,13 @@ accounts:
     agent: claude
     dir: ~/.claude
     use-default-agents-md: true
+    skills: [git-commits, rust-2024]
   work:
     agent: claude
     dir: ~/.config/work/claude
     unit: "@work/accounts/work.json"
     agents-md-file: "@work/AGENTS.md"
+    skills: [git-commits, "@work/review"]
     vars:
       scratch: /mnt/scratch/work
 projects:
@@ -110,6 +112,7 @@ projects:
 | `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
 | `accounts.<name>.use-default-agents-md` | no | `true` links `default-agents-md` as the account's instructions file (see `atc sync`). Defaults to `false`. |
 | `accounts.<name>.agents-md-file` | no | The file to link as the account's instructions file instead of the default: an absolute or `~/` path, or an asset reference (see Units). `null` means not set. |
+| `accounts.<name>.skills` | no | The skills to link into the account, as skill references (see Skills). Defaults to none. |
 | `accounts.<name>.vars` | no | Variables for this account's units, as `{{account.vars.<name>}}`. |
 | `projects.<name>.repo` | yes | A checkout of the project's repository. |
 | `projects.<name>.account` | no | The account the project uses by default. Defaults to `default-account`. |
@@ -138,11 +141,38 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
   `dir`. Anything else is an asset reference.
 - An account that sets both `agents-md-file` and `use-default-agents-md: true`
   gets a warning, since the flag then has no effect.
+- `skills` is a list of strings. Whether each names a skill that exists is
+  checked by `atc src check`, `atc sync` and `atc skills ls`, not when the
+  registry is read.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or
   a symbolic link in the path makes no difference.
 - Variable names are lowercase letters, digits and `_`, starting with a letter,
   so they can be written in a reference. Values are strings and must not contain
   `{{`.
+
+## Skills
+
+A **skill** is a directory that sits directly under a source's `skills/` and
+contains a `SKILL.md`. Directories with no `SKILL.md`, and anything deeper, are
+not skills.
+
+- **Name:** the directory's name, which must be lowercase letters, digits, `_`
+  and `-`, starting with a letter or a digit. A directory with another name is
+  skipped, with a warning.
+- **Description:** the `description` in the YAML front matter of `SKILL.md`,
+  which is the text between a first line of `---` and the next `---` line. It
+  is only shown by `atc skills ls`. atc warns when the front matter's `name`
+  differs from the directory's name, or when the front matter cannot be read as
+  YAML. The skill counts either way.
+- **Selection:** an account's `skills` in the registry lists the skills to link
+  into it. Each account chooses its own. An entry is the skill's name, such as
+  `git-commits`, or `@name/git-commits` for the source called `name`. Without
+  `@`, exactly one source must have the skill, as for asset references (see
+  Units). It is one directory name, with no `/`. Two selected skills with the
+  same name, from different sources, are an error.
+- **Linking:** `atc sync` links each selected skill as `skills/<name>` in the
+  account's directory, as described under `atc sync`. `atc skills ls` shows
+  what each account has.
 
 ## Units
 
@@ -274,7 +304,7 @@ Run `atc --help`, or `--help` after any command, for the options.
 Lists the config sources as a table, one row per source:
 
 - its name (`-` for the single layout), path and layout
-- how many units (`*.json` files under `conf/`) and asset files it has
+- how many units (`*.json` files under `conf/`), asset files and skills it has
 - for git clones: the branch, the short commit, `dirty` when `conf/`,
   `assets/` or `skills/` has uncommitted changes, and how many commits the
   clone is ahead of and behind its upstream as of the last fetch (`ahead/behind`,
@@ -307,6 +337,9 @@ reports:
   same for a project whose registry entry names a `unit`
 - an account that asks for an instructions file (`use-default-agents-md` or
   `agents-md-file`) that does not exist, or that several sources have
+- an account that selects a skill that does not exist or that several sources
+  have, or two skills of one name, so a commit that removes a skill an account
+  uses is not deployed by `atc src pull`
 - a unit with a reference that cannot be expanded for an account, or for a
   project and one of its accounts, such as an unknown variable
 - a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
@@ -315,7 +348,8 @@ reports:
   is refused in a project's
 
 It also warns about permission rules that can never apply (see Rule warnings),
-which never fails the check. Without a registry, only the units are checked,
+and about skills that were skipped or whose front matter looks wrong (see
+Skills). Warnings never fail the check. Without a registry, only the units are checked,
 with a warning saying so.
 
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
@@ -380,6 +414,34 @@ so. The exit status is `1` if any source failed or was refused, and `0`
 otherwise. An unknown `NAME` is an error that lists the sources there are, and
 nothing is pulled.
 
+### `atc skills ls [ACCOUNT]... [--conf-d DIR]`
+
+Lists the skills in the config sources, and where each account has them. Each
+row is a skill: its name, its source (`-` for the single layout) and the start
+of its description, cut to 60 characters. There is then one column for each
+`ACCOUNT`, or for every account:
+
+| Column shows | Meaning |
+| --- | --- |
+| `linked` | The account selects the skill, and its skills directory links it. |
+| `selected` | The account selects the skill, and `atc sync` has not linked it yet, or would re-point its link. |
+| `conflict` | The account selects the skill, but something atc did not make is where the link is to go. |
+| blank | The account does not select the skill. |
+
+Below the table, each account's skills directory is searched for the entries
+atc does not manage: Claude Code's own `synced/` and `.trash/`, skills made by
+hand, links made by other tools, and whatever is in a conflict. They are listed
+dimmed, a directory with a `/` after its name and a link with its target. The
+accounts' directories must exist. Nothing is changed.
+
+The table goes to standard output, warnings and errors to standard error. It
+exits `1` when an account cannot be planned, for example because it selects a
+skill that does not exist.
+
+| Option | Effect |
+| --- | --- |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
+
 ### `atc show account NAME [--conf-d DIR] [--lax]`
 
 Builds the settings of the account `NAME`, one of the accounts in the machine
@@ -429,12 +491,14 @@ output and the exit status are the same as without the check.
 
 ### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 
-Brings two things in the directory of each account named, or of every account,
+Brings three things in the directory of each account named, or of every account,
 in line with the configuration:
 
 - `settings.json`, written from the settings atc builds for the account (see
   `atc show account`)
 - the instructions file (`CLAUDE.md`), as a symbolic link
+- the skills the account selects, each as a symbolic link in `skills/` (see
+  Skills)
 
 The directory must exist already, because creating an account means logging in,
 which atc does not do. Every account is planned before any is changed, so an
@@ -471,8 +535,8 @@ one of:
 - `never synced and differs (--take-over writes it)`
 - `edited outside atc (--discard-live overwrites it)`
 
-Each link that changes, or is in conflict, gets one more line, for the file's
-name: `ACCOUNT: CLAUDE.md: BEFORE → AFTER STATUS`. `BEFORE` is `(none)`, the target
+Each link that changes, or is in conflict, gets one more line, for the entry's
+name: `ACCOUNT: CLAUDE.md: BEFORE → AFTER STATUS`, or `ACCOUNT: <skill>: …`. `BEFORE` is `(none)`, the target
 atc made, or a note that something else is there, and `AFTER` is the new target
 or `(none)`. The status is `(would change)` with `--check` or `--diff`,
 `(changed)`, or `(conflict; --take-over replaces a file or link, never a
@@ -480,7 +544,8 @@ directory)`.
 
 An account whose settings are left alone also gets a unified diff. Warnings
 about the account's settings, among them permission rules that can never apply
-(see Rule warnings), go to standard error.
+(see Rule warnings), go to standard error, and so do warnings about skills that
+were skipped or whose front matter looks wrong (see Skills), once each.
 
 **Every write** first copies the live file, when there is one, to
 `<state_dir>/sync/ACCOUNT/backups/<UTC time>-settings.json`, such as
@@ -528,21 +593,39 @@ that `--take-over` replaces is first copied to
 `<state_dir>/sync/ACCOUNT/backups/<UTC time>-CLAUDE.md`, and the last ten
 backups of each file name are kept.
 
+#### Skills
+
+Each skill an account selects is linked as `<name>` in the `skills` directory of
+the account's directory, to the skill's directory in its source, with the same
+rules as for the instructions file. The `skills` directory is created if it is
+missing. If it is a symbolic link, atc refuses the account with an error rather
+than make links wherever it leads: replace it with a directory. A skill that is
+no longer selected loses the link atc made, and a link that atc made is
+re-pointed when its skill moves.
+
+The account's `skills` directory holds entries that atc did not make: Claude
+Code's own `synced/` and `.trash/`, directories made by hand, and links made by
+tools such as an `install-skills.sh` into a working checkout. atc looks only at
+the entry for each selected skill, and at the links in `links.json`. Everything
+else is never touched. When something it did not make is where a selected
+skill's link is to go, it is a conflict: `--take-over` replaces a link, or backs
+a file up and replaces it, but a directory is never replaced.
+
 #### Options
 
 | Option | Effect |
 | --- | --- |
 | `--check` | Write nothing. Exit `3` if anything would be written, or was left alone. |
 | `--diff` | Write nothing, and show the settings diff of each account that would change, and each link that would change. |
-| `--take-over` | Write settings that were never synced but differ from new, and replace a link or a file that is in the way of the instructions file link. |
+| `--take-over` | Write settings that were never synced but differ from new, and replace a link or a file that is in the way of the instructions file link or of a skill's link. |
 | `--discard-live` | Write settings that were edited outside atc, discarding the edit. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--check` or `--diff`: `sync` writes only what the default sources build. |
 
 The exit status is `3` when an account was left alone (never synced and
-differing, edited outside atc, or an instructions file in conflict) and with
-`--check` when anything would be written, `1` when an account cannot be built,
-planned or written, and `0` otherwise.
+differing, edited outside atc, or an instructions file or a skill link in
+conflict) and with `--check` when anything would be written, `1` when an
+account cannot be built, planned or written, and `0` otherwise.
 
 ### Rule warnings
 

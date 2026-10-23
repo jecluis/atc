@@ -49,9 +49,19 @@ class LinkPlan:
     action: LinkAction
 
     @property
+    def keeps_record(self) -> bool:
+        """Whether the entry is left as it is, so atc's record of it stays as it was."""
+        return self.action in {"leave", "conflict"}
+
+    @property
+    def owned(self) -> bool:
+        """Whether the entry is a link atc made, or one it would adopt: it owns it."""
+        return self.action in {"none", "repoint", "remove"}
+
+    @property
     def pending(self) -> bool:
         """Whether applying the plan changes the entry."""
-        return self.action not in {"none", "leave", "conflict"}
+        return self.action != "none" and not self.keeps_record
 
     @property
     def blocked(self) -> bool:

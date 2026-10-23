@@ -9,9 +9,14 @@ from atc.errors import PathError
 from atc.sources import Source, Sources
 
 UNIT_SUFFIX = ".json"
+SKILL_FILE = "SKILL.md"
+"""The file that makes a directory under ``skills`` a skill."""
 
-type RefKind = Literal["unit", "asset"]
-"""What a reference names: a unit under ``conf``, or a file under ``assets``."""
+type RefKind = Literal["unit", "asset", "skill"]
+"""
+What a reference names: a unit under ``conf``, a file under ``assets``, or a
+skill, a directory under ``skills`` that holds a ``SKILL.md``.
+"""
 
 _QUALIFIED = re.compile(r"@(?P<name>[^/]+)/(?P<rel>.+)", re.DOTALL)
 
@@ -70,30 +75,32 @@ def resolve_registry(
     sources: Sources, text: str, kind: RefKind = "unit"
 ) -> Located | None:
     """
-    Find the unit or asset that ``text``, written outside any unit, refers to.
+    Find the unit, asset or skill that ``text``, written outside any unit, names.
 
-    A unit is a ``.json`` file under a source's ``conf``, and an asset is any
-    file under its ``assets``, as ``kind`` says. ``@name/path`` names the
-    source. Without ``@``, exactly one source may contain the file. ``None``
-    means no source does, which the caller may treat as an error or not.
+    A unit is a ``.json`` file under a source's ``conf``, an asset is any file
+    under its ``assets``, and a skill is a directory under its ``skills`` that
+    holds a ``SKILL.md``, as ``kind`` says. ``@name/path`` names the source.
+    Without ``@``, exactly one source may contain it. ``None`` means no source
+    does, which the caller may treat as an error or not.
 
     Raises:
         PathError: ``text`` is malformed or does not satisfy :func:`locate`
-            (for an asset, apart from the extension), a qualified reference
-            names no existing file, or several sources contain the file.
+            (for an asset, apart from the extension; a skill is one directory
+            name), a qualified reference names nothing that exists, or several
+            sources contain it.
 
     """
     qualified = _qualified(sources, text, kind)
     if qualified is not None:
         found = _locate(*qualified, text, kind)
-        if not found.path.is_file():
+        if not _exists(found, kind):
             raise PathError(f"'{text}': no such {kind}")
         return found
 
     matches: list[Located] = []
     for source in sources.items:
         candidate = _locate(source, text, text, kind)
-        if candidate.path.is_file():
+        if _exists(candidate, kind):
             matches.append(candidate)
     if len(matches) > 1:
         names = ", ".join(match.display for match in matches)
@@ -117,8 +124,14 @@ def _qualified(
         raise PathError(message)
     parts = _QUALIFIED.fullmatch(text)
     if parts is None:
-        expected = f"unit{UNIT_SUFFIX}" if kind == "unit" else "file"
-        raise PathError(f"'{text}': expected @name/path/to/{expected}")
+        match kind:
+            case "unit":
+                expected = f"path/to/unit{UNIT_SUFFIX}"
+            case "asset":
+                expected = "path/to/file"
+            case "skill":
+                expected = "<skill>"
+        raise PathError(f"'{text}': expected @name/{expected}")
     try:
         return sources.named(parts["name"]), parts["rel"]
     except PathError as exc:
@@ -136,11 +149,26 @@ def _locate(
     candidate = Path(reference)
     if candidate.is_absolute():
         raise PathError(f"'{text}': {kind} references must be relative")
+    if kind == "skill" and ("/" in reference or reference in {".", ".."}):
+        raise PathError(f"'{text}': a skill reference is one directory name")
 
-    anchor = (source.conf if kind == "unit" else source.assets).resolve()
+    match kind:
+        case "unit":
+            anchor = source.conf.resolve()
+        case "asset":
+            anchor = source.assets.resolve()
+        case "skill":
+            anchor = source.skills.resolve()
     resolved = (anchor / candidate).resolve()
     if not resolved.is_relative_to(anchor):
         raise PathError(f"'{text}': resolves outside {anchor}")
     return Located(
         source, resolved, source.display(resolved.relative_to(anchor).as_posix())
     )
+
+
+def _exists(found: Located, kind: RefKind) -> bool:
+    """Say whether what ``found`` places is there: a file, or a skill's directory."""
+    if kind == "skill":
+        return (found.path / SKILL_FILE).is_file()
+    return found.path.is_file()

@@ -7,6 +7,7 @@ import click
 
 from atc.context import BuildContext, load_context
 from atc.paths import Dirs, dirs_from_env
+from atc.registry import Account
 from atc.sources import Sources, discover
 
 
@@ -56,3 +57,10 @@ def load_build_context(conf_d: Path | None) -> BuildContext:
     return load_context(
         env=os.environ, home=Path.home(), uid=os.getuid(), conf_d=conf_d
     )
+
+
+def chosen_accounts(ctx: BuildContext, names: tuple[str, ...]) -> list[Account]:
+    """Find the accounts called ``names``, or every account when there are none."""
+    if not names:
+        return list(ctx.registry.accounts.values())
+    return [ctx.registry.account(name) for name in dict.fromkeys(names)]

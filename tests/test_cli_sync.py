@@ -12,7 +12,15 @@ from atc.jsonval import JsonObject, dumps
 from atc.paths import Dirs
 from atc.state import SyncState
 from tests.conftest import ConfigWriter, RegistryWriter
-from tests.helpers import MINIMAL_REGISTRY, make_source, unit
+from tests.helpers import (
+    LINKED_REGISTRY,
+    MINIMAL_REGISTRY,
+    make_source,
+    registry,
+    skill_files,
+    skill_md,
+    unit,
+)
 
 PERSONAL = "conf/accounts/personal.json"
 WORK = "conf/accounts/work.json"
@@ -416,15 +424,8 @@ def test_a_write_that_fails_exits_1_with_an_error_line(
     assert live.read_text() == '{"model": "x"}'
 
 
-LINKED_REGISTRY = """\
-    version: 1
-    default-account: personal
-    accounts:
-      personal: {agent: claude, dir: ~/.claude, use-default-agents-md: true}
-"""
 MISSING_FILE_REGISTRY = LINKED_REGISTRY + (
-    "      work: {agent: claude, dir: ~/.config/work, "
-    "agents-md-file: /nowhere/AGENTS.md}\n"
+    "  work: {agent: claude, dir: ~/.config/work, agents-md-file: /nowhere/AGENTS.md}\n"
 )
 AGENTS = "assets/AGENTS.md"
 CONFLICT = "(conflict; --take-over replaces a file or link, never a directory)"
@@ -434,7 +435,7 @@ def set_up_linked(
     configure: ConfigWriter,
     home: Path,
     dirs: Dirs,
-    registry: str = LINKED_REGISTRY,
+    registry_text: str = LINKED_REGISTRY,
 ) -> tuple[Path, Path]:
     """
     Make the account's directory, its unit and the default instructions file.
@@ -442,7 +443,7 @@ def set_up_linked(
     Returns the instructions file's path in the account, and the asset it links to.
     """
     (home / ".claude").mkdir()
-    configure({PERSONAL: unit(SETTINGS), AGENTS: "shared rules\n"}, registry)
+    configure({PERSONAL: unit(SETTINGS), AGENTS: "shared rules\n"}, registry_text)
     return home / ".claude" / "CLAUDE.md", dirs.conf_d / AGENTS
 
 
@@ -657,10 +658,7 @@ def test_a_moved_source_repoints_the_link(
     other = home / "elsewhere" / "AGENTS.md"
     other.parent.mkdir()
     _ = other.write_text("moved rules\n")
-    registry = LINKED_REGISTRY.replace(
-        "use-default-agents-md: true", f"agents-md-file: {other}"
-    )
-    _ = write_registry(registry)
+    _ = write_registry(registry(f"agents-md-file: {other}"))
     _ = capsys.readouterr()
 
     assert main(["sync"]) == OK
@@ -772,11 +770,8 @@ def test_an_account_whose_instructions_file_is_missing_stops_every_account(
 def test_both_keys_set_warns(
     configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str], dirs: Dirs
 ) -> None:
-    registry = LINKED_REGISTRY.replace(
-        "use-default-agents-md: true",
-        "use-default-agents-md: true, agents-md-file: AGENTS.md",
-    )
-    claude_md, asset = set_up_linked(configure, home, dirs, registry)
+    text = registry("use-default-agents-md: true", "agents-md-file: AGENTS.md")
+    claude_md, asset = set_up_linked(configure, home, dirs, text)
 
     status = main(["sync"])
 
@@ -788,3 +783,224 @@ def test_both_keys_set_warns(
         "agents-md-file is set, so use-default-agents-md has no effect\n"
     ) in captured.err
     assert claude_md.readlink() == asset
+
+
+SKILL_FILES = skill_files("git-commits", "rust-2024", "phase-review")
+
+
+def set_up_skills(
+    configure: ConfigWriter, home: Path, dirs: Dirs, *selected: str
+) -> tuple[Path, Path]:
+    """
+    Make the account's directory, its unit, and the skills, of which it selects some.
+
+    Returns the account's skills directory, which does not exist yet, and the
+    source's.
+    """
+    (home / ".claude").mkdir()
+    configure(
+        {PERSONAL: unit(SETTINGS), **SKILL_FILES},
+        registry(f"skills: [{', '.join(selected)}]"),
+    )
+    return home / ".claude" / "skills", dirs.conf_d / "skills"
+
+
+def test_selected_skills_are_linked_into_the_account(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skills, source = set_up_skills(configure, home, dirs, "git-commits", "rust-2024")
+
+    status = main(["sync"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.out == (
+        "personal: written\n"
+        f"personal: git-commits: (none) → {source / 'git-commits'} (changed)\n"
+        f"personal: rust-2024: (none) → {source / 'rust-2024'} (changed)\n"
+    )
+    assert captured.err == ""
+    assert (skills / "git-commits").readlink() == source / "git-commits"
+    assert (skills / "git-commits" / "SKILL.md").is_file()
+    assert (skills / "rust-2024").readlink() == source / "rust-2024"
+    assert not (skills / "phase-review").exists()
+    assert state(dirs).links() == {
+        str(skills / "git-commits"): str(source / "git-commits"),
+        str(skills / "rust-2024"): str(source / "rust-2024"),
+    }
+    assert main(["sync"]) == OK
+    assert capsys.readouterr().out == "personal: current\n"
+
+
+def test_a_missing_skills_directory_is_created(
+    configure: ConfigWriter, home: Path, dirs: Dirs
+) -> None:
+    skills, _source = set_up_skills(configure, home, dirs, "git-commits")
+    assert not skills.exists()
+
+    assert main(["sync"]) == OK
+
+    assert skills.is_dir()
+    assert not skills.is_symlink()
+    assert [entry.name for entry in skills.iterdir()] == ["git-commits"]
+
+
+def test_a_skills_directory_that_is_a_symbolic_link_is_refused(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skills, _source = set_up_skills(configure, home, dirs, "git-commits")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    skills.symlink_to(elsewhere)
+
+    assert main(["sync"]) == CONFIG
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"error: account 'personal': {skills} is a symbolic link, and atc makes "
+        + "skill links only in a directory; replace the link with a directory\n"
+    )
+    assert list(elsewhere.iterdir()) == []
+    assert not settings_file(home).exists()
+
+
+def test_sync_warns_once_about_skills_it_skipped_or_that_look_wrong(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (home / ".claude").mkdir()
+    (home / ".config" / "work").mkdir(parents=True)
+    configure(
+        {
+            PERSONAL: unit(SETTINGS),
+            WORK: unit(SETTINGS),
+            **SKILL_FILES,
+            "skills/Bad/SKILL.md": skill_md("Bad"),
+            "skills/odd/SKILL.md": skill_md("other"),
+        },
+        TWO_ACCOUNTS,
+    )
+    skills = dirs.conf_d / "skills"
+
+    assert main(["sync"]) == OK
+
+    err = capsys.readouterr().err
+    assert err.count(f"warning: {skills / 'Bad'}: 'Bad' is not a valid skill name") == 1
+    assert (
+        err.count(
+            f"warning: {skills / 'odd' / 'SKILL.md'}: the front matter's name 'other' "
+            + "differs from the directory name 'odd'"
+        )
+        == 1
+    )
+
+
+def test_a_deselected_skill_loses_atcs_link(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skills, source = set_up_skills(configure, home, dirs, "git-commits", "rust-2024")
+    _ = main(["sync"])
+    _ = capsys.readouterr()
+    _ = write_registry(registry("skills: [git-commits]"))
+
+    status = main(["sync"])
+
+    assert status == OK
+    assert capsys.readouterr().out == (
+        f"personal: current\npersonal: rust-2024: {source / 'rust-2024'} → (none) "
+        "(changed)\n"
+    )
+    assert not (skills / "rust-2024").is_symlink()
+    assert (skills / "git-commits").is_symlink()
+    assert (source / "rust-2024" / "SKILL.md").is_file()
+    assert state(dirs).links() == {
+        str(skills / "git-commits"): str(source / "git-commits")
+    }
+
+
+def test_a_foreign_skill_link_is_a_conflict_until_take_over(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skills, source = set_up_skills(configure, home, dirs, "git-commits")
+    checkout = tmp_path / "checkout" / "skills"
+    (checkout / "git-commits").mkdir(parents=True)
+    skills.mkdir()
+    (skills / "git-commits").symlink_to(checkout / "git-commits")
+    (skills / "rust-2024").symlink_to(checkout / "rust-2024")
+
+    status = main(["sync"])
+
+    assert status == CHECK
+    assert capsys.readouterr().out == (
+        "personal: written\n"
+        f"personal: git-commits: (not made by atc) → {source / 'git-commits'} "
+        f"{CONFLICT}\n"
+    )
+    assert (skills / "git-commits").readlink() == checkout / "git-commits"
+    assert state(dirs).links() == {}
+
+    assert main(["sync", "--take-over"]) == OK
+
+    assert (skills / "git-commits").readlink() == source / "git-commits"
+    assert (checkout / "git-commits").is_dir()
+    assert (skills / "rust-2024").readlink() == checkout / "rust-2024"
+    assert state(dirs).links() == {
+        str(skills / "git-commits"): str(source / "git-commits")
+    }
+    assert not state(dirs).backups_dir.exists()
+
+
+def test_directories_and_unrecorded_entries_are_left_alone(
+    configure: ConfigWriter,
+    write_registry: RegistryWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skills, source = set_up_skills(configure, home, dirs, "git-commits", "phase-review")
+    for name in ("phase-review", "synced", ".trash"):
+        (skills / name).mkdir(parents=True)
+        _ = (skills / name / "keep.txt").write_text("keep\n")
+    _ = (skills / "notes.md").write_text("mine\n")
+
+    status = main(["sync", "--take-over"])
+
+    assert status == CHECK
+    assert capsys.readouterr().out == (
+        "personal: written\n"
+        f"personal: git-commits: (none) → {source / 'git-commits'} (changed)\n"
+        f"personal: phase-review: (not made by atc) → {source / 'phase-review'} "
+        f"{CONFLICT}\n"
+    )
+    for name in ("phase-review", "synced", ".trash"):
+        assert (skills / name / "keep.txt").read_text() == "keep\n"
+    assert not (skills / "phase-review").is_symlink()
+    assert (skills / "notes.md").read_text() == "mine\n"
+    assert state(dirs).links() == {
+        str(skills / "git-commits"): str(source / "git-commits")
+    }
+
+    _ = write_registry(registry("skills: [git-commits]"))
+
+    assert main(["sync", "--take-over"]) == OK
+    assert capsys.readouterr().out == "personal: current\n"
+    assert (skills / "phase-review" / "keep.txt").is_file()
+    assert (skills / "synced" / "keep.txt").is_file()

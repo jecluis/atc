@@ -6,7 +6,7 @@ from atc.jsonval import JsonObject
 from atc.sources import discover
 from atc.validate import validate_config, validate_sources
 from tests.conftest import ContextBuilder
-from tests.helpers import UID, make_source, unit
+from tests.helpers import UID, make_source, registry, skill_md, unit
 
 
 def test_every_error_is_collected(tmp_path: Path) -> None:
@@ -317,3 +317,57 @@ def test_validate_config_checks_a_project_alone_when_its_account_layer_fails(
         "allow Bash(git rebase:*) (projects/both.json) never applies: "
         + "deny Bash(git rebase:*) (projects/both.json) takes precedence",
     )
+
+
+def test_validate_config_resolves_every_selected_skill(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "skills/review/SKILL.md": skill_md("review"),
+        },
+        registry("skills: [review, ghost]"),
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert [error.split(": ", 1)[1] for error in result.errors] == [
+        "account 'personal': skills: 'ghost': no such skill"
+    ]
+
+
+def test_validate_config_reports_two_selected_skills_with_one_name(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "personal/conf/accounts/personal.json": unit(),
+            "personal/skills/review/SKILL.md": skill_md("review"),
+            "bravo/skills/review/SKILL.md": skill_md("review"),
+        },
+        registry('skills: ["@personal/review", "@bravo/review"]'),
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    (error,) = result.errors
+    assert "@personal/review and @bravo/review are both named 'review'" in error
+
+
+def test_validate_config_warns_about_a_skill_with_odd_front_matter(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "skills/review/SKILL.md": skill_md("code-review"),
+        },
+        registry("skills: [review]"),
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert result.errors == ()
+    (warning,) = result.warnings
+    assert "'code-review' differs from the directory name 'review'" in warning
