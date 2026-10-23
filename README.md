@@ -7,12 +7,11 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc run`, `atc sync`, `atc check`, `atc maint`,
+Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc prj ls`, `atc prj show`,
 `atc prj add`, `atc prj rm`, `atc wt new`, `atc wt ls`, `atc wt rm`,
 `atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
 `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
-The rest is being built step by step.
 
 ## Install
 
@@ -728,8 +727,10 @@ names no skill is not shown, so confirming drops it.
 | `--take-over` | Replace a link or file that is where a selected skill's link is to go. A directory is never replaced. |
 
 It prints `ACCOUNT: skills written to FILE` when it changed the selection, then
-one line for each link that changed, as `atc sync` does. It exits `3` when a link
-is left alone for want of `--take-over`. The selection has been written by then.
+one line for each link that changed, as `atc sync` does. When neither the
+selection nor any link changed, it prints `ACCOUNT: skills unchanged` instead.
+It exits `3` when a link is left alone for want of `--take-over`. The selection
+has been written by then.
 
 ### `atc skills add ACCOUNT SKILL... [--take-over]`
 
@@ -1163,6 +1164,12 @@ cp atc/contrib/systemd/atc-maint.service atc/contrib/systemd/atc-maint.timer \
 systemctl --user daemon-reload
 systemctl --user enable --now atc-maint.timer
 ```
+
+The systemd user manager does not see variables set in your shell's startup
+files. If you set `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` or `XDG_CONFIG_HOME` there,
+set them for the user manager too, with `systemctl --user set-environment` or a
+file in `~/.config/environment.d/`. Otherwise the timer's `atc maint` reads a
+different repository list, and takes different locks, than the `atc` you run.
 
 If `claude-guard`'s maintenance timer is installed, disable it at the same time,
 so that only one of them packs the repositories:
