@@ -1,6 +1,7 @@
 """The JSON value type, and the single boundary where untyped data enters."""
 
 import json
+import math
 from pathlib import Path
 from typing import NoReturn, cast
 
@@ -18,14 +19,16 @@ def load_json(path: Path) -> JsonValue:
     Parse the JSON document stored at ``path``, strictly.
 
     Raises:
-        UnitError: the file cannot be read, or does not contain valid JSON. See
-            :func:`parse_json` for what counts as valid.
+        UnitError: the file cannot be read, is not UTF-8, or does not contain
+            valid JSON. See :func:`parse_json` for what counts as valid.
 
     """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise UnitError(f"{path}: cannot be read: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise UnitError(f"{path}: not UTF-8: {exc}") from exc
     return parse_json(text, str(path))
 
 
@@ -33,12 +36,15 @@ def parse_json(text: str, origin: str) -> JsonValue:
     """
     Parse the JSON document ``text``, strictly. ``origin`` names it in errors.
 
-    Python's JSON parser is more permissive than JSON itself. Two of its
-    extensions are rejected here, because both would otherwise travel silently
-    into a generated ``settings.local.json``: the constants ``NaN``,
-    ``Infinity`` and ``-Infinity``, which no strict JSON reader accepts, and
-    duplicate keys within one object, where the parser would keep the last
-    occurrence and discard the rest without a word.
+    Python's JSON parser is more permissive than JSON itself, and what it
+    lets through would otherwise travel silently into generated settings, or
+    fail later in a way that is no configuration error. So these are refused:
+    the constants ``NaN``, ``Infinity`` and ``-Infinity``, which no strict JSON
+    reader accepts; numbers too large for a float, which it would read as
+    infinite; duplicate keys within one object, where it would keep the last
+    occurrence and discard the rest without a word; strings and keys with an
+    unpaired surrogate, which are not text; and documents nested too deeply
+    for it to read.
 
     Raises:
         UnitError: ``text`` is not valid JSON.
@@ -52,16 +58,59 @@ def parse_json(text: str, origin: str) -> JsonValue:
         parsed: object = json.loads(  # pyright: ignore[reportAny]
             text,
             parse_constant=_reject_constant,
+            parse_float=_finite_float,
             object_pairs_hook=_object_from_pairs,
         )
+    except RecursionError as exc:
+        raise UnitError(f"{origin}: invalid JSON: nested too deeply") from exc
     except ValueError as exc:
         raise UnitError(f"{origin}: invalid JSON: {exc}") from exc
-    return cast(JsonValue, parsed)
+    value = cast(JsonValue, parsed)
+    _refuse_surrogates(value, origin)
+    return value
 
 
 def _reject_constant(name: str) -> NoReturn:
     """Refuse the non-standard constants Python's JSON parser would accept."""
     raise ValueError(f"{name} is not valid JSON")
+
+
+def _finite_float(text: str) -> float:
+    """Read a JSON number as a float, refusing one too large to be finite."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is too large for a number")
+    return value
+
+
+def _refuse_surrogates(value: JsonValue, origin: str) -> None:
+    r"""
+    Refuse a string or key of ``value`` that cannot be written as UTF-8.
+
+    That is one with an unpaired surrogate, which an escape such as ``\ud800``
+    alone makes. The walk keeps its own stack, so depth is no problem.
+    """
+    pending: list[JsonValue] = [value]
+    while pending:
+        match pending.pop():
+            case str() as text:
+                _encodable(text, origin)
+            case list() as items:
+                pending.extend(items)
+            case dict() as members:
+                for key, member in members.items():
+                    _encodable(key, origin)
+                    pending.append(member)
+            case _:
+                pass
+
+
+def _encodable(text: str, origin: str) -> None:
+    try:
+        _ = text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        message = f"{origin}: invalid JSON: {text!r} has an unpaired surrogate"
+        raise UnitError(message) from exc
 
 
 def _object_from_pairs(pairs: list[tuple[str, JsonValue]]) -> JsonObject:

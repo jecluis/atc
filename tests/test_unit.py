@@ -95,6 +95,50 @@ def test_invalid_json_names_the_file(root: Path) -> None:
         _ = load_unit(path)
 
 
+def test_a_unit_that_is_not_utf8_is_refused(root: Path) -> None:
+    path = root / "a.json"
+    _ = path.write_bytes(b'{"version": 2, "description": "\xff"}')
+
+    with pytest.raises(UnitError, match=f"^{path}: not UTF-8: "):
+        _ = load_unit(path)
+
+
+@pytest.mark.parametrize("number", ["1e400", "-1e400"])
+def test_a_number_too_large_for_json_is_refused(root: Path, number: str) -> None:
+    path = root / "a.json"
+    _ = path.write_text(
+        f'{{"version": 2, "settings": {{"cleanupPeriodDays": {number}}}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UnitError, match=f"invalid JSON: {number} is too large"):
+        _ = load_unit(path)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        '{"version": 2, "description": "a\\ud800"}',
+        '{"version": 2, "settings": {"env": {"\\udfff": "x"}}}',
+        '{"version": 2, "imports": ["\\ud800.json"]}',
+    ],
+)
+def test_a_lone_surrogate_is_refused(root: Path, document: str) -> None:
+    path = root / "a.json"
+    _ = path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(UnitError, match="unpaired surrogate"):
+        _ = load_unit(path)
+
+
+def test_a_unit_nested_too_deeply_is_refused(root: Path) -> None:
+    path = root / "a.json"
+    _ = path.write_text("[" * 1_000_000, encoding="utf-8")
+
+    with pytest.raises(UnitError, match=f"^{path}: invalid JSON: nested too deeply$"):
+        _ = load_unit(path)
+
+
 def test_an_unreadable_unit_is_reported(root: Path) -> None:
     with pytest.raises(UnitError, match="cannot be read"):
         _ = load_unit(root / "absent.json")

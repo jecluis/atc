@@ -77,9 +77,6 @@ def read_usage(dirs: Dirs, account: str) -> tuple[UsageRecord | None, str | None
         document = parse_json(text, str(path))
     except UnitError as exc:
         return None, str(exc)
-    except RecursionError:
-        # The parser gives up on deeply nested arrays and objects this way.
-        return None, f"{path}: invalid JSON: nested too deeply"
     try:
         record, note = _record(document)
     except _InvalidError as exc:

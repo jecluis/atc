@@ -93,13 +93,13 @@ def test_a_missing_file_is_no_data(dirs: Dirs) -> None:
         pytest.param(
             '{"recorded_at": "2026-10-23T09:00:00Z", "rate_limits": '
             + '{"five_hour": {"used_percentage": 1e999}}}',
-            "not a finite number",
+            "1e999 is too large for a number",
             id="infinite",
         ),
         pytest.param(
             '{"recorded_at": "2026-10-23T09:00:00Z", "rate_limits": '
             + '{"five_hour": {"used_percentage": -1e999}}}',
-            "not a finite number",
+            "-1e999 is too large for a number",
             id="minus-infinite",
         ),
         pytest.param(
@@ -151,10 +151,10 @@ def test_a_parser_that_gives_up_on_nesting_is_no_data_with_a_warning(
 ) -> None:
     # What nests deeply enough to do that within the size limit depends on the
     # interpreter, so the parser is made to give up.
-    def give_up(_text: str, _origin: str) -> JsonValue:
+    def give_up(*_args: object, **_kwargs: object) -> JsonValue:
         raise RecursionError
 
-    monkeypatch.setattr("atc.usage.parse_json", give_up)
+    monkeypatch.setattr("atc.jsonval.json.loads", give_up)
     path = write_record(dirs, "personal", "[[[")
 
     assert read_usage(dirs, "personal") == (

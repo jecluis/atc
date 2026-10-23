@@ -259,6 +259,35 @@ def test_src_check_reports_every_broken_unit(
     assert "ok:" not in err
 
 
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (b'{"version": 2, "description": "\xff"}', "not UTF-8"),
+        ('{"version": 2, "settings": {"cleanupPeriodDays": 1e400}}', "1e400"),
+        ('{"version": 2, "description": "\\ud800"}', "unpaired surrogate"),
+        ('{"version": 2, "imports": ["a\\u0000.json"]}', "NUL"),
+        ("[" * 1_000_000, "nested too deeply"),
+    ],
+    ids=["not-utf8", "overflow", "surrogate", "nul-import", "deep"],
+)
+def test_src_check_reports_a_unit_json_cannot_hold(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    content: str | bytes,
+    message: str,
+) -> None:
+    conf_d = make_source(
+        tmp_path / "conf.d", {"conf/good.json": unit(), "conf/bad.json": content}
+    )
+
+    assert main(["src", "check", "--conf-d", str(conf_d)]) == 1
+
+    err = capsys.readouterr().err
+    (error,) = [line for line in err.splitlines() if line.startswith("error: ")]
+    assert "bad.json" in error
+    assert message in error
+
+
 def test_src_check_reports_a_dangling_import(
     dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -561,6 +590,24 @@ def test_src_pull_reports_every_source_and_exits_1_if_one_fails(
     first, second = out.splitlines()
     assert first.startswith("bravo: updated (")
     assert second.startswith("personal: failed (")
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_goes_on_after_a_source_with_a_unit_that_is_not_utf8(
+    dirs: Dirs, upstream: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    zeta = bare_upstream(tmp_path / "zeta.git", {"conf/z.json": unit()})
+    _ = run_git(["clone", "-q", str(zeta), str(dirs.conf_d / "zeta")])
+    _ = publish(upstream, {"conf/bad.json": b'{"version": 2, "description": "\xff"}'})
+    commit = publish(zeta, {"conf/y.json": unit()})
+
+    out, err = run_pull(capsys, status=1)
+
+    first, second = out.splitlines()
+    assert first.startswith("personal: failed (")
+    assert second.startswith("zeta: updated (")
+    assert "not UTF-8" in err
+    assert run_git(["rev-parse", "HEAD"], cwd=dirs.conf_d / "zeta") == commit
 
 
 @pytest.mark.usefixtures("deployed")

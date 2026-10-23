@@ -144,6 +144,8 @@ def _locate(
     """Place ``reference`` in ``source``, naming ``text`` in any error."""
     if not reference:
         raise PathError(f"empty {kind} reference")
+    if "\0" in reference:
+        raise PathError(f"'{text}': {kind} references cannot hold a NUL character")
     if kind == "unit" and not reference.endswith(UNIT_SUFFIX):
         raise PathError(f"'{text}': unit references must end in {UNIT_SUFFIX}")
     candidate = Path(reference)

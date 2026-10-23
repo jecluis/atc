@@ -215,6 +215,20 @@ def test_an_invalid_live_file_is_shown_without_its_control_characters(
     assert "-{nope\\x1b[2J\n" in out
 
 
+def test_a_live_number_too_large_for_json_is_not_valid_json(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    live = set_up(configure, home)
+    _ = live.write_text('{"cleanupPeriodDays": 1e400}')
+
+    assert main(["sync"]) == CHECK
+
+    out = capsys.readouterr().out
+    assert out.startswith("personal: never synced and differs (--take-over writes it)")
+    assert '-{"cleanupPeriodDays": 1e400}\n' in out
+    assert live.read_text() == '{"cleanupPeriodDays": 1e400}'
+
+
 def test_take_over_backs_up_and_writes(
     configure: ConfigWriter,
     home: Path,

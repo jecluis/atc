@@ -28,13 +28,13 @@ def unit(
     return envelope
 
 
-def make_source(root: Path, files: Mapping[str, str | JsonObject]) -> Path:
+def make_source(root: Path, files: Mapping[str, str | bytes | JsonObject]) -> Path:
     """
     Write ``files`` under ``root``, as a source that meets the trust rules.
 
-    A ``JsonObject`` is written as JSON. Files get mode 0o644 and the
-    directories from ``root`` down, and any above it that this creates, get
-    0o755, whatever the umask.
+    A ``JsonObject`` is written as JSON, and ``bytes`` as they are. Files get
+    mode 0o644 and the directories from ``root`` down, and any above it that
+    this creates, get 0o755, whatever the umask.
     """
     missing = [path for path in (root, *root.parents) if not path.exists()]
     root.mkdir(parents=True, exist_ok=True)
@@ -47,8 +47,11 @@ def make_source(root: Path, files: Mapping[str, str | JsonObject]) -> Path:
         while directory != root.parent:
             directory.chmod(0o755)
             directory = directory.parent
-        text = content if isinstance(content, str) else json.dumps(content)
-        _ = path.write_text(text, encoding="utf-8")
+        if isinstance(content, bytes):
+            _ = path.write_bytes(content)
+        else:
+            text = content if isinstance(content, str) else json.dumps(content)
+            _ = path.write_text(text, encoding="utf-8")
         path.chmod(0o644)
     return root
 
@@ -70,7 +73,7 @@ def bare_upstream(path: Path, files: Mapping[str, str | JsonObject]) -> Path:
 
 def publish(
     upstream: Path,
-    files: Mapping[str, str | JsonObject] | None = None,
+    files: Mapping[str, str | bytes | JsonObject] | None = None,
     *,
     links: Mapping[str, str] | None = None,
     remove: Sequence[str] = (),

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from atc.errors import GitError, SourceError
+from atc.errors import ConfigError, SourceError
 from atc.git import git_or_none, run_git
 from atc.sources import SOURCE_DIRS, Source, Sources, check_source
 from atc.validate import Validation
@@ -92,7 +92,7 @@ def _pull_source(
 ) -> PullResult:
     try:
         return _update(sources, source, validate)
-    except (GitError, OSError) as exc:
+    except (ConfigError, OSError) as exc:
         return PullResult(source.name, "failed", " ".join(str(exc).split()), None)
 
 
