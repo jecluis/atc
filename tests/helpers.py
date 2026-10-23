@@ -57,6 +57,42 @@ def git_repo(path: Path) -> Path:
     return path
 
 
+def bare_upstream(path: Path, files: Mapping[str, str | JsonObject]) -> Path:
+    """Create a bare repository at ``path`` with one commit of ``files``."""
+    seed = git_repo(make_source(path.with_name(f"{path.name}-seed"), files))
+    _ = run_git(["clone", "-q", "--bare", str(seed), str(path)])
+    return path
+
+
+def publish(
+    upstream: Path,
+    files: Mapping[str, str | JsonObject] | None = None,
+    *,
+    links: Mapping[str, str] | None = None,
+    remove: Sequence[str] = (),
+) -> str:
+    """
+    Add a commit to ``upstream`` that changes the files in it.
+
+    It writes ``files``, makes the symbolic ``links`` (name to target) and
+    deletes ``remove``. It goes through a second clone kept next to the
+    repository, as someone else pushing would. Returns the new commit's id.
+    """
+    work = upstream.with_name(f"{upstream.name}-work")
+    if not work.exists():
+        _ = run_git(["clone", "-q", str(upstream), str(work)])
+    _ = make_source(work, files or {})
+    for relative, target in (links or {}).items():
+        (work / relative).parent.mkdir(parents=True, exist_ok=True)
+        (work / relative).symlink_to(target)
+    for relative in remove:
+        (work / relative).unlink()
+    _ = run_git(["add", "-A"], cwd=work)
+    _ = run_git(["commit", "-q", "--allow-empty", "-m", "update"], cwd=work)
+    _ = run_git(["push", "-q"], cwd=work)
+    return run_git(["rev-parse", "HEAD"], cwd=work)
+
+
 # The closing quotes are not indented, so that lines can be appended: four
 # spaces for a top-level key, six for another account.
 MINIMAL_REGISTRY = """\

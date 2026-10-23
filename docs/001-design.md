@@ -605,8 +605,11 @@ a known command. A typo is an error; it never starts a session.
      deployed configuration isn't edited in place.
   2. Run `git fetch`, and stop if the upstream can't be reached by
      fast-forward.
-  3. Export the fetched commit's tree into a temporary directory, and run
-     `src check` on `conf_d` with this source replaced by that tree.
+  3. Write the fetched commit's whole tree into a temporary directory the way
+     checkout would, not with `git archive`, whose `export-ignore` and
+     `export-subst` attributes could hide what the merge deploys. Then run
+     the trust rules and `src check` on `conf_d` with this source replaced
+     by that tree.
   4. Only if the check passes, `git merge --ff-only`. Then remove group and
      world write from the `conf/`, `assets/` and `skills/` directories and
      everything under them, skipping symbolic links, since git applies the

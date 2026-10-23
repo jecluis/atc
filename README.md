@@ -7,8 +7,8 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc show account`, `atc show project`, `atc src ls`
-and `atc src check`.
+Today the tool implements `atc show account`, `atc show project`, `atc src ls`,
+`atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -59,7 +59,12 @@ names the offending path:
   something is writable, run `chmod go-w <path>`.
 
 With a umask of 002, as on Fedora, a fresh clone is group-writable. Run
-`chmod -R go-w` on it once after cloning.
+`chmod -R go-w` on it once after cloning. From then on, `atc src pull` keeps the
+modes right.
+
+You develop units in a separate working checkout. A change reaches atc only as a
+commit that you pull into `conf.d` with `atc src pull`, which checks the commit
+before it deploys it.
 
 ## The machine registry
 
@@ -298,6 +303,59 @@ stops the check with that error.
 | --- | --- |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
 
+### `atc src pull [NAME]...`
+
+Updates config sources that are git clones: the ones called `NAME`, or all of
+them. A source is only ever moved to a commit that has been checked. For each
+source:
+
+1. It refuses if `conf/`, `assets/` or `skills/` has uncommitted changes, which
+   are modified, deleted and untracked files. Deployed configuration is not
+   edited in place. Untracked files elsewhere in the source do not count.
+2. It fetches, and stops if the upstream cannot be reached by fast-forward: the
+   clone has commits of its own, whether or not the upstream has moved.
+3. It writes the whole fetched commit into a temporary directory, the way the
+   fast-forward would write it: symbolic links stay links, the commit's own
+   `.gitattributes` decide line endings and filters, and its `export-ignore`
+   and `export-subst` rules play no part. The directory then gets the same mode
+   fixes as in step 4. What is checked is that tree, and only a commit that
+   passes is deployed:
+   - The tree must still be a config source: it has at least one of `conf/`,
+     `assets/` and `skills/`, and with the single layout no other directory in
+     it holds `conf/`, `assets/` or `skills/` of its own.
+   - It must meet the trust rules, so a commit that adds a symbolic link under
+     `conf/`, `assets/` or `skills/` is not deployed.
+   - Then come the checks of `atc src check` on `conf.d` with this source
+     replaced by that tree, the other sources being as they are deployed. When
+     the machine registry exists they cover its accounts and projects, so a
+     commit that removes a unit an account still uses is not deployed either.
+4. Only if all of that passes, it fast-forwards to the commit that was checked.
+   Git applies your umask to what it writes, which under a umask of 002 is
+   group write, so it then removes group and world write from the `conf/`,
+   `assets/` and `skills/` directories and everything under them, skipping
+   symbolic links. If it cannot, the source is reported as failed, naming the
+   path. The clone has been fast-forwarded by then, and atc refuses it until
+   the path is fixed with `chmod go-w`.
+
+It prints one line per source on standard output, `NAME: STATUS (DETAIL)`, and
+for the single layout's source, which has no name, the path of `conf.d` takes
+the place of `NAME`.
+
+| Status | Meaning |
+| --- | --- |
+| `updated` | Fast-forwarded. The detail is `OLD..NEW`, the short commits. |
+| `current` | Already at the upstream's commit. |
+| `skipped` | Not a git clone, or its branch has no upstream. Nothing to pull from. |
+| `refused` | Uncommitted changes, or it cannot fast-forward. Left as it was. |
+| `failed` | Git failed, the incoming commit did not pass the checks, or the modes could not be fixed. When the commit did not pass, the source is left as it was. |
+
+The problems the checks found on a failed source go to standard error, as
+`atc src check` prints them, and so do the warnings of a checked commit. When
+the registry does not exist, only the sources are checked, with a warning saying
+so. The exit status is `1` if any source failed or was refused, and `0`
+otherwise. An unknown `NAME` is an error that lists the sources there are, and
+nothing is pulled.
+
 ### `atc show account NAME [--conf-d DIR] [--lax]`
 
 Builds the settings of the account `NAME`, one of the accounts in the machine
@@ -391,7 +449,8 @@ Output is coloured only when it goes to a terminal. `NO_COLOR` and
 `FORCE_COLOR` are honoured.
 
 Exit status is `0` on success, `1` for a problem with the configuration, a
-config source or git, and `2` for a problem with the command line.
+config source or git, which includes a source `atc src pull` failed or refused,
+and `2` for a problem with the command line.
 
 ## Development
 

@@ -7,8 +7,15 @@ import pytest
 from atc.cli import main
 from atc.git import run_git
 from atc.paths import Dirs
-from tests.conftest import ConfigWriter
-from tests.helpers import git_repo, make_source, unit
+from tests.conftest import ConfigWriter, RegistryWriter
+from tests.helpers import (
+    MINIMAL_REGISTRY,
+    bare_upstream,
+    git_repo,
+    make_source,
+    publish,
+    unit,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -358,3 +365,197 @@ def test_src_check_without_a_registry_checks_sources_only(
     assert "machine.yaml" in err
     assert "not checked" in err
     assert "ok: 1 units in 1 sources" in err
+
+
+ACCOUNT_UNIT = "conf/accounts/personal.json"
+
+
+@pytest.fixture
+def upstream(tmp_path: Path) -> Path:
+    return bare_upstream(
+        tmp_path / "upstream.git", {ACCOUNT_UNIT: unit({"model": "x"})}
+    )
+
+
+@pytest.fixture
+def deployed(dirs: Dirs, upstream: Path) -> Path:
+    """Clone the upstream as the source `personal` in `conf_d`."""
+    root = dirs.conf_d / "personal"
+    _ = run_git(["clone", "-q", str(upstream), str(root)])
+    return root
+
+
+def run_pull(
+    capsys: pytest.CaptureFixture[str], *args: str, status: int = 0
+) -> tuple[str, str]:
+    assert main(["src", "pull", *args]) == status
+    captured = capsys.readouterr()
+    return captured.out, captured.err
+
+
+def test_src_pull_deploys_a_valid_commit(
+    deployed: Path, upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit = publish(upstream, {"conf/b.json": unit()})
+
+    out, err = run_pull(capsys)
+
+    assert out.startswith("personal: updated (")
+    assert "error:" not in err
+    assert run_git(["rev-parse", "HEAD"], cwd=deployed) == commit
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_says_when_a_source_is_current(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert run_pull(capsys)[0].startswith("personal: current (")
+
+
+def test_src_pull_does_not_deploy_a_commit_that_fails_the_check(
+    deployed: Path, upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = run_git(["rev-parse", "HEAD"], cwd=deployed)
+    _ = publish(upstream, {"conf/bad.json": "{", "conf/bad-version.json": "[]"})
+
+    out, err = run_pull(capsys, status=1)
+
+    assert out.startswith("personal: failed (")
+    assert f"error: {deployed / 'conf' / 'bad.json'}" in err
+    assert str(deployed / "conf" / "bad-version.json") in err
+    assert run_git(["rev-parse", "HEAD"], cwd=deployed) == before
+
+
+def test_src_pull_checks_the_accounts_when_the_registry_exists(
+    deployed: Path,
+    upstream: Path,
+    write_registry: RegistryWriter,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _ = write_registry(MINIMAL_REGISTRY)
+    before = run_git(["rev-parse", "HEAD"], cwd=deployed)
+    _ = publish(upstream, {"conf/other.json": unit()}, remove=[ACCOUNT_UNIT])
+
+    out, err = run_pull(capsys, status=1)
+
+    assert out.startswith("personal: failed (")
+    assert "account 'personal'" in err
+    assert "not checked" not in err
+    assert run_git(["rev-parse", "HEAD"], cwd=deployed) == before
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_without_a_registry_checks_the_sources_only(
+    upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = publish(upstream, {"conf/b.json": unit()})
+
+    out, err = run_pull(capsys)
+
+    assert out.startswith("personal: updated (")
+    assert "warning:" in err
+    assert "machine.yaml" in err
+    assert "not checked" in err
+
+
+def test_src_pull_does_not_deploy_a_commit_that_breaks_the_trust_rules(
+    deployed: Path, upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = run_git(["rev-parse", "HEAD"], cwd=deployed)
+    _ = publish(upstream, {"assets/tool.sh": "x"}, links={"assets/link": "tool.sh"})
+
+    out, err = run_pull(capsys, status=1)
+
+    assert out.startswith("personal: failed (")
+    assert f"error: {deployed / 'assets' / 'link'}: is a symbolic link" in err
+    assert run_git(["rev-parse", "HEAD"], cwd=deployed) == before
+
+
+def test_src_pull_shows_warnings_of_what_it_deployed(
+    deployed: Path, upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(deployed.parent / "stray", {"notes.md": "x"})
+    _ = publish(upstream, {"conf/b.json": unit()})
+
+    err = run_pull(capsys)[1]
+
+    assert err.count("stray") == 1
+    assert "warning:" in err
+
+
+def test_src_pull_exits_1_for_a_refused_source(
+    deployed: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = (deployed / ACCOUNT_UNIT).write_text("{}", encoding="utf-8")
+
+    out, err = run_pull(capsys, status=1)
+
+    assert out.startswith("personal: refused (uncommitted changes")
+    assert "error:" not in err
+
+
+def test_src_pull_skips_a_source_that_is_not_a_clone(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d / "personal", {"conf/a.json": unit()})
+    assert run_pull(capsys)[0] == "personal: skipped (not a git clone)\n"
+
+
+def test_src_pull_names_the_single_source_by_its_directory(
+    dirs: Dirs, upstream: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = run_git(["clone", "-q", str(upstream), str(dirs.conf_d)])
+    _ = publish(upstream, {"conf/b.json": unit()})
+    assert run_pull(capsys)[0].startswith(f"{dirs.conf_d}: updated (")
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_reports_every_source_and_exits_1_if_one_fails(
+    dirs: Dirs, upstream: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bravo = bare_upstream(tmp_path / "bravo.git", {"conf/c.json": unit()})
+    _ = run_git(["clone", "-q", str(bravo), str(dirs.conf_d / "bravo")])
+    _ = publish(bravo, {"conf/d.json": unit()})
+    _ = publish(upstream, {"conf/bad.json": "{"})
+
+    out, _ = run_pull(capsys, status=1)
+
+    first, second = out.splitlines()
+    assert first.startswith("bravo: updated (")
+    assert second.startswith("personal: failed (")
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_takes_source_names(
+    dirs: Dirs, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bravo = bare_upstream(tmp_path / "bravo.git", {"conf/c.json": unit()})
+    _ = run_git(["clone", "-q", str(bravo), str(dirs.conf_d / "bravo")])
+    _ = publish(bravo, {"conf/d.json": unit()})
+
+    out, _ = run_pull(capsys, "personal")
+
+    assert out.startswith("personal: current (")
+    assert out.count("\n") == 1
+
+
+@pytest.mark.usefixtures("deployed")
+def test_src_pull_reports_an_unknown_source_name_as_a_config_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out, err = run_pull(capsys, "nowhere", status=1)
+
+    assert out == ""
+    assert "error: no config source named 'nowhere'" in err
+    assert "personal" in err
+
+
+def test_src_pull_reports_a_trust_violation_in_what_is_deployed(
+    deployed: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (deployed / ACCOUNT_UNIT).chmod(0o666)
+
+    out, err = run_pull(capsys, status=1)
+
+    assert out == ""
+    assert str(deployed / ACCOUNT_UNIT) in err

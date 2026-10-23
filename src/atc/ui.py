@@ -41,6 +41,10 @@ class Ui:
         """Report progress or success on standard error, as plain text."""
         self.err.print(Text(message), soft_wrap=True)
 
+    def line(self, message: str) -> None:
+        """Write one line of plain text on standard output."""
+        self.out.print(Text(message), soft_wrap=True)
+
     def json(self, value: JsonValue) -> None:
         """
         Write ``value`` as JSON on standard output.

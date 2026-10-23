@@ -41,6 +41,13 @@ def test_info_is_plain_text_on_stderr(capsys: pytest.CaptureFixture[str]) -> Non
     assert captured.err == "ok: [bold]2[/bold] units\n"
 
 
+def test_line_is_plain_text_on_stdout(capsys: pytest.CaptureFixture[str]) -> None:
+    Ui.default().line("a: [bold]x[/bold] " + "y" * 120)
+    captured = capsys.readouterr()
+    assert captured.out == "a: [bold]x[/bold] " + "y" * 120 + "\n"
+    assert captured.err == ""
+
+
 def test_a_long_diagnostic_stays_on_one_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

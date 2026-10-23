@@ -1,11 +1,12 @@
 """Config sources: finding them, and checking atc may trust them."""
 
+import dataclasses
 import os
 import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 from atc.errors import PathError, SourceError
 
@@ -72,6 +73,57 @@ class Sources:
         suffix = f"; the sources are {known}" if known else "; the source has no name"
         raise PathError(f"no config source named '{name}'{suffix}")
 
+    def replace(self, name: str, root: Path) -> Self:
+        """
+        Give the same sources, with the source called ``name`` read from ``root``.
+
+        The single layout's source has the empty name.
+
+        Raises:
+            PathError: there is no such source.
+
+        """
+        if not any(source.name == name for source in self.items):
+            raise PathError(f"no config source named '{name}'")
+        items = tuple(
+            Source(name, root) if source.name == name else source
+            for source in self.items
+        )
+        return dataclasses.replace(self, items=items)
+
+
+def check_source(
+    source: Source, *, layout: Literal["single", "multi"], uid: int
+) -> None:
+    """
+    Check that ``source`` could be loaded as a source of a ``conf_d`` with ``layout``.
+
+    That is what :func:`discover` requires of it: its directory and everything
+    under its ``conf``, ``assets`` and ``skills`` meet the trust rules for
+    ``uid``, it has at least one of those directories, and, in the single
+    layout, no other directory in it is a source of its own.
+
+    Raises:
+        SourceError: it would not be loaded.
+
+    """
+    _check_trusted(source, uid)
+    if not _has_source_dirs(source.root):
+        message = (
+            f"{source.root}: has none of {', '.join(SOURCE_DIRS)}, so it is "
+            "not a config source"
+        )
+        raise SourceError(message)
+    if layout == "single":
+        _reject_nested_sources(source.root)
+
+
+def _check_trusted(source: Source, uid: int) -> None:
+    """Check ``source``'s directory and its source directories for trust."""
+    _ = _check_entry(source.root, uid)
+    for name in SOURCE_DIRS:
+        _check_tree(source.root / name, uid)
+
 
 def discover(conf_d: Path, *, uid: int) -> Sources:
     """
@@ -106,9 +158,7 @@ def discover(conf_d: Path, *, uid: int) -> Sources:
         )
         raise SourceError(message)
     for source in items:
-        _ = _check_entry(source.root, uid)
-        for name in SOURCE_DIRS:
-            _check_tree(source.root / name, uid)
+        _check_trusted(source, uid)
     return Sources(conf_d=conf_d, layout=layout, items=items, warnings=warnings)
 
 

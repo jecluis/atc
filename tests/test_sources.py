@@ -216,3 +216,33 @@ def test_the_single_layout_has_no_name_to_look_up(tmp_path: Path) -> None:
     conf_d = make_source(tmp_path / "conf.d", {"conf/a.json": unit()})
     with pytest.raises(PathError, match="no config source named 'bravo'"):
         _ = discover(conf_d, uid=UID).named("bravo")
+
+
+def test_replacing_a_source_swaps_its_root_only(tmp_path: Path) -> None:
+    conf_d = tmp_path / "conf.d"
+    personal = make_source(conf_d / "personal", {"conf/a.json": unit()})
+    bravo = make_source(conf_d / "bravo", {"conf/a.json": unit()})
+    found = discover(conf_d, uid=UID)
+
+    swapped = found.replace("bravo", tmp_path / "elsewhere")
+
+    assert [(s.name, s.root) for s in swapped.items] == [
+        ("bravo", tmp_path / "elsewhere"),
+        ("personal", personal),
+    ]
+    assert (swapped.conf_d, swapped.layout) == (conf_d, "multi")
+    assert found.named("bravo").root == bravo
+
+
+def test_the_single_layout_source_is_replaced_by_its_empty_name(
+    tmp_path: Path,
+) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"conf/a.json": unit()})
+    swapped = discover(conf_d, uid=UID).replace("", tmp_path / "elsewhere")
+    assert [s.root for s in swapped.items] == [tmp_path / "elsewhere"]
+
+
+def test_replacing_an_unknown_source_is_an_error(tmp_path: Path) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"conf/a.json": unit()})
+    with pytest.raises(PathError, match="no config source named 'bravo'"):
+        _ = discover(conf_d, uid=UID).replace("bravo", tmp_path)
