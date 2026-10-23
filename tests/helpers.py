@@ -4,11 +4,13 @@ import fcntl
 import json
 import os
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from atc.git import run_git
-from atc.jsonval import JsonObject
+from atc.jsonval import JsonObject, JsonValue
 from atc.merge import merge_objects
+from atc.paths import Dirs
 from atc.unit import UNIT_VERSION
 
 UID = os.getuid()
@@ -177,3 +179,37 @@ def packed_history(repo: Path) -> JsonObject:
 def guarded(repo: Path, fragment: JsonObject) -> JsonObject:
     """``fragment`` with the session entries for ``repo`` added."""
     return merge_objects(fragment, packed_history(repo))
+
+
+RECORDED = "2026-10-23T09:00:00Z"
+"""A time that the usage records of the tests are made at, unless they say."""
+
+
+def record_path(dirs: Dirs, account: str) -> Path:
+    """Where the usage record of ``account`` is kept."""
+    return dirs.state_dir / "usage" / f"{account}.json"
+
+
+def write_record(dirs: Dirs, account: str, document: JsonValue | str) -> Path:
+    """Store ``document``, as JSON unless it is text, as the record of ``account``."""
+    path = record_path(dirs, account)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = document if isinstance(document, str) else json.dumps(document)
+    _ = path.write_text(text, encoding="utf-8")
+    return path
+
+
+def five_hour(percentage: JsonValue, recorded_at: str = RECORDED) -> JsonValue:
+    """Build a record as the statusline writes it, with other limits beside."""
+    return {
+        "recorded_at": recorded_at,
+        "rate_limits": {
+            "five_hour": {"used_percentage": percentage, "resets_at": 1792000000},
+            "seven_day": {"used_percentage": 3, "resets_at": 1792500000},
+        },
+    }
+
+
+def ago(**delta: float) -> str:
+    """Write the time ``delta`` before now, as the statusline does."""
+    return (datetime.now(UTC) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -32,12 +32,15 @@ from atc.paths import Dirs
 from tests.conftest import ContextBuilder
 from tests.helpers import (
     StopError,
+    ago,
+    five_hour,
     git_repo,
     guarded,
     is_locked,
     make_source,
     packed_history,
     unit,
+    write_record,
 )
 
 CLAUDE = "/opt/agents/claude"
@@ -814,6 +817,194 @@ def test_an_unknown_account_is_a_config_error(
 
     with pytest.raises(RegistryError, match="no account named 'nope'"):
         _ = plan(ctx, plain, account="nope")
+
+
+def auto_registry(repo: Path, project: str) -> str:
+    """Three accounts, and the project ``bar`` with the entries of ``project``."""
+    return (
+        "version: 1\n"
+        "default-account: personal\n"
+        "accounts:\n"
+        "  personal: {agent: claude, dir: ~/.claude}\n"
+        "  bravo: {agent: claude, dir: ~/.config/bravo/claude}\n"
+        "  side: {agent: claude, dir: ~/.config/side/claude}\n"
+        f"projects:\n  bar: {{repo: {repo}{project}}}\n"
+    )
+
+
+BOTH = ", account: bravo, accounts: [bravo, personal]"
+
+
+def test_auto_picks_the_least_used_account_of_the_project(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "bravo", five_hour(80, ago(hours=1)))
+    _ = write_record(ctx.dirs, "personal", five_hour(10, ago(hours=2)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.account.name == "personal"
+    assert result.env["ATC_ACCOUNT"] == "personal"
+    assert plan(ctx, repo).account.name == "bravo"
+
+
+def test_auto_considers_only_the_accounts_of_the_project(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "bravo", five_hour(80, ago(hours=1)))
+    _ = write_record(ctx.dirs, "personal", five_hour(90, ago(hours=1)))
+    _ = write_record(ctx.dirs, "side", five_hour(0, ago(hours=1)))
+
+    assert plan(ctx, repo, account="auto").account.name == "bravo"
+
+
+def test_outside_a_project_auto_means_the_default_account(
+    build_context: ContextBuilder, plain: Path, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "bravo", five_hour(0, ago(hours=1)))
+    _ = write_record(ctx.dirs, "personal", "{not json")
+
+    result = plan(ctx, plain, account="auto")
+
+    assert result.project is None
+    assert result.account.name == "personal"
+    assert result.warnings == ()
+    assert result.notes == ()
+
+
+def test_in_an_unregistered_repository_auto_means_the_default_account(
+    build_context: ContextBuilder, tmp_path: Path, repo: Path
+) -> None:
+    other = git_repo(make_source(tmp_path / "other", {"README": "y"}))
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "personal", "{not json")
+
+    result = plan(ctx, other, account="auto")
+
+    assert result.project is None
+    assert result.account.name == "personal"
+    assert result.warnings == ()
+    assert result.notes == ()
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        pytest.param(", account: bravo", "bravo", id="its-own-account"),
+        pytest.param("", "personal", id="the-default-account"),
+    ],
+)
+def test_a_project_without_accounts_uses_its_own_account_under_auto(
+    build_context: ContextBuilder, repo: Path, entries: str, expected: str
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, entries))
+    _ = write_record(ctx.dirs, "bravo", "{not json")
+    _ = write_record(ctx.dirs, "side", five_hour(0, ago(hours=1)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.project is not None
+    assert result.account.name == expected
+    assert result.warnings == ()
+    assert result.notes == ()
+
+
+def test_the_reason_is_a_note_and_not_a_warning(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "bravo", five_hour(80, ago(hours=1)))
+    _ = write_record(ctx.dirs, "personal", five_hour(10, ago(hours=2)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.notes == (
+        "-a auto chose personal: 5-hour usage 10%, recorded 2h 0m ago",
+    )
+    assert result.warnings == ()
+
+
+def test_an_account_with_no_record_is_chosen_for_having_no_data(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "personal", five_hour(5, ago(minutes=5)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.account.name == "bravo"
+    assert result.notes == ("-a auto chose bravo: no data",)
+    assert result.warnings == ()
+
+
+def test_a_record_that_cannot_be_read_warns_and_counts_as_no_data(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    path = write_record(ctx.dirs, "bravo", "{not json")
+    _ = write_record(ctx.dirs, "personal", five_hour(5, ago(minutes=5)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.account.name == "bravo"
+    assert len(result.warnings) == 1
+    assert result.warnings[0].startswith(f"{path}: invalid JSON")
+    assert result.notes == ("-a auto chose bravo: no data",)
+
+
+def test_an_exhausted_account_is_not_chosen_for_its_percentage_being_over_100(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    path = write_record(ctx.dirs, "bravo", five_hour(100.4, ago(minutes=5)))
+    _ = write_record(ctx.dirs, "personal", five_hour(50, ago(minutes=5)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.account.name == "personal"
+    assert len(result.warnings) == 1
+    assert result.warnings[0].startswith(f"{path}: ")
+    assert "clamped to 100" in result.warnings[0]
+    assert len(result.notes) == 1
+    assert result.notes[0].startswith("-a auto chose personal: 5-hour usage 50%")
+
+
+def test_a_stale_record_does_not_count_against_an_account(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+    _ = write_record(ctx.dirs, "bravo", five_hour(99, ago(hours=6)))
+    _ = write_record(ctx.dirs, "personal", five_hour(20, ago(hours=1)))
+
+    result = plan(ctx, repo, account="auto")
+
+    assert result.account.name == "bravo"
+    assert result.notes == (
+        "-a auto chose bravo: recorded 6h 0m ago, so its 5-hour window has rolled over",
+    )
+    assert result.warnings == ()
+
+
+def test_a_launch_without_auto_has_no_notes(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(FILES, auto_registry(repo, BOTH))
+
+    assert plan(ctx, repo).notes == ()
+    assert plan(ctx, repo, account="personal").notes == ()
+
+
+def test_a_tie_goes_to_the_account_the_project_lists_first(
+    build_context: ContextBuilder, repo: Path
+) -> None:
+    ctx = build_context(
+        FILES, auto_registry(repo, ", account: bravo, accounts: [personal, bravo]")
+    )
+
+    assert plan(ctx, repo, account="auto").account.name == "personal"
 
 
 def test_the_warnings_of_loading_are_in_the_plan(

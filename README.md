@@ -143,7 +143,8 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
   be absolute. Environment variables are not expanded, so `$HOME/x` is an
   error.
 - Account and project names are lowercase letters, digits, `_` and `-`,
-  starting with a letter or a digit.
+  starting with a letter or a digit. No account can be called `auto`, which
+  `atc -a auto` uses to pick the least used account of a project.
 - Every account that the registry mentions must exist: `default-account`, and
   each project's `account` and `accounts`.
 - A project's `accounts` cannot be empty, and must include the account the
@@ -332,6 +333,7 @@ Starts the agent in the right account, replacing atc with it. It works out:
 - **the account:** `ACCOUNT` when given, otherwise the project's `account`,
   otherwise `default-account`. If the project lists `accounts`, the account
   must be one of them. The account's `agent` decides which agent starts.
+  `-a auto` picks the project's least used account (see below).
 - **the binary:** `agents.<agent>.bin` from the registry, otherwise the
   agent's name, looked up on `PATH`. It must exist. atc refuses to start when it
   resolves to atc itself, whether it was found on `PATH` or named in the
@@ -348,6 +350,36 @@ It says `project –` outside a registered project. The guard is `on`, `off
 (--no-guard)` or `off (not in a repository)` (see The guard). `-q` leaves the
 line out. Nothing else from atc appears once the agent has started, and the
 agent's exit status is the command's.
+
+**`-a auto`.** In a project that lists `accounts`, `-a auto` starts the one of
+them that is the least used, going by the records that `atc usage` shows. Each
+candidate scores the five-hour percentage of its record if that was recorded
+less than five hours ago, and 0 otherwise, since its window has then rolled
+over. So an account scores 0 when it has no record, when its record cannot be
+used, when the record has no five-hour figure, and when the record is five hours
+old or older. The lowest score wins, and among equal scores the first one in the
+project's `accounts` does. atc reads only the records of those accounts. A line
+on standard error, just above the one that names the project, says which
+account was chosen and why:
+
+```text
+atc: -a auto chose personal: 5-hour usage 10%, recorded 2h 0m ago
+atc: -a auto chose bravo: no data
+atc: -a auto chose bravo: recorded 6h 0m ago, so its 5-hour window has rolled over
+```
+
+`-q` leaves it out together with the line that names the project. A record that
+could not be read, or whose percentage was clamped, is a warning, printed
+before that line and not hidden by `-q`.
+
+The chosen account is then used as if it had been named. Outside a registered
+project, and in a project that lists no `accounts`, there is no choice to make:
+`-a auto` is the same as leaving `-a` out, which is the project's `account` and
+then `default-account`, and atc reads no record and says nothing about it.
+`--print` has no such line on standard error, and shows the same reason in its
+plan, under the account; the warnings about records are printed as usual. Usage
+from other machines, or from claude.ai, is never recorded, so `-a auto` cannot
+see it.
 
 **`atc` with no command.** `atc` with no arguments, or with a first argument
 that starts with `-`, is `atc run`; this includes `--`. `atc -- --resume x`
@@ -467,11 +499,11 @@ snapper fails or is not installed, atc warns and starts the agent anyway.
 
 | Option | Effect |
 | --- | --- |
-| `-a`, `--account ACCOUNT` | Use `ACCOUNT` instead of the project's own account. |
+| `-a`, `--account ACCOUNT` | Use `ACCOUNT` instead of the project's own account. `auto` picks the least used of the project's accounts. |
 | `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. They win over the project's settings, and are added to the session entries without being able to remove them. |
 | `--no-guard` | Do not guard the repository's packed history in this session: no session entries, no gc override, no lock and no listing in the repository list. A warning says so inside a git repository. The project's snapshot is still made. |
-| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, whether the session is guarded, the snapshot if there is one, the changes to the environment, the command, and the settings as JSON. Nothing is listed, locked or snapshotted. Warnings about permission rules that never apply go to standard error. |
-| `-q`, `--quiet` | Leave out the line that names the project, the account and the guard. |
+| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account (with why `-a auto` chose it), whether the session is guarded, the snapshot if there is one, the changes to the environment, the command, and the settings as JSON. Nothing is listed, locked or snapshotted. Warnings about permission rules that never apply go to standard error. |
+| `-q`, `--quiet` | Leave out the line that names the project, the account and the guard, and the one that says what `-a auto` chose. |
 | `--lax` | Report settings keys Claude Code does not define in the project's units, and under `--print` in the account's unit too, as warnings rather than errors. |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--print`. |
 
@@ -1102,6 +1134,8 @@ standard output. Nothing is changed.
   Claude Code does not always give one.
 - A record that cannot be used shows `no data` too, and a warning on standard
   error names the file and what is wrong with it. The exit status stays `0`.
+- A record whose percentage was clamped shows the clamped number, with the same
+  kind of warning.
 
 **The record.** The statusline of a session that atc started, which has
 `ATC_ACCOUNT` and `ATC_STATE_DIR` in its environment, writes
@@ -1113,13 +1147,28 @@ standard output. Nothing is changed.
 
 `recorded_at` is an ISO 8601 time with a UTC offset, `Z` as the statusline
 writes it. `rate_limits` is copied as the statusline received it. atc reads only
-`five_hour.used_percentage` in it, a number from 0 to 100 that may be missing.
+`five_hour.used_percentage` in it, a number, normally from 0 to 100, that may be
+missing.
 
 Nothing in the file is trusted, since anyone who can write the state directory
-can write it. The record cannot be used when the file is not valid JSON or not
-an object, when `recorded_at` is missing, is not a time with a UTC offset, or
-is in the future, when `rate_limits` or `five_hour` is not an object, or when
-the percentage is not a number from 0 to 100.
+can write it:
+
+- **What is read.** Only a regular file of at most 64 KiB. A FIFO, a device, a
+  directory or a symbolic link in its place, even one to a regular file, is
+  refused without being read or waited for, and so is a larger file. Each
+  gets a warning that names the file.
+- **When the record cannot be used.** When the file is not valid JSON or not an
+  object, when `recorded_at` is missing, is not a time with a UTC offset, or is
+  in the future, when `rate_limits` or `five_hour` is not an object, or when the
+  percentage is not a finite number.
+- **A percentage outside 0 to 100** is clamped to 0 or 100, and the record is
+  used with a warning that names the file and says it was clamped. An account
+  that has used up its limit can be recorded as, say, 100.4; clamped, it reads as
+  full and not as unknown.
+
+`atc -a auto` picks a project's least used account from these records (see
+`atc [run]`). It treats an account whose record cannot be used as one with no
+data.
 
 Only usage from sessions that atc started on this machine is recorded. Usage
 from other machines, or from claude.ai, is not.

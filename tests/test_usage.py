@@ -1,7 +1,10 @@
 """The usage records the statusline writes, and ``atc usage``, which shows them."""
 
-import json
+import contextlib
+import os
 import re
+import threading
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,8 +14,15 @@ from atc.cli import main
 from atc.exitcodes import CONFIG, OK
 from atc.jsonval import JsonObject, JsonValue
 from atc.paths import Dirs
-from atc.usage import UsageRecord, format_age, read_usage
+from atc.usage import (
+    MAX_RECORD_BYTES,
+    UsageRecord,
+    choose_auto,
+    format_age,
+    read_usage,
+)
 from tests.conftest import RegistryWriter
+from tests.helpers import RECORDED, ago, five_hour, record_path, write_record
 
 REGISTRY = """\
     version: 1
@@ -22,39 +32,9 @@ REGISTRY = """\
       work: {agent: claude, dir: ~/.config/work}
       side: {agent: claude, dir: ~/.config/side}
 """
-RECORDED = "2026-10-23T09:00:00Z"
 YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
 RESET = "\x1b[0m"
-
-
-def record_path(dirs: Dirs, account: str) -> Path:
-    return dirs.state_dir / "usage" / f"{account}.json"
-
-
-def write_record(dirs: Dirs, account: str, document: JsonValue | str) -> Path:
-    """Store ``document``, as JSON unless it is text, as the record of ``account``."""
-    path = record_path(dirs, account)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = document if isinstance(document, str) else json.dumps(document)
-    _ = path.write_text(text, encoding="utf-8")
-    return path
-
-
-def five_hour(percentage: JsonValue, recorded_at: str = RECORDED) -> JsonValue:
-    """Build a record as the statusline writes it, with other limits beside."""
-    return {
-        "recorded_at": recorded_at,
-        "rate_limits": {
-            "five_hour": {"used_percentage": percentage, "resets_at": 1792000000},
-            "seven_day": {"used_percentage": 3, "resets_at": 1792500000},
-        },
-    }
-
-
-def ago(**delta: float) -> str:
-    """Write the time ``delta`` before now, as the statusline does."""
-    return (datetime.now(UTC) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def test_a_valid_record_is_read(dirs: Dirs) -> None:
@@ -75,7 +55,7 @@ def test_a_missing_file_is_no_data(dirs: Dirs) -> None:
     [
         pytest.param("{not json", "invalid JSON", id="not-json"),
         pytest.param("", "invalid JSON", id="empty"),
-        pytest.param("[" * 200_000, "nested too deeply", id="deeply-nested"),
+        pytest.param("[" * 60_000, "invalid JSON", id="deeply-nested"),
         pytest.param("[1, 2]", "must be a JSON object", id="array"),
         pytest.param("null", "must be a JSON object", id="null"),
         pytest.param({"rate_limits": {}}, "/recorded_at: missing", id="no-time"),
@@ -110,14 +90,23 @@ def test_a_missing_file_is_no_data(dirs: Dirs) -> None:
         pytest.param(
             five_hour([12]), "/rate_limits/five_hour/used_percentage", id="list"
         ),
-        pytest.param(five_hour(-0.5), "outside 0 to 100", id="below"),
-        pytest.param(five_hour(100.5), "outside 0 to 100", id="above"),
-        pytest.param(five_hour(10**400), "outside 0 to 100", id="huge-int"),
         pytest.param(
             '{"recorded_at": "2026-10-23T09:00:00Z", "rate_limits": '
             + '{"five_hour": {"used_percentage": 1e999}}}',
-            "outside 0 to 100",
+            "not a finite number",
             id="infinite",
+        ),
+        pytest.param(
+            '{"recorded_at": "2026-10-23T09:00:00Z", "rate_limits": '
+            + '{"five_hour": {"used_percentage": -1e999}}}',
+            "not a finite number",
+            id="minus-infinite",
+        ),
+        pytest.param(
+            '{"recorded_at": "2026-10-23T09:00:00Z", "rate_limits": '
+            + '{"five_hour": {"used_percentage": NaN}}}',
+            "NaN is not valid JSON",
+            id="nan-literal",
         ),
     ],
 )
@@ -155,6 +144,143 @@ def test_a_file_that_is_not_text_is_no_data_with_a_warning(dirs: Dirs) -> None:
     assert record is None
     assert warning is not None
     assert warning.startswith(f"{path}: cannot be read")
+
+
+def test_a_parser_that_gives_up_on_nesting_is_no_data_with_a_warning(
+    dirs: Dirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What nests deeply enough to do that within the size limit depends on the
+    # interpreter, so the parser is made to give up.
+    def give_up(_text: str, _origin: str) -> JsonValue:
+        raise RecursionError
+
+    monkeypatch.setattr("atc.usage.parse_json", give_up)
+    path = write_record(dirs, "personal", "[[[")
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: invalid JSON: nested too deeply",
+    )
+
+
+def test_a_nan_percentage_is_not_valid_even_if_the_parser_lets_it_through(
+    dirs: Dirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # parse_json refuses the NaN literal, so only a parser that did not would
+    # hand one over.
+    def parse(_text: str, _origin: str) -> JsonValue:
+        return five_hour(float("nan"))
+
+    monkeypatch.setattr("atc.usage.parse_json", parse)
+    path = write_record(dirs, "personal", "{}")
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: /rate_limits/five_hour/used_percentage: not a finite number",
+    )
+
+
+def test_a_directory_is_not_read(dirs: Dirs) -> None:
+    path = record_path(dirs, "personal")
+    path.mkdir(parents=True)
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: cannot be read: not a regular file",
+    )
+
+
+def open_write_end(path: Path) -> None:
+    """Open and close the write end of a FIFO that a reader is waiting on."""
+    with contextlib.suppress(OSError):
+        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+
+
+def test_a_fifo_is_not_read_and_does_not_block(dirs: Dirs) -> None:
+    path = record_path(dirs, "personal")
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path)
+    # A reader that blocked would be let go by a writer, so a regression fails
+    # the test and does not hang the run.
+    release = threading.Timer(5, open_write_end, args=(path,))
+    release.start()
+
+    try:
+        result = read_usage(dirs, "personal")
+    finally:
+        release.cancel()
+
+    assert result == (None, f"{path}: cannot be read: not a regular file")
+
+
+def test_a_symbolic_link_to_a_device_is_not_read(dirs: Dirs) -> None:
+    zero = Path("/dev/zero")
+    if not zero.exists():
+        pytest.skip("no /dev/zero")
+    path = record_path(dirs, "personal")
+    path.parent.mkdir(parents=True)
+    path.symlink_to(zero)
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: cannot be read: a symbolic link, not a regular file",
+    )
+
+
+def test_a_symbolic_link_to_a_regular_file_is_not_followed(
+    dirs: Dirs, tmp_path: Path
+) -> None:
+    target = tmp_path / "elsewhere.json"
+    _ = target.write_text('{"recorded_at": "2026-10-23T09:00:00Z"}', encoding="utf-8")
+    path = record_path(dirs, "personal")
+    path.parent.mkdir(parents=True)
+    path.symlink_to(target)
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: cannot be read: a symbolic link, not a regular file",
+    )
+
+
+def test_a_directory_symbolic_link_above_the_file_is_followed(
+    dirs: Dirs, tmp_path: Path
+) -> None:
+    real = tmp_path / "real-usage"
+    real.mkdir()
+    _ = (real / "personal.json").write_text(
+        '{"recorded_at": "2026-10-23T09:00:00Z"}', encoding="utf-8"
+    )
+    dirs.state_dir.mkdir(parents=True)
+    (dirs.state_dir / "usage").symlink_to(real)
+
+    record, warning = read_usage(dirs, "personal")
+
+    assert warning is None
+    assert record == UsageRecord(datetime(2026, 10, 23, 9, 0, tzinfo=UTC), None)
+
+
+def padded(size: int) -> str:
+    """Make a valid record, with spaces after it up to ``size`` bytes."""
+    text = '{"recorded_at": "2026-10-23T09:00:00Z"}'
+    return text + " " * (size - len(text))
+
+
+def test_a_file_at_the_size_limit_is_read(dirs: Dirs) -> None:
+    _ = write_record(dirs, "personal", padded(MAX_RECORD_BYTES))
+
+    record, warning = read_usage(dirs, "personal")
+
+    assert warning is None
+    assert record is not None
+
+
+def test_a_file_over_the_size_limit_is_no_data_with_a_warning(dirs: Dirs) -> None:
+    path = write_record(dirs, "personal", padded(MAX_RECORD_BYTES + 1))
+
+    assert read_usage(dirs, "personal") == (
+        None,
+        f"{path}: cannot be read: larger than {MAX_RECORD_BYTES // 1024} KiB",
+    )
 
 
 @pytest.mark.parametrize(
@@ -199,6 +325,32 @@ def test_a_percentage_in_range_is_kept_as_a_float(
     assert isinstance(record.five_hour_pct, float)
 
 
+@pytest.mark.parametrize(
+    ("percentage", "kept"),
+    [
+        pytest.param(100.4, 100.0, id="just-above"),
+        pytest.param(250, 100.0, id="far-above"),
+        pytest.param(10**400, 100.0, id="huge-int"),
+        pytest.param(1e300, 100.0, id="huge-float"),
+        pytest.param(-0.5, 0.0, id="just-below"),
+        pytest.param(-3, 0.0, id="below-int"),
+        pytest.param(-(10**400), 0.0, id="huge-negative-int"),
+    ],
+)
+def test_a_percentage_outside_0_to_100_is_clamped_with_a_warning(
+    dirs: Dirs, percentage: float, kept: float
+) -> None:
+    path = write_record(dirs, "personal", five_hour(percentage))
+
+    record, warning = read_usage(dirs, "personal")
+
+    assert record == UsageRecord(datetime(2026, 10, 23, 9, 0, tzinfo=UTC), kept)
+    assert warning == (
+        f"{path}: /rate_limits/five_hour/used_percentage: outside 0 to 100, "
+        f"clamped to {kept:.0f}"
+    )
+
+
 def test_a_time_with_an_offset_is_the_same_instant(dirs: Dirs) -> None:
     _ = write_record(dirs, "personal", five_hour(5, "2026-10-23T11:00:00+02:00"))
 
@@ -225,6 +377,108 @@ def test_a_time_with_an_offset_is_the_same_instant(dirs: Dirs) -> None:
 )
 def test_an_age_is_written_in_its_two_largest_units(age: timedelta, text: str) -> None:
     assert format_age(age) == text
+
+
+NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+
+
+def seen(percentage: float | None, **age: float) -> UsageRecord:
+    """Make a record that was recorded ``age`` before ``NOW``."""
+    return UsageRecord(NOW - timedelta(**age), percentage)
+
+
+def test_a_record_dated_in_the_future_counts_as_recent() -> None:
+    # read_usage refuses such a record, so this is only a clock that moved back.
+    records = {"a": seen(10, hours=1), "b": seen(90, hours=-1)}
+
+    assert choose_auto(["a", "b"], records, NOW) == (
+        "a",
+        "5-hour usage 10%, recorded 1h 0m ago",
+    )
+    assert choose_auto(["b"], records, NOW) == (
+        "b",
+        "5-hour usage 90%, recorded just now",
+    )
+
+
+def test_the_lowest_recent_usage_wins() -> None:
+    records = {
+        "a": seen(60, hours=1),
+        "b": seen(20, hours=2),
+        "c": seen(45, minutes=10),
+    }
+
+    assert choose_auto(["a", "b", "c"], records, NOW) == (
+        "b",
+        "5-hour usage 20%, recorded 2h 0m ago",
+    )
+
+
+def test_a_stale_record_scores_zero() -> None:
+    records = {"a": seen(10, hours=1), "b": seen(90, hours=6, minutes=3)}
+
+    assert choose_auto(["a", "b"], records, NOW) == (
+        "b",
+        "recorded 6h 3m ago, so its 5-hour window has rolled over",
+    )
+
+
+def test_a_record_is_stale_from_five_hours_on() -> None:
+    fresh = {"a": seen(10, hours=1), "b": seen(90, hours=4, minutes=59)}
+    stale = {"a": seen(10, hours=1), "b": seen(90, hours=5)}
+
+    assert choose_auto(["a", "b"], fresh, NOW)[0] == "a"
+    assert choose_auto(["a", "b"], stale, NOW)[0] == "b"
+
+
+def test_a_tie_goes_to_the_first_listed() -> None:
+    records = {"a": seen(30, hours=1), "b": seen(30, hours=1)}
+
+    assert choose_auto(["a", "b"], records, NOW)[0] == "a"
+    assert choose_auto(["b", "a"], records, NOW)[0] == "b"
+
+
+def test_scores_of_zero_tie_whatever_made_them_zero() -> None:
+    records = {"a": seen(99, hours=9), "b": None, "c": seen(0, hours=1)}
+
+    assert choose_auto(["b", "a", "c"], records, NOW)[0] == "b"
+    assert choose_auto(["a", "b", "c"], records, NOW)[0] == "a"
+    assert choose_auto(["c", "a", "b"], records, NOW)[0] == "c"
+
+
+def test_no_data_scores_zero() -> None:
+    records = {"a": seen(5, hours=1), "b": None}
+
+    assert choose_auto(["a", "b"], records, NOW) == ("b", "no data")
+
+
+def test_an_account_missing_from_the_records_is_no_data() -> None:
+    assert choose_auto(["a", "b"], {"a": seen(5, hours=1)}, NOW) == ("b", "no data")
+
+
+def test_a_recent_record_without_a_five_hour_figure_scores_zero() -> None:
+    records: Mapping[str, UsageRecord | None] = {
+        "a": seen(5, hours=1),
+        "b": seen(None, minutes=30),
+    }
+
+    assert choose_auto(["a", "b"], records, NOW) == (
+        "b",
+        "no 5-hour figure, recorded 30m ago",
+    )
+
+
+def test_a_clamped_exhausted_account_is_not_the_least_used(dirs: Dirs) -> None:
+    _ = write_record(dirs, "a", five_hour(100.4, ago(minutes=5)))
+    _ = write_record(dirs, "b", five_hour(40, ago(minutes=5)))
+    records = {name: read_usage(dirs, name)[0] for name in ("a", "b")}
+
+    assert choose_auto(["a", "b"], records, datetime.now(UTC))[0] == "b"
+
+
+def test_choosing_among_no_candidates_is_an_error() -> None:
+    with pytest.raises(ValueError, match="no candidates"):
+        _ = choose_auto([], {}, NOW)
 
 
 def test_usage_lists_every_account(
@@ -267,6 +521,24 @@ def test_usage_warns_about_a_malformed_record_and_shows_no_data(
     assert captured.err.startswith(f"warning: {path}: invalid JSON")
     rows = [" ".join(line.split()) for line in captured.out.splitlines()]
     assert "work no data -" in rows
+
+
+def test_usage_shows_a_clamped_percentage_with_a_warning(
+    dirs: Dirs,
+    write_registry: RegistryWriter,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _ = write_registry(REGISTRY)
+    path = write_record(dirs, "work", five_hour(100.4, ago(minutes=1)))
+
+    status = main(["usage"])
+
+    captured = capsys.readouterr()
+    assert status == OK
+    assert captured.err.startswith(f"warning: {path}: ")
+    assert "clamped to 100" in captured.err
+    rows = [" ".join(line.split()) for line in captured.out.splitlines()]
+    assert "work 100% 1m ago" in rows
 
 
 @pytest.mark.parametrize(

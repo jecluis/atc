@@ -236,6 +236,20 @@ def test_account_names_that_break_the_rule_are_refused(
         _ = load_registry(write_registry(text), home)
 
 
+def test_auto_is_reserved_and_cannot_name_an_account(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        "version: 1\ndefault-account: auto\n"
+        "accounts: {auto: {agent: claude, dir: /a}}\n"
+    )
+
+    with pytest.raises(
+        RegistryError, match=r"/accounts/auto: 'auto' is reserved for -a auto"
+    ):
+        _ = load_registry(write_registry(text), home)
+
+
 def test_an_unknown_account_lists_the_known_ones(
     write_registry: RegistryWriter, home: Path
 ) -> None:

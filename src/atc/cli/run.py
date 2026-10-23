@@ -50,7 +50,9 @@ class _RunCommand(rich_click.RichCommand):
     metavar="ACCOUNT",
     help=(
         "Use ACCOUNT instead of the project's own account, or the default "
-        "account when the project names none."
+        "account when the project names none. auto picks the least used of the "
+        "project's accounts, by the usage that sessions of atc recorded; where "
+        "the project lists no accounts, or there is no project, it means no -a."
     ),
 )
 @click.option(
@@ -84,7 +86,10 @@ class _RunCommand(rich_click.RichCommand):
     "-q",
     "--quiet",
     is_flag=True,
-    help="Do not print the line that names the project, the account and the guard.",
+    help=(
+        "Do not print the line that names the project, the account and the "
+        "guard, or the one that says what -a auto chose."
+    ),
 )
 @conf_d_option
 @lax_option
@@ -110,6 +115,14 @@ def run(
     ATC_PROJECT and ATC_STATE_DIR set. Any other ATC_ variable it was started
     with is dropped. It prints one line on standard error naming the project,
     the account and whether the session is guarded.
+
+    With -a auto, a project that lists accounts gets the one with the lowest
+    five-hour usage, as "atc usage" shows it. An account with no usable record,
+    or whose record is over five hours old, counts as unused, and the first
+    listed wins a tie. A line on standard error, above the one that names the
+    account, says which account was chosen and why, and -q leaves it out. --print
+    shows it in the plan instead. Without such a project, -a auto is the same as
+    no -a, and no record is read.
 
     The agent is given the project's settings, if the project has a unit, as
     its --settings, with the ones given to atc merged over them. The account's
@@ -162,6 +175,8 @@ def run(
         _show(ui, plan)
         return
     if not quiet:
+        for note in plan.notes:
+            ui.info(f"atc: {note}")
         project = ABSENT if plan.project is None else plan.project.name
         parts = [
             f"project {project}",
@@ -200,6 +215,7 @@ def _show(ui: Ui, plan: LaunchPlan) -> None:
         f"repository: {repository}",
         f"project: {project}",
         f"account: {account.name} ({account.agent}, {account.dir})",
+        *plan.notes,
         f"guard: {_guard_state(plan)}",
     ]
     if plan.snapshot is not None:

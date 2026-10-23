@@ -31,8 +31,10 @@ def usage() -> None:
     usage in $XDG_STATE_HOME/atc/usage/ACCOUNT.json (~/.local/state/atc/usage
     when unset). An account with no record shows "no data", and so does one
     whose record cannot be used, which also gets a warning on standard error.
-    Usage from other machines, or from claude.ai, is never recorded. Nothing is
-    changed.
+    A percentage outside 0 to 100 is shown clamped to 0 or 100, with a warning.
+    Usage from other machines, or from claude.ai, is never recorded. "atc -a
+    auto" starts the least used account of a project from these records.
+    Nothing is changed.
     """
     ui = Ui.default()
     registry = load_machine_registry(ui)

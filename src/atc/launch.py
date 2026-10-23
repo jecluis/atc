@@ -4,6 +4,7 @@ import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
@@ -21,9 +22,10 @@ from atc.layers import (
     session_layer,
 )
 from atc.paths import Dirs
-from atc.registry import Account, Project, Registry, choose_account
+from atc.registry import AUTO_ACCOUNT, Account, Project, Registry, choose_account
 from atc.rules import RuleWarning, dead_rules
 from atc.ui import Ui
+from atc.usage import UsageRecord, choose_auto, read_usage
 
 SETTINGS_OPTION = "--settings"
 SESSION_ENTRIES = "session entries"
@@ -48,8 +50,10 @@ class LaunchPlan:
     them. ``env`` is the environment the agent gets, and ``env_changes`` is how
     it differs from the one atc was given: a variable's new value, or ``None``
     for one that is removed. ``warnings`` are problems that did not stop atc.
-    ``rule_warnings`` are the permission rules that can never apply, found only
-    when the plan was made to explain itself.
+    ``notes`` say what atc decided that the person should be told, as ``-a
+    auto`` does when it picks an account. ``rule_warnings`` are the permission
+    rules that can never apply, found only when the plan was made to explain
+    itself.
 
     ``guarded`` says the session protects the repository's packed history: the
     fragment and the environment already hold what that takes, and
@@ -69,6 +73,7 @@ class LaunchPlan:
     env_changes: dict[str, str | None]
     argv: list[str]
     warnings: tuple[str, ...]
+    notes: tuple[str, ...]
     rule_warnings: tuple[RuleWarning, ...]
     guarded: bool
     protected: tuple[Path, ...]
@@ -156,6 +161,12 @@ def plan_launch(
     Plan how to start the agent in ``cwd``, with the environment ``env``.
 
     The account is ``account`` if given, else the project's, else the default.
+    ``account`` may be ``"auto"``: if the project lists ``accounts``, the least
+    used of them, by what :func:`atc.usage.read_usage` finds. The plan's notes
+    say which was chosen and why, and its warnings have any problem with a
+    record. With no such project there is nothing to choose between, so ``auto``
+    is as if no account was given, and no record is read.
+
     The settings for the session are those of the project's unit, if it has
     one, then the agent's entries that protect the repository's packed history,
     then ``settings``, each merged over the ones before. ``agent_args`` go to
@@ -195,7 +206,8 @@ def plan_launch(
     project = find_project(
         ctx.registry, common, git_common_dir=git_common_dir, warn=warnings.append
     )
-    chosen = choose_account(ctx.registry, project, account)
+    name, notes = _resolve_auto(ctx, project, account, warnings)
+    chosen = choose_account(ctx.registry, project, name)
     backend = backend_for(chosen.agent, ctx.home)
     project_layer = (
         None if project is None else build_project_layer(ctx, project, chosen, lax=lax)
@@ -231,6 +243,7 @@ def plan_launch(
         env_changes=_changes(env, selected),
         argv=backend.argv(binary, fragment, agent_args),
         warnings=tuple(warnings),
+        notes=notes,
         rule_warnings=dead_rules(checked) if explain else (),
         guarded=guarded,
         protected=protected,
@@ -291,6 +304,35 @@ def _prepare_guard(plan: LaunchPlan, common: Path, dirs: Dirs, ui: Ui) -> None:
             "session starts with it not protected, so restart it to protect it"
         )
         ui.warning(message)
+
+
+def _resolve_auto(
+    ctx: BuildContext,
+    project: Project | None,
+    account: str | None,
+    warnings: list[str],
+) -> tuple[str | None, tuple[str, ...]]:
+    """
+    Turn ``account`` into the name to pick, which is the least used under ``auto``.
+
+    Returns that name, and the notes that say what was decided. Anything but
+    ``auto`` is returned as it is, with no notes. ``auto`` is ``None``, so that
+    the project's account and then the default apply, when ``project`` leaves no
+    choice. Otherwise the problems with the records are added to ``warnings``,
+    and the notes say the choice and why.
+    """
+    if account != AUTO_ACCOUNT:
+        return account, ()
+    if project is None or not project.accounts:
+        return None, ()
+    candidates = tuple(dict.fromkeys(project.accounts))
+    records: dict[str, UsageRecord | None] = {}
+    for name in candidates:
+        records[name], warning = read_usage(ctx.dirs, name)
+        if warning is not None:
+            warnings.append(warning)
+    chosen, reason = choose_auto(candidates, records, datetime.now(UTC))
+    return chosen, (f"-a {AUTO_ACCOUNT} chose {chosen}: {reason}",)
 
 
 def _refuse_settings(agent_args: Sequence[str]) -> None:

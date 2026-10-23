@@ -15,7 +15,16 @@ from atc.jsonval import JsonObject, canonical, dumps
 from atc.launch import LaunchPlan
 from atc.paths import Dirs
 from tests.conftest import ConfigWriter
-from tests.helpers import StopError, git_repo, guarded, make_source, unit
+from tests.helpers import (
+    StopError,
+    ago,
+    five_hour,
+    git_repo,
+    guarded,
+    make_source,
+    unit,
+    write_record,
+)
 
 FILES = {
     "conf/accounts/personal.json": unit({}),
@@ -658,3 +667,136 @@ def test_a_broken_account_unit_stops_neither_print_nor_a_launch(
     assert captured.err.count("warning:") == 1
     assert "argv: " in captured.out
     assert captured.out.endswith(dumps(plan.fragment))
+
+
+class AccountsConfigurer(Protocol):
+    def __call__(self) -> None: ...
+
+
+@pytest.fixture
+def configure_accounts(
+    configure: ConfigWriter, agent: Path, repo: Path, dirs: Dirs
+) -> AccountsConfigurer:
+    """Let ``bar`` list both accounts, and record that bravo is used more."""
+
+    def write() -> None:
+        registry = REGISTRY.format(agent=agent, repo=repo).replace(
+            "account: bravo}", "account: bravo, accounts: [bravo, personal]}"
+        )
+        configure(FILES, registry)
+        _ = write_record(dirs, "bravo", five_hour(80, ago(hours=1)))
+        _ = write_record(dirs, "personal", five_hour(10, ago(hours=2)))
+
+    return write
+
+
+def test_auto_starts_the_least_used_account_and_says_why(
+    executed: list[LaunchPlan],
+    configure_accounts: AccountsConfigurer,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_accounts()
+    monkeypatch.chdir(repo)
+
+    plan = start(executed, ["-a", "auto"])
+
+    assert plan.account.name == "personal"
+    assert capsys.readouterr().err == (
+        "atc: -a auto chose personal: 5-hour usage 10%, recorded 2h 0m ago\n"
+        "atc: project bar · account personal · guard on\n"
+    )
+
+
+def tree_labels(out: str) -> list[str]:
+    """Take the labels of the tree that ``--print`` writes, without its branches."""
+    return [line.split("── ", 1)[-1].strip() for line in out.splitlines()]
+
+
+def test_quiet_hides_the_reason_but_not_a_record_that_cannot_be_read(
+    executed: list[LaunchPlan],
+    configure_accounts: AccountsConfigurer,
+    dirs: Dirs,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_accounts()
+    path = write_record(dirs, "bravo", "{not json")
+    monkeypatch.chdir(repo)
+
+    plan = start(executed, ["-q", "-a", "auto"])
+
+    assert plan.account.name == "bravo"
+    err = capsys.readouterr().err
+    assert err.startswith(f"warning: {path}: invalid JSON")
+    assert err.count("\n") == 1
+
+
+def test_print_shows_the_account_that_auto_chose(
+    configure_accounts: AccountsConfigurer,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_accounts()
+    monkeypatch.chdir(repo)
+
+    assert main(["--print", "-a", "auto"]) == OK
+
+    captured = capsys.readouterr()
+    assert "ATC_ACCOUNT=personal" in captured.out
+    assert captured.err == ""
+    labels = tree_labels(captured.out)
+    account = next(i for i, label in enumerate(labels) if label.startswith("account:"))
+    assert labels[account].startswith("account: personal (claude, ")
+    assert labels[account + 1] == (
+        "-a auto chose personal: 5-hour usage 10%, recorded 2h 0m ago"
+    )
+
+
+def test_print_adds_nothing_to_the_plan_without_auto(
+    configure_accounts: AccountsConfigurer,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_accounts()
+    monkeypatch.chdir(repo)
+
+    assert main(["--print"]) == OK
+    implicit = tree_labels(capsys.readouterr().out)
+    assert main(["--print", "-a", "personal"]) == OK
+    named = tree_labels(capsys.readouterr().out)
+
+    assert "chose" not in "".join(implicit + named)
+    assert [label.split(" ")[0] for label in named[:5]] == [
+        "atc",
+        "repository:",
+        "project:",
+        "account:",
+        "guard:",
+    ]
+
+
+def test_auto_outside_a_project_is_the_default_account_and_silent(
+    configure_accounts: AccountsConfigurer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_accounts()
+
+    assert main(["--print", "-a", "auto"]) == OK
+
+    captured = capsys.readouterr()
+    assert "account: personal (claude, " in captured.out
+    assert "chose" not in captured.out
+    assert captured.err == ""
+
+
+def test_run_help_describes_auto(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["run", "--help"]) == OK
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "auto picks the least used of the project's accounts" in out
+    assert "With -a auto, a project that lists accounts" in out

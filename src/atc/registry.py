@@ -24,6 +24,8 @@ DEFAULT_GC_HOURS = 24
 """The hours between full ``git gc`` runs when the registry says nothing."""
 DEFAULT_BRANCH_FROM = "main"
 """The branch new branches start from when a project says nothing."""
+AUTO_ACCOUNT = "auto"
+"""What ``-a`` takes to mean the least used account, so no account has this name."""
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _VARIABLE_NAME = re.compile(r"[a-z][a-z0-9_]*")
@@ -436,6 +438,13 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
     owners: dict[Path, str] = {}
     for name, entry in model.accounts.items():
         _check_name("account", name, f"/accounts/{name}", origin)
+        if name == AUTO_ACCOUNT:
+            message = (
+                f"{origin}: /accounts/{name}: '{name}' is reserved for -a {name}, "
+                "which picks the project's least used account; name the account "
+                "something else"
+            )
+            raise RegistryError(message)
         try:
             directory = normalize_path(entry.dir, home)
         except RegistryError as exc:
