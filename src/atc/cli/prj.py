@@ -1,6 +1,5 @@
 """``atc prj``: see and change the projects of the machine registry."""
 
-from collections.abc import Sequence
 from pathlib import Path
 
 import click
@@ -10,25 +9,26 @@ from rich.table import Table
 from rich.text import Text
 
 from atc import git
-from atc.cli.options import current_dirs, load_sources
+from atc.cli.options import (
+    current_project,
+    load_machine_registry,
+    load_sources,
+    registered_project,
+    worktrees_table,
+)
 from atc.errors import ConfigError, GitError
 from atc.jsonval import JsonObject
-from atc.launch import find_project
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
-    REGISTRY_FILE,
     Project,
     Registry,
     add_project,
-    load_registry,
     remove_project,
 )
 from atc.ui import Ui
-from atc.worktree import Worktree, list_worktrees
+from atc.worktree import list_worktrees
 
-SHORT_HEAD = 7
-"""How many characters of a commit are shown."""
 LABEL_WIDTH = 13
 
 
@@ -49,7 +49,7 @@ def ls() -> None:
     changed.
     """
     ui = Ui.default()
-    registry = _load(ui)
+    registry = load_machine_registry(ui)
     if not registry.projects:
         ui.info("no projects are registered")
         return
@@ -83,8 +83,12 @@ def show(name: str | None) -> None:
     changed.
     """
     ui = Ui.default()
-    registry = _load(ui)
-    found = registry.project(name) if name is not None else _current(registry, ui)
+    registry = load_machine_registry(ui)
+    found = (
+        registry.project(name)
+        if name is not None
+        else current_project(registry, ui, advice="give the NAME of one")
+    )
     for label, value in _fields(registry, found):
         ui.line(f"{label:<{LABEL_WIDTH}}{value}")
     try:
@@ -93,7 +97,7 @@ def show(name: str | None) -> None:
         ui.warning(f"cannot list the worktrees of '{found.name}': {exc}")
         return
     ui.line("")
-    ui.table(_worktrees_table(trees))
+    ui.table(worktrees_table(trees))
 
 
 @prj.command(cls=rich_click.RichCommand, name="add")
@@ -153,9 +157,9 @@ def add(
     has no settings of its own until one does.
     """
     ui = Ui.default()
-    registry = _load(ui)
+    registry = load_machine_registry(ui)
     checkout = _checkout(repo)
-    existing = _registered(registry, checkout, ui)
+    existing = registered_project(registry, checkout, ui)
     if existing is not None:
         raise ConfigError(
             f"{checkout}: already registered as project '{existing.name}'"
@@ -189,49 +193,9 @@ def rm(name: str) -> None:
     lists the projects there are.
     """
     ui = Ui.default()
-    registry = _load(ui)
+    registry = load_machine_registry(ui)
     updated = remove_project(registry.path, Path.home(), name)
     ui.line(f"{name}: removed from {updated.path}")
-
-
-def _load(ui: Ui) -> Registry:
-    """Load the machine registry, and report its warnings."""
-    registry = load_registry(current_dirs().config_dir / REGISTRY_FILE, Path.home())
-    for warning in registry.warnings:
-        ui.warning(warning)
-    return registry
-
-
-def _current(registry: Registry, ui: Ui) -> Project:
-    """
-    Find the project that the current directory is in.
-
-    Raises:
-        click.UsageError: it is in none.
-
-    """
-    found = _registered(registry, Path.cwd(), ui)
-    if found is None:
-        raise click.UsageError(
-            "the current directory is not in a registered project; give the NAME of one"
-        )
-    return found
-
-
-def _registered(registry: Registry, directory: Path, ui: Ui) -> Project | None:
-    """
-    Find the project whose repository ``directory`` is in, if there is one.
-
-    Raises:
-        RegistryError: several projects are that repository.
-
-    """
-    return find_project(
-        registry,
-        git.common_dir(directory),
-        git_common_dir=git.common_dir,
-        warn=ui.warning,
-    )
 
 
 def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
@@ -253,20 +217,6 @@ def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
         ("snapshot", project.snapshot or "-"),
         ("vars", variables or "-"),
     ]
-
-
-def _worktrees_table(trees: Sequence[Worktree]) -> Table:
-    table = Table(box=box.SIMPLE_HEAD, pad_edge=False, padding=(0, 1, 0, 0))
-    table.add_column("Worktree", overflow="fold", min_width=16)
-    table.add_column("Branch", no_wrap=True)
-    table.add_column("Commit", no_wrap=True)
-    for tree in trees:
-        table.add_row(
-            Text(str(tree.path)),
-            Text(tree.branch) if tree.branch else Text("(detached)", style="dim"),
-            Text(tree.head[:SHORT_HEAD]),
-        )
-    return table
 
 
 def _dash() -> Text:

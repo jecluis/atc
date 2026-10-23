@@ -9,9 +9,9 @@ Claude Code is the first agent it supports.
 
 Today the tool implements `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc prj ls`, `atc prj show`,
-`atc prj add`, `atc prj rm`, `atc skills ls`, `atc skills pick`,
-`atc skills add`, `atc skills rm`, `atc src ls`, `atc src check` and
-`atc src pull`.
+`atc prj add`, `atc prj rm`, `atc wt new`, `atc wt ls`, `atc wt rm`,
+`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
+`atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -797,6 +797,74 @@ deeper that follows the entry before, and blank lines. Nothing else is touched:
 not the repository, not its worktrees, and not `projects/NAME.json` in the config
 sources. An unknown `NAME` is an error that lists the projects there are, and the
 file is left alone.
+
+### `atc wt new BRANCH [--from REF] [--run]`
+
+Adds a worktree for `BRANCH` to the project the current directory is in,
+whether in the main checkout or in a worktree, as for `atc run`. The project
+must have a `worktrees` directory in the registry, and the worktree is made in
+it, in a subdirectory named after `BRANCH`. The name is the branch's slug:
+
+- the branch name is lowercased
+- each space becomes `-`
+- every character other than `a-z`, `0-9`, `_`, `.` and `-` becomes `--`
+
+So `feature/x` is made in `feature--x`, and `v1.2_rc` in `v1.2_rc`. The directory
+need not exist, and git makes it.
+
+If `BRANCH` exists, it is checked out in the worktree. Otherwise it is created,
+at `REF` when `--from` gives one, or else at the project's `branch-from`, which is
+`main` unless the registry says otherwise. `REF` is any commit, branch or tag,
+and plays no part when `BRANCH` exists. The path of the worktree is reported on
+standard output. Git's refusals, for a branch that is checked out in
+another worktree or a directory that exists already, are errors that exit `1`,
+and so is a project with no `worktrees`. Outside every registered project it is
+a usage error, exit status `2`.
+
+atc keeps no list of worktrees. Git is the only record, so worktrees made with
+`git worktree add` are shown by `atc wt ls` and removed by `atc wt rm` just the
+same, as long as they are in the project's `worktrees` directory.
+
+Keep `worktrees` out of every directory a session may write to, so that a session
+cannot remove its own worktree. `atc check` tests this for the worktree it runs in.
+
+| Option | Effect |
+| --- | --- |
+| `--from REF` | Start a new branch at `REF` instead of at `branch-from`. |
+| `--run` | Once the worktree is made, change into it and start the agent, as `atc run` does with no options. Nothing is started when the worktree could not be made. |
+
+### `atc wt ls`
+
+Lists the worktrees of the current project, as `atc prj show` does under its
+fields: a table of what git lists for the project's repository, the main checkout
+first, with each worktree's path, its branch (`(detached)` when `HEAD` is not on
+a branch) and the first 7 characters of its commit. That includes worktrees that
+are not in the project's `worktrees` directory. The table goes to standard output.
+
+### `atc wt rm NAME [--force]`
+
+Removes the worktree in the directory `NAME` of the project's `worktrees`
+directory, which is the slug that `atc wt new` made, such as `feature--x`. `NAME`
+must be a single directory name: `..`, and anything with a `/` in it, is an error.
+
+Without `--force`, a worktree whose removal would lose work is refused, with an
+error that says why and exits `1`:
+
+- git refuses one with uncommitted changes to tracked files, or untracked files
+- atc refuses one whose `HEAD` is detached at a commit that no branch contains,
+  since nothing would keep that commit once the worktree and its reflog are gone
+- atc refuses one where a rebase, merge, cherry-pick, revert or bisect is in
+  progress
+
+`--force` removes it anyway. A locked worktree is refused either way. **Files
+that git ignores are deleted** with the worktree, whatever they hold, as build
+output such as `target/` or `.venv` usually is: move anything you want to keep
+first. The branch is never deleted, so what is committed on it stays in the
+repository, and a later `atc wt new` with the same branch checks it out again.
+
+| Option | Effect |
+| --- | --- |
+| `--force` | Remove the worktree even if it has uncommitted changes or untracked files, a detached `HEAD` that no branch contains, or an operation in progress. |
 
 ### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 

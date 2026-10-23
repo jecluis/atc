@@ -16,6 +16,7 @@ from atc.cli.show import show
 from atc.cli.skills import skills
 from atc.cli.src import src
 from atc.cli.sync import sync
+from atc.cli.wt import wt
 from atc.errors import ConfigError
 from atc.ui import Ui
 
@@ -56,6 +57,7 @@ app.add_command(show)
 app.add_command(skills)
 app.add_command(src)
 app.add_command(sync)
+app.add_command(wt)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
