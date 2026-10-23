@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -47,6 +47,10 @@ class _AccountModel(_Model):
     vars: dict[str, str] = Field(default_factory=dict)
 
 
+class _AgentModel(_Model):
+    bin: str | None = Field(default=None, min_length=1)
+
+
 class _ProjectModel(_Model):
     repo: str
     account: str | None = None
@@ -60,6 +64,7 @@ class _RegistryModel(_Model):
     vars: dict[str, str] = Field(default_factory=dict)
     default_account: str
     default_agents_md: str = DEFAULT_AGENTS_MD
+    agents: dict[Literal["claude"], _AgentModel] = Field(default_factory=dict)
     accounts: dict[str, _AccountModel]
     projects: dict[str, _ProjectModel] = Field(default_factory=dict)
 
@@ -137,7 +142,9 @@ class Registry:
     ``projects`` are in the order of the file. ``warnings`` are problems that do
     not stop atc from using the registry. ``default_agents_md`` is the asset
     reference of the instructions file that accounts link when they ask for the
-    default.
+    default. ``agent_bins`` maps an agent to the binary the registry names for
+    it: an absolute path, or a command name to look up on ``PATH``. An agent
+    that is not in it is looked up on ``PATH`` by its own name.
     """
 
     path: Path
@@ -147,6 +154,7 @@ class Registry:
     projects: Mapping[str, Project]
     warnings: tuple[str, ...]
     default_agents_md: str = DEFAULT_AGENTS_MD
+    agent_bins: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def account(self, name: str) -> Account:
         """
@@ -399,7 +407,30 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
         projects=projects,
         warnings=tuple(warnings),
         default_agents_md=model.default_agents_md,
+        agent_bins={
+            agent: _agent_bin(entry.bin, f"/agents/{agent}/bin", origin, home)
+            for agent, entry in model.agents.items()
+            if entry.bin is not None
+        },
     )
+
+
+def _agent_bin(text: str, pointer: str, origin: Path, home: Path) -> str:
+    """
+    Read an agent's ``bin``: a path if it contains ``/``, otherwise a command name.
+
+    A path has a leading ``~`` expanded and must then be absolute. It is not
+    resolved, so a symbolic link is started as itself.
+    """
+    if "/" not in text:
+        return text
+    expanded = home / text[2:] if text.startswith("~/") else Path(text)
+    if not expanded.is_absolute():
+        message = (
+            f"{origin}: {pointer}: '{text}': paths must be absolute, or start with ~/"
+        )
+        raise RegistryError(message)
+    return str(expanded)
 
 
 def _agents_md_file(

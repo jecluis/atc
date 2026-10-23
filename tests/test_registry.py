@@ -857,3 +857,66 @@ def test_set_skills_keeps_the_permissions_of_the_file(
 def test_set_skills_reports_a_file_that_is_missing(home: Path, tmp_path: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be read"):
         _ = set_skills(tmp_path / "absent.yaml", home, "a", ["x"])
+
+
+def test_an_agent_can_name_its_binary(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        MINIMAL_REGISTRY + "    agents:\n      claude: {bin: /opt/claude/bin/claude}\n"
+    )
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.agent_bins == {"claude": "/opt/claude/bin/claude"}
+
+
+def test_a_binary_path_expands_a_leading_tilde_and_a_name_is_kept(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = MINIMAL_REGISTRY + "    agents:\n      claude: {bin: ~/bin/claude}\n"
+    registry = load_registry(write_registry(text), home)
+    assert registry.agent_bins == {"claude": str(home / "bin" / "claude")}
+
+    text = MINIMAL_REGISTRY + "    agents:\n      claude: {bin: claude-2}\n"
+    registry = load_registry(write_registry(text), home)
+    assert registry.agent_bins == {"claude": "claude-2"}
+
+
+def test_a_binary_path_is_not_resolved(
+    write_registry: RegistryWriter, home: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "link").symlink_to(tmp_path / "target")
+    text = MINIMAL_REGISTRY + f"    agents:\n      claude: {{bin: {tmp_path}/link}}\n"
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.agent_bins == {"claude": f"{tmp_path}/link"}
+
+
+def test_an_agent_without_a_binary_has_none_to_name(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    assert load_registry(write_registry(MINIMAL_REGISTRY), home).agent_bins == {}
+    text = MINIMAL_REGISTRY + "    agents:\n      claude: {}\n"
+    assert load_registry(write_registry(text), home).agent_bins == {}
+
+
+@pytest.mark.parametrize(
+    ("agents", "pointer"),
+    [
+        ("{codex: {bin: codex}}", "/agents/codex"),
+        ("{claude: {bin: ''}}", "/agents/claude/bin"),
+        ("{claude: {bin: 3}}", "/agents/claude/bin"),
+        ("{claude: {bin: bin/claude}}", r"/agents/claude/bin.*absolute"),
+        ("{claude: {bin: ./claude}}", r"/agents/claude/bin.*absolute"),
+        ("{claude: {path: claude}}", "/agents/claude/path"),
+    ],
+)
+def test_an_agents_section_is_checked(
+    write_registry: RegistryWriter, home: Path, agents: str, pointer: str
+) -> None:
+    text = MINIMAL_REGISTRY + f"    agents: {agents}\n"
+
+    with pytest.raises(RegistryError, match=pointer):
+        _ = load_registry(write_registry(text), home)

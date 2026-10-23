@@ -123,6 +123,20 @@ def build_project_layer(
     return _layer("project", resolution, origins)
 
 
+def session_layer(settings: JsonObject, origin: str) -> Layer:
+    """
+    Make the layer of ``settings`` that are given for one session.
+
+    ``origin`` names where they are from, for the message.
+
+    Raises:
+        PolicyError: ``settings`` set a key that the session layer must not.
+
+    """
+    check_policy(settings, "session", origin)
+    return Layer("session", settings, (), {})
+
+
 def _layer(
     kind: LayerKind,
     resolution: Resolution,

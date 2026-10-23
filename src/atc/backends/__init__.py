@@ -1,5 +1,6 @@
 """What is specific to one coding agent."""
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -43,6 +44,19 @@ class Backend(Protocol):
 
     def skills_dir(self, account: Account) -> Path:
         """Return the directory ``account``'s skills are read from."""
+        ...
+
+    def environment(self, account: Account, env: Mapping[str, str]) -> dict[str, str]:
+        """Return ``env`` changed so that the agent runs in ``account``."""
+        ...
+
+    def argv(self, bin: str, fragment: JsonObject, args: Sequence[str]) -> list[str]:
+        """
+        Return the command that starts the agent at ``bin``.
+
+        ``fragment`` is the settings for this session only, and ``args`` are the
+        agent's own arguments, which come last.
+        """
         ...
 
     def render(self, settings: JsonObject) -> str:

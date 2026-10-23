@@ -11,13 +11,6 @@ from atc.cli import main
 from atc.exitcodes import INTERRUPTED, USAGE
 
 
-def test_no_command_is_a_usage_error() -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        _ = main([])
-
-    assert exit_info.value.code == USAGE
-
-
 def test_unknown_command_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["shwo"]) == USAGE
     assert "No such command" in capsys.readouterr().err

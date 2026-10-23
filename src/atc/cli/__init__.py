@@ -1,12 +1,14 @@
 """The atc command line."""
 
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import cast, override
 
 import click
 import rich_click
 
 from atc import exitcodes
+from atc.cli.options import HELP_OPTIONS
+from atc.cli.run import run
 from atc.cli.show import show
 from atc.cli.skills import skills
 from atc.cli.src import src
@@ -17,12 +19,33 @@ from atc.ui import Ui
 PROGRAM = "atc"
 
 
-@click.group(cls=rich_click.RichGroup, name=PROGRAM)
+_GROUP_OPTIONS = frozenset({"--help", "-h", "--version"})
+"""The first arguments that are the group's own, not ``run``'s."""
+
+
+class AtcGroup(rich_click.RichGroup):
+    """
+    The atc command group, where ``run`` is the command when none is named.
+
+    No arguments, or a first argument that starts with ``-`` and is not one of
+    the group's own options, means ``run``. That includes ``--``. Any other
+    first word must be a command, so a typo never starts a session.
+    """
+
+    @override
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if not args or (args[0].startswith("-") and args[0] not in _GROUP_OPTIONS):
+            args = ["run", *args]
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=AtcGroup, name=PROGRAM, context_settings=HELP_OPTIONS)
 @click.version_option(package_name=PROGRAM, prog_name=PROGRAM)
 def app() -> None:
     """Start coding agents in the right account, with shared settings."""
 
 
+app.add_command(run)
 app.add_command(show)
 app.add_command(skills)
 app.add_command(src)

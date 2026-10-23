@@ -19,6 +19,10 @@ def _directory(
     return None if value is None else Path(value)
 
 
+HELP_OPTIONS = {"help_option_names": ["-h", "--help"]}
+"""The context settings that make ``-h`` mean ``--help``."""
+
+
 conf_d_option = click.option(
     "--conf-d",
     "conf_d",

@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.json import JSON
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from atc.jsonval import JsonValue, dumps
 
@@ -107,6 +108,10 @@ class Ui:
     def table(self, table: Table) -> None:
         """Write ``table`` on standard output."""
         self.out.print(table)
+
+    def tree(self, tree: Tree) -> None:
+        """Write ``tree`` on standard output."""
+        self.out.print(tree)
 
     def pick(self, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
         """

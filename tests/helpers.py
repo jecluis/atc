@@ -145,3 +145,7 @@ def skill_files(*names: str) -> dict[str, str | JsonObject]:
     return {
         f"skills/{name}/SKILL.md": skill_md(name, f"The {name} skill") for name in names
     }
+
+
+class StopError(Exception):
+    """Raised by a test's stand-in for a call that never returns."""

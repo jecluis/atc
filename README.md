@@ -7,9 +7,9 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc sync`, `atc show account`, `atc show project`,
-`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
-`atc src ls`, `atc src check` and `atc src pull`.
+Today the tool implements `atc run`, `atc sync`, `atc show account`,
+`atc show project`, `atc skills ls`, `atc skills pick`, `atc skills add`,
+`atc skills rm`, `atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -79,6 +79,9 @@ vars:
   scratch_root: /mnt/scratch
 default-account: personal
 default-agents-md: AGENTS.md
+agents:
+  claude:
+    bin: claude
 accounts:
   personal:
     agent: claude
@@ -108,6 +111,7 @@ projects:
 | `vars` | no | Variables for every unit, as `{{vars.<name>}}` (see Templates). |
 | `default-account` | yes | The account used outside projects, and by projects that name none. It must be one of `accounts`. |
 | `default-agents-md` | no | The file that `use-default-agents-md` links, as an asset reference (see Units). Defaults to `AGENTS.md`. |
+| `agents.<agent>.bin` | no | The binary `atc run` starts for the agent: a command name, looked up on `PATH`, or a path, which is absolute or starts with `~/`. A value with a `/` in it is a path. Defaults to the agent's name. Only `claude` exists. |
 | `accounts.<name>.agent` | yes | The coding agent the account is for. Only `claude` exists. |
 | `accounts.<name>.dir` | yes | The account's configuration directory. |
 | `accounts.<name>.unit` | no | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`. |
@@ -301,7 +305,87 @@ unknown-reference error.
 
 ## Usage
 
-Run `atc --help`, or `--help` after any command, for the options.
+Run `atc --help`, or `--help` after any command, for the options. `-h` means
+`--help` too.
+
+### `atc [run] [-a ACCOUNT] [--settings FILE|JSON] [--print] [-q] [--conf-d DIR] [-- AGENT-ARGS]...`
+
+Starts the agent in the right account, replacing atc with it. It works out:
+
+- **the project:** the one in the machine registry whose `repo` is in the same
+  git repository as the current directory. The main checkout and every
+  worktree of a repository match the same project, and a repository that is not
+  registered has none, as has a directory that is not in a repository. If git
+  fails for any other reason on the current directory, such as refusing a
+  repository that someone else owns, atc stops with exit status `1` rather than
+  starting without a project. A registered project whose `repo` git cannot read
+  is left out, with a warning.
+- **the account:** `ACCOUNT` when given, otherwise the project's `account`,
+  otherwise `default-account`. If the project lists `accounts`, the account
+  must be one of them. The account's `agent` decides which agent starts.
+- **the binary:** `agents.<agent>.bin` from the registry, otherwise the
+  agent's name, looked up on `PATH`. It must exist. atc refuses to start when it
+  resolves to atc itself, whether it was found on `PATH` or named in the
+  registry, which happens when `claude` is a link to `atc`; name the real binary
+  under `agents.claude.bin`.
+
+Before it replaces itself, atc prints one line on standard error:
+
+```
+atc: project bar · account bravo
+```
+
+It says `project –` outside a registered project. `-q` leaves the line out.
+Nothing else from atc appears once the agent has started, and the agent's exit
+status is the command's.
+
+**`atc` with no command.** `atc` with no arguments, or with a first argument
+that starts with `-`, is `atc run`; this includes `--`. `atc -- --resume x`
+therefore starts the agent with `--resume x`. Any other first word must be a
+command, so a typo such as `atc shwo` is an error and never starts a session.
+`atc --help`, `atc -h` and `atc --version` are atc's own, not `run`'s. After
+`--`, `-h` goes to the agent.
+
+**Arguments for the agent** go after `--`, and are passed on as they are, in
+order, after atc's own. An option that atc does not know, given before `--`, is
+an error, and so is any other word before it. To make every `claude` command go
+through atc, keep atc's own options for `atc` itself:
+
+```sh
+alias claude='atc --'
+claude --resume x        # atc -- --resume x
+claude "fix the build"   # atc -- "fix the build"
+atc -a work --print      # atc's own options are not given through the alias
+```
+
+A `--settings` or `--settings=…` among the agent's arguments is refused with
+exit status `2`: Claude Code takes only one `--settings`, so it would replace
+the one atc passes. Give `--settings` to `atc`, before `--`.
+
+**Environment.** The agent gets atc's environment with these changes:
+
+| Variable | Value |
+| --- | --- |
+| `ATC_ACCOUNT` | The account's name. |
+| `ATC_PROJECT` | The project's name. Removed outside a registered project. |
+| `ATC_STATE_DIR` | atc's state directory. |
+| `CLAUDE_CONFIG_DIR` | The account's directory. Removed for `~/.claude`, the directory Claude Code uses when the variable is not set. |
+
+Every other `ATC_` variable is removed, so a session started from inside another
+one never inherits the outer one's values.
+
+**Settings.** With `--settings`, the agent is started as
+`claude --settings '<settings as JSON>' …`. They are read as strict JSON, are
+not templates, and must not set `sandbox.allowUnsandboxedCommands`. Without it
+there is no `--settings` argument.
+
+| Option | Effect |
+| --- | --- |
+| `-a`, `--account ACCOUNT` | Use `ACCOUNT` instead of the project's own account. |
+| `--settings FILE\|JSON` | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. |
+| `--print` | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account, the changes to the environment, the command, and the settings as JSON. |
+| `-q`, `--quiet` | Leave out the line that names the project and the account. |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--print`. |
 
 ### `atc src ls [--conf-d DIR]`
 

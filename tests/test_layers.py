@@ -8,7 +8,13 @@ from atc import layers
 from atc.context import BuildContext
 from atc.errors import PathError, PolicyError, TemplateError
 from atc.jsonval import JsonObject
-from atc.layers import Layer, build_account_layer, build_project_layer, check_policy
+from atc.layers import (
+    Layer,
+    build_account_layer,
+    build_project_layer,
+    check_policy,
+    session_layer,
+)
 from tests.conftest import ContextBuilder
 from tests.helpers import MINIMAL_REGISTRY, unit
 
@@ -386,3 +392,15 @@ def test_the_project_layer_records_origins_with_the_project_unit(
 
     assert layer is not None
     assert layer.origins == {("deny", "Read(/r/x)"): ("projects/bar.json",)}
+
+
+def test_the_session_layer_is_the_settings_checked_against_the_policy() -> None:
+    settings: JsonObject = {"model": "opus"}
+
+    layer = session_layer(settings, "--settings")
+
+    assert layer == Layer("session", settings, (), {})
+    with pytest.raises(PolicyError, match=r"^--settings: .*allowUnsandboxedCommands"):
+        _ = session_layer(
+            {"sandbox": {"allowUnsandboxedCommands": False}}, "--settings"
+        )

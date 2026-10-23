@@ -133,3 +133,46 @@ def test_skills_live_in_a_directory_of_the_account(home: Path) -> None:
     assert backend.skills_dir(registry.account("bravo")) == (
         home / ".config" / "bravo" / "claude" / "skills"
     )
+
+
+def test_the_default_dir_is_selected_by_leaving_the_variable_out(home: Path) -> None:
+    account = load(home).account("personal")
+    env = {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/elsewhere"}
+
+    assert ClaudeBackend(home).environment(account, env) == {"PATH": "/bin"}
+    assert env == {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/elsewhere"}
+
+
+def test_another_dir_is_selected_with_the_variable(home: Path) -> None:
+    account = load(home).account("bravo")
+    backend = ClaudeBackend(home)
+    selected = str(home / ".config" / "bravo" / "claude")
+
+    assert backend.environment(account, {"PATH": "/bin"}) == {
+        "PATH": "/bin",
+        "CLAUDE_CONFIG_DIR": selected,
+    }
+    assert backend.environment(account, {"CLAUDE_CONFIG_DIR": "/old"}) == {
+        "CLAUDE_CONFIG_DIR": selected
+    }
+
+
+def test_argv_passes_the_fragment_as_the_one_settings_option(home: Path) -> None:
+    argv = ClaudeBackend(home).argv(
+        "/bin/claude", {"b": 1, "a": [True]}, ["--resume", "x"]
+    )
+
+    assert argv == [
+        "/bin/claude",
+        "--settings",
+        '{"a":[true],"b":1}',
+        "--resume",
+        "x",
+    ]
+
+
+def test_argv_leaves_out_settings_for_an_empty_fragment(home: Path) -> None:
+    assert ClaudeBackend(home).argv("/bin/claude", {}, ["a prompt"]) == [
+        "/bin/claude",
+        "a prompt",
+    ]
