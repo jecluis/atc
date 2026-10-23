@@ -10,6 +10,7 @@ from atc.errors import CycleError, MergeError, PathError, UnitError
 from atc.jsonval import JsonObject
 from atc.refs import Located, resolve_registry
 from atc.resolve import Resolution, resolve
+from atc.settings_keys import KNOWN_SETTINGS_KEYS
 from atc.sources import Sources, discover
 from tests.helpers import UID, make_source, unit
 
@@ -198,6 +199,25 @@ def test_unknown_settings_keys_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(UnitError, match="unknown settings key"):
         _ = run(sources, "a.json")
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "editorMode",
+        "effortLevel",
+        "enabledPlugins",
+        "inputNeededNotifEnabled",
+        "modelSettings",
+        "pluginConfigs",
+        "preferredNotifChannel",
+        "remoteControlAtStartup",
+        "switchModelsOnFlag",
+        "timeFormat",
+    ],
+)
+def test_keys_the_live_accounts_use_are_known(key: str) -> None:
+    assert key in KNOWN_SETTINGS_KEYS
 
 
 def test_lax_downgrades_unknown_settings_keys_to_warnings(tmp_path: Path) -> None:

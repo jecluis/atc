@@ -1,5 +1,5 @@
 """
-The set of top-level keys Claude Code accepts in ``settings.local.json``.
+The set of top-level keys Claude Code accepts in Claude Code settings files.
 
 A key absent from this set is rejected as a typo, because Claude Code ignores
 keys it does not recognise rather than reporting them. Add new keys here when
@@ -60,8 +60,11 @@ KNOWN_SETTINGS_KEYS: frozenset[str] = frozenset(
         "disableSideloadFlags",
         "disabledMcpjsonServers",
         "editor",
+        "editorMode",
+        "effortLevel",
         "enableAllProjectMcpServers",
         "enabledMcpjsonServers",
+        "enabledPlugins",
         "enforceAvailableModels",
         "env",
         "extraKnownMarketplaces",
@@ -81,6 +84,7 @@ KNOWN_SETTINGS_KEYS: frozenset[str] = frozenset(
         "httpsProxy",
         "ignoreSSLErrors",
         "includeCoAuthoredBy",
+        "inputNeededNotifEnabled",
         "jiraDateFormat",
         "jiraEditorCommand",
         "keyBindings",
@@ -93,6 +97,7 @@ KNOWN_SETTINGS_KEYS: frozenset[str] = frozenset(
         "maxModelContextLength",
         "memoryQueriesPerMinute",
         "model",
+        "modelSettings",
         "noProxy",
         "noSSLVerification",
         "observabilityEndpoint",
@@ -105,13 +110,16 @@ KNOWN_SETTINGS_KEYS: frozenset[str] = frozenset(
         "pluginAutoUpdateCheckFrequency",
         "pluginAutoUpdateEnabled",
         "pluginAutoUpdateTimeout",
+        "pluginConfigs",
         "pluginDir",
         "pluginMarketplaceAddTimeout",
         "plugins",
         "preferredLanguage",
+        "preferredNotifChannel",
         "projectSkillsDir",
         "proxyExceptions",
         "readOnlyMode",
+        "remoteControlAtStartup",
         "requiredMaximumVersion",
         "requiredMinimumVersion",
         "sandbox",
@@ -123,9 +131,11 @@ KNOWN_SETTINGS_KEYS: frozenset[str] = frozenset(
         "sshConfig",
         "statusLine",
         "strictKnownMarketplaces",
+        "switchModelsOnFlag",
         "telemetryEnabled",
         "tempDir",
         "theme",
+        "timeFormat",
         "timeZone",
         "tui",
         "updateCheckFrequency",
