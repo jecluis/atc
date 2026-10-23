@@ -181,3 +181,131 @@ def test_src_ls_keeps_the_whole_path_in_a_narrow_terminal(
     header, _, *body = run_ls(capsys, "--conf-d", str(deep)).splitlines()[1:]
     start, end = header.index("Path"), header.index("Layout")
     assert "".join(line[start:end].strip() for line in body) == str(deep)
+
+
+def run_check(
+    capsys: pytest.CaptureFixture[str], *args: str, status: int = 0
+) -> tuple[str, str]:
+    assert main(["src", "check", *args]) == status
+    captured = capsys.readouterr()
+    return captured.out, captured.err
+
+
+def test_src_check_passes_a_valid_tree(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(
+        dirs.conf_d,
+        {
+            "conf/base.json": unit({"model": "opus"}),
+            "conf/top.json": unit(imports=["base.json"]),
+            "assets/notes.txt": "not a unit",
+        },
+    )
+    out, err = run_check(capsys)
+    assert out == ""
+    assert "ok: 2 units in 1 sources" in err
+
+
+def test_src_check_counts_the_units_of_every_source(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d / "personal", {"conf/a.json": unit()})
+    _ = make_source(
+        dirs.conf_d / "bravo",
+        {"conf/b.json": unit(), "conf/langs/c.json": unit(), "assets/x.sh": "x"},
+    )
+    assert "ok: 3 units in 2 sources" in run_check(capsys)[1]
+
+
+def test_src_check_reports_every_broken_unit(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = make_source(
+        dirs.conf_d,
+        {
+            "conf/good.json": unit(),
+            "conf/bad-json.json": "{",
+            "conf/bad-version.json": {"version": 1},
+        },
+    )
+    out, err = run_check(capsys, status=1)
+    assert out == ""
+    assert str(source / "conf" / "bad-json.json") in err
+    assert str(source / "conf" / "bad-version.json") in err
+    assert "ok:" not in err
+
+
+def test_src_check_reports_a_dangling_import(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d, {"conf/a.json": unit(imports=["nowhere.json"])})
+    err = run_check(capsys, status=1)[1]
+    assert "error: a.json: imports 'nowhere.json', which does not exist" in err
+
+
+def test_src_check_follows_imports_across_sources(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d / "personal", {"conf/common/base.json": unit()})
+    _ = make_source(
+        dirs.conf_d / "bravo",
+        {"conf/x.json": unit(imports=["@personal/common/base.json"])},
+    )
+    assert "ok: 2 units in 2 sources" in run_check(capsys)[1]
+
+
+def test_src_check_reports_a_dangling_import_across_sources(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d / "personal", {"conf/common/base.json": unit()})
+    _ = make_source(
+        dirs.conf_d / "bravo",
+        {"conf/x.json": unit(imports=["@personal/common/gone.json"])},
+    )
+    err = run_check(capsys, status=1)[1]
+    assert "@bravo/x.json: imports '@personal/common/gone.json'" in err
+
+
+def test_src_check_reports_a_broken_import_once(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = make_source(
+        dirs.conf_d,
+        {
+            "conf/base.json": "{",
+            "conf/one.json": unit(imports=["base.json"]),
+            "conf/two.json": unit(imports=["base.json"]),
+        },
+    )
+    err = run_check(capsys, status=1)[1]
+    assert err.count(str(source / "conf" / "base.json")) == 1
+
+
+def test_src_check_warns_about_directories_that_are_not_sources(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = make_source(dirs.conf_d / "personal", {"conf/a.json": unit()})
+    _ = make_source(dirs.conf_d / "stray", {"notes.md": "x"})
+    err = run_check(capsys)[1]
+    assert "warning:" in err
+    assert "stray" in err
+    assert "ok: 1 units in 1 sources" in err
+
+
+def test_src_check_reports_a_trust_violation_as_a_config_error(
+    dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = make_source(dirs.conf_d / "personal", {"conf/a.json": unit()})
+    (source / "conf" / "a.json").chmod(0o666)
+    err = run_check(capsys, status=1)[1]
+    assert str(source / "conf" / "a.json") in err
+    assert "ok:" not in err
+
+
+def test_src_check_conf_d_option_reads_another_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    elsewhere = make_source(tmp_path / "elsewhere", {"conf/a.json": unit()})
+    err = run_check(capsys, "--conf-d", str(elsewhere))[1]
+    assert "ok: 1 units in 1 sources" in err

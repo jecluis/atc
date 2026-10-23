@@ -1,6 +1,5 @@
 """``atc src``: look at the config sources atc reads."""
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,10 +9,12 @@ from rich import box
 from rich.table import Table
 from rich.text import Text
 
+from atc import exitcodes
+from atc.cli.options import conf_d_option, load_sources
 from atc.git import git_or_none
-from atc.paths import dirs_from_env
-from atc.sources import SOURCE_DIRS, Source, Sources, discover
+from atc.sources import SOURCE_DIRS, Source, Sources
 from atc.ui import Ui
+from atc.validate import validate_sources
 
 
 @click.group(cls=rich_click.RichGroup, name="src")
@@ -22,16 +23,7 @@ def src() -> None:
 
 
 @src.command(cls=rich_click.RichCommand, name="ls")
-@click.option(
-    "--conf-d",
-    "conf_d",
-    metavar="DIR",
-    type=click.Path(file_okay=False, path_type=Path),
-    help=(
-        "Read config sources from DIR instead of the default, which is the "
-        "conf.d directory under $XDG_CONFIG_HOME/atc (~/.config/atc when unset)."
-    ),
-)
+@conf_d_option
 def ls(conf_d: Path | None) -> None:
     """
     List the config sources.
@@ -41,14 +33,35 @@ def ls(conf_d: Path | None) -> None:
     skills have uncommitted changes, and how many commits it is ahead of and
     behind its upstream at the last fetch.
     """
-    directory = (
-        conf_d if conf_d is not None else dirs_from_env(os.environ, Path.home()).conf_d
-    )
-    found = discover(directory, uid=os.getuid())
+    found = load_sources(conf_d)
     ui = Ui.default()
     for warning in found.warnings:
         ui.warning(warning)
     ui.table(_sources_table(found))
+
+
+@src.command(cls=rich_click.RichCommand, name="check")
+@conf_d_option
+def check(conf_d: Path | None) -> None:
+    """
+    Check every unit in every config source.
+
+    Loads each unit and follows its imports, including those that lead into
+    other sources, and reports every problem found rather than only the first:
+    malformed units, unknown settings keys, missing or circular imports, and
+    values of conflicting types. Prints a summary line when all is well and
+    exits with status 1 otherwise.
+    """
+    found = load_sources(conf_d)
+    result = validate_sources(found, lax=False)
+    ui = Ui.default()
+    for warning in result.warnings:
+        ui.warning(warning)
+    for error in result.errors:
+        ui.error(error)
+    if result.errors:
+        raise click.exceptions.Exit(exitcodes.CONFIG)
+    ui.info(f"ok: {result.units} units in {len(found.items)} sources")
 
 
 @dataclass(frozen=True, slots=True)

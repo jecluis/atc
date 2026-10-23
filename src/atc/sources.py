@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from atc.errors import SourceError
+from atc.errors import PathError, SourceError
 
 SOURCE_DIRS = ("conf", "assets", "skills")
 """The subdirectories atc reads from a source. Anything else in it is ignored."""
@@ -55,6 +55,22 @@ class Sources:
     layout: Literal["single", "multi"]
     items: tuple[Source, ...]
     warnings: tuple[str, ...]
+
+    def named(self, name: str) -> Source:
+        """
+        Find the source called ``name``.
+
+        Raises:
+            PathError: there is no such source. The single layout's source has
+                no name, so nothing is found by name there.
+
+        """
+        for source in self.items:
+            if source.name and source.name == name:
+                return source
+        known = ", ".join(source.name for source in self.items if source.name)
+        suffix = f"; the sources are {known}" if known else "; the source has no name"
+        raise PathError(f"no config source named '{name}'{suffix}")
 
 
 def discover(conf_d: Path, *, uid: int) -> Sources:

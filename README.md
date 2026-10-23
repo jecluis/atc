@@ -7,8 +7,8 @@ hands the terminal over to the agent. It generates each account's settings from
 shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
-Today the tool implements `atc build` and `atc src ls`. The rest is being built
-step by step.
+Today the tool implements `atc build`, `atc src ls` and `atc src check`. The
+rest is being built step by step.
 
 ## Install
 
@@ -60,6 +60,55 @@ names the offending path:
 With a umask of 002, as on Fedora, a fresh clone is group-writable. Run
 `chmod -R go-w` on it once after cloning.
 
+## Units
+
+A **unit** is a JSON file under a source's `conf/`. It contributes a fragment
+of Claude Code settings and can import other units:
+
+```json
+{
+  "version": 2,
+  "description": "Account isolation",
+  "imports": ["common/base.json", "@personal/langs/rust.json"],
+  "settings": {
+    "permissions": { "allow": ["Bash(cargo test *)"] }
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Required, and must be `2`. A unit with `"version": 1` is refused: change the number. |
+| `description` | Optional note for people. atc ignores it. |
+| `imports` | Optional list of unit references, merged before this unit's own `settings`. |
+| `settings` | Optional fragment of `settings.local.json`. Its top-level keys must be ones Claude Code defines (`atc build --lax` accepts others with a warning). |
+
+No other fields are allowed. A unit with only `imports` works as a profile that
+groups other units.
+
+**References.** An import, and a `UNIT` given to `atc build`, is one of:
+
+- `path/to/unit.json`: a path relative to the `conf/` of the same source.
+- `@name/path/to/unit.json`: a path relative to the `conf/` of the source
+  called `name`. This only works in the multi layout.
+
+A reference must be relative, must spell out the `.json` extension, and must
+stay inside the `conf/` of its source, links included. In an import, a
+reference without `@` always means the unit's own source.
+
+Outside a unit, as on the command line, a reference without `@` is looked up in
+every source, and exactly one must contain it. If none does the unit does not
+exist, and if several do you are asked to add an `@name/` prefix. With a single
+source, or with names that never collide, the prefix is never needed.
+
+**Merging.** Imports are followed depth-first and in order, each before the
+unit's own `settings`, so an importing unit overrides what it imports and a
+later import overrides an earlier one. A unit contributes once, at the first
+point the walk reaches it. Objects merge recursively, arrays concatenate
+without duplicates, and for any other value the later one wins. Two values of
+different JSON types at the same key are an error. The output is
+deterministic: keys are sorted.
+
 ## Usage
 
 Run `atc --help`, or `--help` after any command, for the options.
@@ -81,16 +130,38 @@ The table goes to standard output. Warnings and errors go to standard error.
 | --- | --- |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
 
-### `atc build UNIT...`
+### `atc src check [--conf-d DIR]`
 
-Merges the named configuration units, together with everything they import, and
-writes the resulting `settings.local.json` to standard output. Several units
-can be named at once, as paths relative to the configuration root, for example
-`langs/rust.json`.
+Checks every unit in every config source: each `*.json` under a source's
+`conf/` is loaded and resolved together with its imports, including imports
+into other sources. It reports every problem it finds, not only the first:
+
+- a unit that is not valid JSON or does not fit the unit format
+- a settings key Claude Code does not define
+- an import that is malformed, missing, outside its source's `conf/`, or
+  circular
+- values of different types for the same setting
+
+When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
+it prints each problem, once, and exits `1`. Everything goes to standard
+error. A source that breaks the trust rules stops the check with that error.
 
 | Option | Effect |
 | --- | --- |
-| `--root DIR` | Read units from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
+
+### `atc build UNIT... [--conf-d DIR] [--lax]`
+
+Merges the named units, together with everything they import, and writes the
+resulting `settings.local.json` to standard output. Several units can be named
+at once. Each is a unit reference as described under Units, for example
+`langs/rust.json` or `@work/langs/rust.json`, and they are merged left to
+right, except that a unit an earlier one already imported keeps the position it
+had.
+
+| Option | Effect |
+| --- | --- |
+| `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |
 
 Only the merged JSON goes to standard output, so it is safe to redirect or

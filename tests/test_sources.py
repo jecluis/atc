@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from atc.errors import SourceError
+from atc.errors import PathError, SourceError
 from atc.sources import Source, discover
 from tests.helpers import UID, make_source, unit
 
@@ -185,3 +185,24 @@ def test_a_source_knows_its_directories(tmp_path: Path) -> None:
         tmp_path / "assets",
         tmp_path / "skills",
     )
+
+
+def test_a_source_is_found_by_name(tmp_path: Path) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / "personal", {"conf/a.json": unit()})
+    bravo = make_source(conf_d / "bravo", {"conf/a.json": unit()})
+    assert discover(conf_d, uid=UID).named("bravo").root == bravo
+
+
+def test_an_unknown_source_name_lists_the_known_ones(tmp_path: Path) -> None:
+    conf_d = tmp_path / "conf.d"
+    _ = make_source(conf_d / "personal", {"conf/a.json": unit()})
+    _ = make_source(conf_d / "bravo", {"conf/a.json": unit()})
+    with pytest.raises(PathError, match=r"'nobody'.*bravo, personal"):
+        _ = discover(conf_d, uid=UID).named("nobody")
+
+
+def test_the_single_layout_has_no_name_to_look_up(tmp_path: Path) -> None:
+    conf_d = make_source(tmp_path / "conf.d", {"conf/a.json": unit()})
+    with pytest.raises(PathError, match="no config source named 'bravo'"):
+        _ = discover(conf_d, uid=UID).named("bravo")

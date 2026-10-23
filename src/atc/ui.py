@@ -37,6 +37,10 @@ class Ui:
         """Report something suspect on standard error."""
         self._diagnostic("warning:", "yellow", message)
 
+    def info(self, message: str) -> None:
+        """Report progress or success on standard error, as plain text."""
+        self.err.print(Text(message), soft_wrap=True)
+
     def json(self, value: JsonValue) -> None:
         """
         Write ``value`` as JSON on standard output.

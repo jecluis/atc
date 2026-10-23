@@ -10,22 +10,24 @@ from atc.errors import UnitError
 from atc.jsonval import JsonObject, load_json
 from atc.settings_keys import KNOWN_SETTINGS_KEYS
 
-UNIT_VERSION = 1
+UNIT_VERSION = 2
 
 
 class UnitEnvelope(BaseModel):
     """
     The shape every config unit must have.
 
-    ``imports`` lists other units, as paths relative to the root of the unit
-    tree. ``settings`` holds the ``settings.local.json`` fragment this unit
-    contributes. Both are optional: a unit with only ``imports`` acts as a
-    profile that groups other units together.
+    ``imports`` lists other units: ``path/to/unit.json`` is relative to the
+    ``conf`` directory of the unit's own source, and ``@name/path/to/unit.json``
+    to that of the source called ``name``. ``settings`` holds the
+    ``settings.local.json`` fragment this unit contributes. Both are optional:
+    a unit with only ``imports`` acts as a profile that groups other units
+    together.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[1]
+    version: Literal[2]
     description: str | None = None
     imports: tuple[str, ...] = ()
     settings: JsonObject = Field(default_factory=dict)

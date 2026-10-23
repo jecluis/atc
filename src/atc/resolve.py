@@ -8,7 +8,8 @@ from typing import final
 from atc.errors import CycleError, MergeError, PathError, UnitError
 from atc.jsonval import JsonObject
 from atc.merge import merge_objects
-from atc.paths import display, resolve_unit
+from atc.refs import Located, resolve_import
+from atc.sources import Sources
 from atc.unit import load_unit, unknown_settings_keys
 
 
@@ -26,32 +27,32 @@ class Resolution:
     warnings: tuple[str, ...]
 
 
-def resolve(root: Path, references: Sequence[str], *, lax: bool = False) -> Resolution:
+def resolve(sources: Sources, roots: Sequence[Located], *, lax: bool) -> Resolution:
     """
-    Merge the units named by ``references``, following their imports.
+    Merge the units ``roots``, following their imports.
 
-    Each unit contributes exactly once, at the first point the depth-first walk
-    reaches it. A unit's imports are walked, in order, before the unit's own
-    settings, so an importing unit overrides what it imports; references are
-    walked left to right, so a later one overrides an earlier one.
+    Imports may lead into other sources of ``sources``. Each unit contributes
+    exactly once, at the first point the depth-first walk reaches it. A unit's
+    imports are walked, in order, before the unit's own settings, so an
+    importing unit overrides what it imports; ``roots`` are walked left to
+    right, so a later one overrides an earlier one.
 
-    Those two rules meet when a reference has already been pulled in as an
-    import of an earlier one. Contributing once wins — the unit keeps the
-    position it already had — and a warning records that its later position had
-    no effect.
+    Those two rules meet when a root has already been pulled in as an import of
+    an earlier one. Contributing once wins — the unit keeps the position it
+    already had — and a warning records that its later position had no effect.
 
     Set ``lax`` to report unknown settings keys as warnings instead of errors.
 
     Raises:
-        PathError: a reference is malformed or names a unit that is missing.
+        PathError: an import is malformed or names a unit that is missing.
         UnitError: a unit is malformed, or carries an unknown settings key.
         CycleError: the imports form a cycle.
         MergeError: two units give the same setting values of differing types.
 
     """
-    walker = _Walker(root, lax=lax)
-    for reference in references:
-        walker.request(resolve_unit(root, reference), reference)
+    walker = _Walker(sources, lax=lax)
+    for root in roots:
+        walker.request(root)
     return Resolution(settings=walker.settings, warnings=tuple(walker.warnings))
 
 
@@ -59,83 +60,88 @@ def resolve(root: Path, references: Sequence[str], *, lax: bool = False) -> Reso
 class _Walker:
     """Depth-first traversal of the import graph, accumulating merged settings."""
 
-    def __init__(self, root: Path, *, lax: bool) -> None:
-        self._root = root
+    def __init__(self, sources: Sources, *, lax: bool) -> None:
+        self._sources = sources
         self._lax = lax
         self._done: set[Path] = set()
-        self._active: list[Path] = []
+        self._active: dict[Path, Located] = {}
         self.settings: JsonObject = {}
         self.warnings: list[str] = []
 
-    def request(self, path: Path, reference: str) -> None:
+    def request(self, unit: Located) -> None:
         """
         Merge a unit the user named directly.
 
-        A unit an earlier reference already pulled in keeps the position it
-        had, so naming it again cannot move it later in the merge order. That
-        is worth saying out loud, because the user asked for something the
-        merge-once rule cannot give them.
+        A unit an earlier root already pulled in keeps the position it had, so
+        naming it again cannot move it later in the merge order. That is worth
+        saying out loud, because the user asked for something the merge-once
+        rule cannot give them.
         """
-        if path in self._done:
+        if unit.path in self._done:
             cause = "already merged as an import of an earlier unit"
             effect = "naming it here does not change the merge order"
-            self.warnings.append(f"'{reference}': {cause}, so {effect}")
+            self.warnings.append(f"'{unit.display}': {cause}, so {effect}")
             return
-        self.visit(path, reference, origin=None)
+        self.visit(unit, None, importer=None)
 
-    def visit(self, path: Path, reference: str, origin: Path | None) -> None:
-        """Merge the unit at ``path``, and everything it imports, exactly once."""
-        if path in self._done:
+    def visit(
+        self, unit: Located, reference: str | None, importer: Located | None
+    ) -> None:
+        """
+        Merge ``unit``, and everything it imports, exactly once.
+
+        ``reference`` is the import text that led here, and ``importer`` the
+        unit it was written in. Both are ``None`` for a root.
+        """
+        if unit.path in self._done:
             return
-        if path in self._active:
-            raise CycleError(f"import cycle: {self._cycle(path)}")
-        if not path.is_file():
-            raise PathError(self._missing(reference, origin))
+        if unit.path in self._active:
+            raise CycleError(f"import cycle: {self._cycle(unit)}")
+        if not unit.path.is_file():
+            raise PathError(self._missing(unit, reference, importer))
 
-        self._active.append(path)
+        self._active[unit.path] = unit
         try:
-            self._merge(path)
+            self._merge(unit)
         finally:
-            del self._active[-1]
-        self._done.add(path)
+            del self._active[unit.path]
+        self._done.add(unit.path)
 
-    def _merge(self, path: Path) -> None:
+    def _merge(self, unit: Located) -> None:
         """Merge one unit's imports, then the unit's own settings."""
-        unit = load_unit(path)
-        for imported in unit.imports:
+        loaded = load_unit(unit.path)
+        for reference in loaded.imports:
             try:
-                target = resolve_unit(self._root, imported)
+                target = resolve_import(self._sources, unit.source, reference)
             except PathError as exc:
-                raise PathError(f"{self._name(path)}: {exc}") from exc
-            self.visit(target, imported, origin=path)
+                raise PathError(f"{unit.display}: {exc}") from exc
+            self.visit(target, reference, importer=unit)
 
-        self._check_keys(unit.path, unit.settings)
+        self._check_keys(unit, loaded.settings)
         try:
-            self.settings = merge_objects(self.settings, unit.settings)
+            self.settings = merge_objects(self.settings, loaded.settings)
         except MergeError as exc:
-            raise MergeError(f"{self._name(path)}: {exc}") from exc
+            raise MergeError(f"{unit.display}: {exc}") from exc
 
-    def _check_keys(self, path: Path, settings: JsonObject) -> None:
+    def _check_keys(self, unit: Located, settings: JsonObject) -> None:
         """Reject, or under ``lax`` merely report, settings keys we do not know."""
         unknown = unknown_settings_keys(settings)
         if not unknown:
             return
-        message = f"{self._name(path)}: unknown settings key(s): {', '.join(unknown)}"
+        message = f"{unit.display}: unknown settings key(s): {', '.join(unknown)}"
         if not self._lax:
             raise UnitError(message)
         self.warnings.append(message)
 
-    def _cycle(self, path: Path) -> str:
-        """Render the cycle that ``path`` closes, in the order it was walked."""
-        start = self._active.index(path)
-        return " -> ".join(self._name(entry) for entry in (*self._active[start:], path))
+    def _cycle(self, unit: Located) -> str:
+        """Render the cycle that ``unit`` closes, in the order it was walked."""
+        walked = list(self._active.values())
+        start = list(self._active).index(unit.path)
+        return " -> ".join(entry.display for entry in (*walked[start:], unit))
 
-    def _missing(self, reference: str, origin: Path | None) -> str:
-        """Explain a reference that names no unit, naming the importer if any."""
-        if origin is None:
-            return f"'{reference}': no such unit under {self._root}"
-        return f"{self._name(origin)}: imports '{reference}', which does not exist"
-
-    def _name(self, path: Path) -> str:
-        """Render a unit path relative to the root, for error messages."""
-        return display(self._root, path)
+    @staticmethod
+    def _missing(unit: Located, reference: str | None, importer: Located | None) -> str:
+        """Explain a unit that does not exist, naming the importer if any."""
+        if importer is None or reference is None:
+            return f"'{unit.display}': no such unit"
+        return f"{importer.display}: imports '{reference}', which does not exist"

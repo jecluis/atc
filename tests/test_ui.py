@@ -34,6 +34,13 @@ def test_error_and_warning_name_themselves_on_stderr(
     assert captured.err == "error: broken\nwarning: odd\n"
 
 
+def test_info_is_plain_text_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    Ui.default().info("ok: [bold]2[/bold] units")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "ok: [bold]2[/bold] units\n"
+
+
 def test_a_long_diagnostic_stays_on_one_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
