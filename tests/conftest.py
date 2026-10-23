@@ -2,7 +2,7 @@
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -31,8 +31,13 @@ _SCRUBBED_PREFIXES = ("ATC_", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
 @pytest.fixture(autouse=True)
-def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point every directory atc and git look at into ``tmp_path``."""
+def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """
+    Point every directory atc and git look at into ``tmp_path``.
+
+    The umask is fixed at 022: with 002, as on Fedora, directories a test makes
+    would be group-writable, which the trust rules refuse.
+    """
     for name in list(os.environ):
         if name in _SCRUBBED or name.startswith(_SCRUBBED_PREFIXES):
             monkeypatch.delenv(name)
@@ -47,7 +52,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for role in ("AUTHOR", "COMMITTER"):
         monkeypatch.setenv(f"GIT_{role}_NAME", "Test")
         monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.com")
-    return home
+    previous = os.umask(0o022)
+    yield home
+    _ = os.umask(previous)
 
 
 @pytest.fixture
