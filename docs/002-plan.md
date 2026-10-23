@@ -61,10 +61,10 @@ The estimates are judgement, not measurement. Task 1 sits below the skill's ~200
 - Python `>=3.13`. Package `atc` in `atc/src/atc/`, script `atc = "atc.cli:main"`.
 - Runtime dependencies: `pydantic>=2.9`, `ruamel.yaml`, `click>=8.2`, `rich-click`, `rich`, `questionary`, each added with `uv add` by the task that first imports it. Nothing else.
 - `./atc/check-and-fix.sh` passes before every commit: ruff format, ruff check, basedpyright in `all` mode, pytest.
-- No `Any` and no bare `object` outside three boundaries: `json.loads` in `jsonval`, ruamel in `yamlval`, and questionary's `ask()` in `ui`. Each carries a scoped `# pyright: ignore[...]` and a comment saying why it is sound. Don't read click's `ctx.obj`.
+- No `Any` and no bare `object` outside three boundaries: `json.loads` in `jsonval`, ruamel in `yamlval`, and questionary's `unsafe_ask()` in `ui` (`ask()` prints to stdout on Ctrl-C, which is kept for data). Each carries a scoped `# pyright: ignore[...]` and a comment saying why it is sound. Don't read click's `ctx.obj`.
 - pydantic validates and never transforms what reaches output. Settings are always taken verbatim from the parsed document (existing `CLAUDE.md` rule).
 - Tests use fixture sources and registries under `tmp_path` only. They never read `~/.config/atc`, `~/.claude`, `~/.config/acme` or this repository's `conf/`. An autouse fixture (Task 2) isolates `HOME`, the XDG variables, git's configuration, and `ATC_*` and `CLAUDE_CONFIG_DIR`.
-- Exit codes: 0 success; 1 configuration error (`ConfigError`); 2 usage error, or `atc check` outside a sandbox; 3 `check` failure, or `sync` left something unwritten.
+- Exit codes: 0 success; 1 configuration error (`ConfigError`); 2 usage error, or `atc check` outside a sandbox; 3 `check` failure, or `sync` left something unwritten; 130 interrupted (Ctrl-C) or a cancelled picker.
 - Only `atc show` writes machine-readable data to stdout. Other commands write their primary output, such as tables, to stdout for people. Diagnostics always go to stderr as `error: …` or `warning: …`, naming the file and JSON pointer where there is one.
 - `Ui` methods take plain text and escape it, so rich never reads outside text as markup.
 - Help text never mentions design, plan or review documents.

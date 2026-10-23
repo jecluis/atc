@@ -1,9 +1,11 @@
-"""``atc skills``: look at the skills the config sources offer."""
+"""``atc skills``: look at the skills the config sources offer, and choose them."""
 
 import stat
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import click
 import rich_click
@@ -14,11 +16,14 @@ from rich.text import Text
 from atc import exitcodes
 from atc.backends import backend_for
 from atc.cli.options import chosen_accounts, conf_d_option, load_build_context
-from atc.errors import ConfigError
+from atc.cli.sync import link_status
+from atc.context import BuildContext
+from atc.errors import ConfigError, PathError
 from atc.links import LinkPlan
+from atc.registry import Account, set_skills
 from atc.skills import Catalog, Skill, discover_skills
-from atc.sync import AccountPlan, plan_account
-from atc.ui import Ui
+from atc.sync import AccountPlan, apply_account, plan_account
+from atc.ui import PickChoice, Ui
 
 DESCRIPTION_WIDTH = 60
 
@@ -29,7 +34,17 @@ _STYLES: dict[_State, str] = {"linked": "green", "selected": "", "conflict": "ye
 
 @click.group(cls=rich_click.RichGroup, name="skills")
 def skills() -> None:
-    """Work with the skills the config sources offer."""
+    """List the skills the config sources offer, and choose them for accounts."""
+
+
+take_over_option = click.option(
+    "--take-over",
+    is_flag=True,
+    help=(
+        "Replace a link or file that is where a selected skill's link is to go. "
+        "A directory is never replaced."
+    ),
+)
 
 
 @skills.command(cls=rich_click.RichCommand, name="ls")
@@ -84,6 +99,216 @@ def ls(names: tuple[str, ...], conf_d: Path | None) -> None:
             ui.line(f"{plan.account.name}: not managed by atc")
             for entry in entries:
                 ui.dim(f"  {entry}")
+
+
+@skills.command(cls=rich_click.RichCommand, name="pick")
+@click.argument("account")
+@take_over_option
+def pick(account: str, take_over: bool) -> None:
+    """
+    Choose the skills of ACCOUNT from a checklist.
+
+    Shows every skill the config sources offer, with the ones the account selects
+    ticked. Move with the arrow keys, tick with the space bar and confirm with
+    enter. Confirming writes the new selection to machine.yaml, keeping its
+    comments, and links and unlinks the account's skills as "atc sync" would,
+    without touching its settings or its instructions file. Ctrl-C cancels:
+    nothing is changed, and the status is 130.
+
+    Entries in the account's selection that name no skill are dropped. Needs a
+    terminal: in a script, use "atc skills add" and "atc skills rm". Exits with
+    status 3 when a link is left alone because something atc did not make is in
+    its way.
+    """
+    target = _Target.open(account)
+    if not target.catalog.skills:
+        raise ConfigError("the config sources have no skills to pick from")
+    ordered = sorted(
+        target.catalog.skills, key=lambda found: (found.name, found.source.name)
+    )
+    ticked = {found.path for found in target.named(target.account.skills)}
+    answer = target.ui.pick(
+        f"Skills for {target.account.name}",
+        [
+            PickChoice(target.entry(skill), label, skill.path in ticked)
+            for skill, label in zip(ordered, _labels(ordered), strict=True)
+        ],
+    )
+    if answer is None:
+        target.ui.info("cancelled; nothing changed")
+        raise click.exceptions.Exit(exitcodes.INTERRUPTED)
+    wanted = {skill.path: skill for skill in target.resolve_all(answer)}
+    entries: list[str] = []
+    for ref in target.account.skills:
+        skill = target.skill_of(ref)
+        if skill is not None and wanted.pop(skill.path, None) is not None:
+            entries.append(ref)
+    entries.extend(target.entry(skill) for skill in wanted.values())
+    target.write(entries, take_over=take_over)
+
+
+@skills.command(cls=rich_click.RichCommand, name="add")
+@click.argument("account")
+@click.argument("names", nargs=-1, required=True, metavar="SKILL...")
+@take_over_option
+def add(account: str, names: tuple[str, ...], take_over: bool) -> None:
+    """
+    Add skills to the selection of ACCOUNT, without the checklist.
+
+    Each SKILL is a skill's name, or @source/name when several sources have a
+    skill of that name. It is written to machine.yaml, keeping its comments,
+    as the bare name unless that is ambiguous, and then linked as "atc sync"
+    would. A skill that is selected already is left as it is. An unknown SKILL
+    is an error, and nothing is changed.
+
+    Exits with status 3 when a link is left alone because something atc did not
+    make is in its way.
+    """
+    target = _Target.open(account)
+    have = {found.path for found in target.named(target.account.skills)}
+    entries = list(target.account.skills)
+    for skill in target.resolve_all(names):
+        if skill.path not in have:
+            have.add(skill.path)
+            entries.append(target.entry(skill))
+    target.write(entries, take_over=take_over)
+
+
+@skills.command(cls=rich_click.RichCommand, name="rm")
+@click.argument("account")
+@click.argument("names", nargs=-1, required=True, metavar="SKILL...")
+def rm(account: str, names: tuple[str, ...]) -> None:
+    """
+    Remove skills from the selection of ACCOUNT, without the checklist.
+
+    Each SKILL is a skill's name, or @source/name when several sources have a
+    skill of that name, or an entry of the selection as written. It is removed
+    from machine.yaml, keeping its comments, and its link is removed as "atc
+    sync" would. A skill that is not selected is left as it is. A SKILL that is
+    neither a skill nor selected is an error, and nothing is changed.
+    """
+    target = _Target.open(account)
+    doomed: set[Path] = set()
+    for name in names:
+        try:
+            doomed.add(target.resolve(name).path)
+        except PathError:
+            if name not in target.account.skills:
+                raise
+    entries: list[str] = []
+    for ref in target.account.skills:
+        skill = target.skill_of(ref)
+        if ref not in names and (skill is None or skill.path not in doomed):
+            entries.append(ref)
+    target.write(entries, take_over=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _Target:
+    """What a command that changes an account's selection works on."""
+
+    ctx: BuildContext
+    catalog: Catalog
+    account: Account
+    ui: Ui
+
+    @classmethod
+    def open(cls, name: str) -> Self:
+        """
+        Load the configuration, and find the account ``name``.
+
+        Raises:
+            ConfigError: the configuration cannot be loaded, or has no such
+                account.
+
+        """
+        ctx = load_build_context(None)
+        catalog = discover_skills(ctx.sources)
+        ui = Ui.default()
+        for warning in (*ctx.sources.warnings, *catalog.warnings):
+            ui.warning(warning)
+        return cls(ctx, catalog, ctx.registry.account(name), ui)
+
+    def resolve(self, ref: str) -> Skill:
+        """
+        Find the skill that ``ref`` names.
+
+        Raises:
+            PathError: ``ref`` names no skill, or ambiguously.
+
+        """
+        return self.catalog.resolve(ref, self.ctx.sources)
+
+    def resolve_all(self, refs: Sequence[str]) -> list[Skill]:
+        """Find the skill that each of ``refs`` names, as :meth:`resolve` does."""
+        return [self.resolve(ref) for ref in refs]
+
+    def skill_of(self, ref: str) -> Skill | None:
+        """Find the skill that the registry entry ``ref`` names, or ``None``."""
+        try:
+            return self.resolve(ref)
+        except PathError:
+            return None
+
+    def named(self, refs: Sequence[str]) -> list[Skill]:
+        """Find the skills that the entries ``refs`` name, leaving out the rest."""
+        found = (self.skill_of(ref) for ref in refs)
+        return [skill for skill in found if skill is not None]
+
+    def entry(self, skill: Skill) -> str:
+        """Write ``skill`` as an entry: its name, with its source if ambiguous."""
+        homonyms = sum(1 for other in self.catalog.skills if other.name == skill.name)
+        return skill.reference if homonyms > 1 else skill.name
+
+    def write(self, entries: Sequence[str], *, take_over: bool) -> None:
+        """
+        Make ``entries`` the account's selection, and link the skills as it says.
+
+        The links are planned for the new selection first, so that a selection
+        that cannot be linked is not written. It prints what changed, and exits
+        with status 3 when a link is left alone.
+        """
+        account, name = self.account, self.account.name
+        updated = replace(account, skills=tuple(entries))
+        accounts = {**self.ctx.registry.accounts, name: updated}
+        trial = replace(
+            self.ctx, registry=replace(self.ctx.registry, accounts=accounts)
+        )
+        plan = plan_account(
+            trial,
+            updated,
+            take_over=take_over,
+            discard_live=False,
+            lax=False,
+            parts=frozenset({"skills"}),
+            catalog=self.catalog,
+        )
+        changed = updated.skills != account.skills
+        if changed:
+            path = self.ctx.registry.path
+            _ = set_skills(path, self.ctx.home, name, entries)
+            self.ui.line(f"{name}: skills written to {path}")
+        apply_account(plan, self.ctx, datetime.now(UTC))
+        for link in plan.links:
+            if link.pending or link.blocked:
+                status = link_status(link, dry=False)
+                self.ui.line(f"{name}: {link.describe()} {status}")
+        if not changed and not plan.pending and not plan.blocked:
+            self.ui.line(f"{name}: skills unchanged")
+        if plan.blocked:
+            raise click.exceptions.Exit(exitcodes.CHECK)
+
+
+def _labels(ordered: Sequence[Skill]) -> list[str]:
+    """Write a picker line for each skill: ``name  source  description``, in columns."""
+    name_width = max(len(skill.name) for skill in ordered)
+    source_width = max(len(skill.source.name or "-") for skill in ordered)
+    labels: list[str] = []
+    for skill in ordered:
+        name = f"{skill.name:<{name_width}}"
+        source = f"{skill.source.name or '-':<{source_width}}"
+        labels.append(f"{name}  {source}  {_shortened(skill.description)}".rstrip())
+    return labels
 
 
 def _skills_table(catalog: Catalog, plans: Sequence[AccountPlan]) -> Table:

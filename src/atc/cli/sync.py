@@ -150,7 +150,7 @@ def sync(
                 ui.diff(_diff(plan.settings_path, plan.settings))
         for link in plan.links:
             if link.pending or link.blocked:
-                ui.line(f"{name}: {link.describe()} {_link_status(link, dry=dry)}")
+                ui.line(f"{name}: {link.describe()} {link_status(link, dry=dry)}")
         for message in (
             *plan.warnings,
             *(warning.message() for warning in plan.rule_warnings),
@@ -176,8 +176,12 @@ def _status(settings: SettingsPlan, *, dry: bool) -> str:
             return "current"
 
 
-def _link_status(link: LinkPlan, *, dry: bool) -> str:
-    """Say what happens to a link entry that changes or is in conflict."""
+def link_status(link: LinkPlan, *, dry: bool) -> str:
+    """
+    Say what happens to a link entry that changes or is in conflict.
+
+    ``dry`` says nothing is being written, so the change is only planned.
+    """
     if link.blocked:
         return "(conflict; --take-over replaces a file or link, never a directory)"
     return "(would change)" if dry else "(changed)"

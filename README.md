@@ -8,7 +8,8 @@ shared configuration that lives in your own repositories, apart from the tool.
 Claude Code is the first agent it supports.
 
 Today the tool implements `atc sync`, `atc show account`, `atc show project`,
-`atc skills ls`, `atc src ls`, `atc src check` and `atc src pull`.
+`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
+`atc src ls`, `atc src check` and `atc src pull`.
 The rest is being built step by step.
 
 ## Install
@@ -173,6 +174,9 @@ not skills.
 - **Linking:** `atc sync` links each selected skill as `skills/<name>` in the
   account's directory, as described under `atc sync`. `atc skills ls` shows
   what each account has.
+- **Choosing:** `atc skills pick` offers a checklist, and `atc skills add` and
+  `atc skills rm` change the selection from the command line. All three write
+  the selection into `machine.yaml` and link it, as `atc sync` would.
 
 ## Units
 
@@ -442,6 +446,78 @@ skill that does not exist.
 | --- | --- |
 | `--conf-d DIR` | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. |
 
+### `atc skills pick ACCOUNT [--take-over]`
+
+Shows a checklist of every skill in the config sources, one line each:
+
+```text
+git-commits  personal  Guidelines for commit granularity, sizing, and message…
+review       bravo     Review a change before it lands
+review       personal  Review a pull request
+```
+
+A line is the skill's name, its source (`-` for the single layout) and the start
+of its description. The ones `ACCOUNT` selects are ticked. Move with the arrow
+keys, tick with the space bar, toggle all with `a`, invert with `i`, and confirm
+with enter.
+
+- **Confirming** writes the selection into `machine.yaml`, then links and
+  unlinks the account's skills as `atc sync` does (see Skills under `atc sync`),
+  without touching its settings or its instructions file.
+- **Ctrl-C or Ctrl-Q** cancels. Nothing is changed, and the command says so and
+  exits `130`, as for any interrupt.
+- **Without a terminal** on both standard input and standard output, it exits `2`
+  and points at `add` and `rm`.
+
+The selection is written into `machine.yaml` with the file's comments, key order
+and quoting kept. Only `accounts.<ACCOUNT>.skills` changes: it is written as a
+list on one line, `skills: [git-commits, rust-2024]`, and an account that had no
+`skills` gets it after its other keys. The comment on the `skills` key, and the
+comment lines after the entry, stay where they are. What is lost is the comment
+on each item of a `skills` list that was written one item per line, since that
+list is replaced.
+
+The whole file is rewritten, with 2-space indentation, so other lists written one
+item per line come out indented under their key, and spacing inside one-line
+lists and mappings is normalized. The file is replaced in one step and keeps its
+permissions. It is not written when the selection is the one it already holds,
+nor when the new selection cannot be linked, for example because two of its
+skills have the same name, or because the account's directory does not exist. If
+an edit would lose any other comment, `atc` refuses it and leaves the file alone.
+
+Entries of the current selection that are still ticked keep their place and
+spelling. Newly ticked skills follow them, as the skill's name, or as
+`@source/name` when several sources have a skill of that name. An entry that
+names no skill is not shown, so confirming drops it.
+
+| Option | Effect |
+| --- | --- |
+| `--take-over` | Replace a link or file that is where a selected skill's link is to go. A directory is never replaced. |
+
+It prints `ACCOUNT: skills written to FILE` when it changed the selection, then
+one line for each link that changed, as `atc sync` does. It exits `3` when a link
+is left alone for want of `--take-over`. The selection has been written by then.
+
+### `atc skills add ACCOUNT SKILL... [--take-over]`
+
+Adds skills to the selection of `ACCOUNT` without the checklist, so scripts can.
+Each `SKILL` is a skill's name, or `@source/name` when several sources have it.
+It is written after the entries already there, as the name or, when that is
+ambiguous, as `@source/name`, and a skill that is selected already is left as it
+is. A `SKILL` that does not exist, or the same name from two sources, is an error
+that exits `1` with nothing changed. The file, the links, the output and the exit
+status are those of `atc skills pick`.
+
+### `atc skills rm ACCOUNT SKILL...`
+
+Removes skills from the selection of `ACCOUNT` without the checklist. Each `SKILL`
+is a skill's name, `@source/name`, or an entry of the selection as written, which
+is how an entry that names no skill any more is removed. A skill that exists but
+is not selected is left as it is. A `SKILL` that is neither a skill nor selected
+is an error that exits `1` with nothing changed. The links of the removed skills
+that atc made are removed, and anything else in the skills directory is left
+alone. Otherwise it behaves as `atc skills add`.
+
 ### `atc show account NAME [--conf-d DIR] [--lax]`
 
 Builds the settings of the account `NAME`, one of the accounts in the machine
@@ -676,8 +752,9 @@ Output is coloured only when it goes to a terminal. `NO_COLOR` and
 Exit status is `0` on success, `1` for a problem with the configuration, a
 config source or git, which includes a source `atc src pull` failed or refused
 and a file `atc sync` could not write, `2` for a problem with the command line,
-and `3` when `atc sync` left an account alone or, with `--check`, has something
-to write.
+`3` when `atc sync` left an account alone or, with `--check`, has something to
+write, and `130` when the command is interrupted with Ctrl-C, after a short
+`aborted` on standard error (`cancelled; nothing changed` for `atc skills pick`).
 
 ## Development
 

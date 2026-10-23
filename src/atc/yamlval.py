@@ -1,10 +1,15 @@
-"""Reading YAML as JSON values: the one place ruamel's untyped data enters."""
+"""Reading and editing YAML: the one place ruamel's untyped data enters."""
 
+import copy
+import io
 import math
+from collections import Counter
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
 from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.error import MarkedYAMLError, YAMLError
 
 from atc.errors import RegistryError
@@ -51,6 +56,249 @@ def parse_yaml(text: str, origin: str) -> JsonValue:
     except YAMLError as exc:
         raise RegistryError(f"{origin}: {_describe(exc)}") from exc
     return _to_json(parsed, origin, "", ())
+
+
+def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
+    """
+    Set the entry at ``keys`` in the YAML document ``text``, and return the new text.
+
+    ``text`` is edited in ruamel's round-trip mode, so comments, key order,
+    quoting and blank lines stay as they were, and the comment lines that
+    follow the entry stay after it. A mapping that is missing on the way is
+    created, and so is the entry, at the end of its mapping. A list is written
+    in flow style, ``[a, b]``, and a list that was there is replaced. The
+    comments inside a replaced block list or mapping go with it, but the
+    comment on its key stays.
+
+    Raises:
+        RegistryError: ``text`` is not valid YAML, has no mapping at the root or
+            where ``keys`` pass through, or the edit would lose a comment that is
+            outside the entry it replaces.
+        ValueError: ``keys`` is empty.
+
+    """
+    if not keys:
+        raise ValueError("set_in_text needs at least one key")
+    editor = YAML(typ="rt")
+    editor.preserve_quotes = True
+    editor.width = _NO_WRAP
+    editor.indent(mapping=2, sequence=4, offset=2)  # pyright: ignore[reportAny]
+    try:
+        # The round trip's use of ruamel's untyped data: what it loads is taken
+        # as `object`, and every node is viewed through the protocols below
+        # once `isinstance` has said what it is.
+        loaded: object = editor.load(text)  # pyright: ignore[reportAny, reportUnknownMemberType]
+    except YAMLError as exc:
+        raise RegistryError(_describe(exc)) from exc
+    root = _new_map() if loaded is None else _as_map(loaded)
+    if root is None:
+        raise RegistryError("the document must be a mapping")
+    holder, depth = root, 0
+    while depth < len(keys) - 1 and holder.get(keys[depth]) is not None:
+        child = _as_map(holder.get(keys[depth]))
+        if child is None:
+            raise RegistryError(f"/{'/'.join(keys[: depth + 1])}: is not a mapping")
+        holder, depth = child, depth + 1
+    # What is left of `keys` is missing, so it is built whole and put in once.
+    entry = _rebuild(value)
+    for name in reversed(keys[depth + 1 :]):
+        wrapper = _new_map()
+        wrapper[name] = entry
+        entry = wrapper
+    replaced = holder.get(keys[depth])
+    _put(holder, keys[depth], entry)
+    edited = _render(editor, root)
+    # Only what went with a replaced collection may be gone: the comments on
+    # its own lines, not the lines that follow it. This checks the text, not
+    # ruamel's bookkeeping, so a change in how ruamel holds comments cannot lose
+    # one without this noticing.
+    lost = _comments_in(text) - _comments_in(edited)
+    if _as_map(replaced) is not None or _as_seq(replaced) is not None:
+        lost -= _comments_in(_without_trailer(_render(editor, replaced)))
+    for comment in lost:
+        message = f"/{'/'.join(keys)}: editing it would lose the comment: {comment}"
+        raise RegistryError(message)
+    return edited
+
+
+_NO_WRAP = 1 << 20
+"""A line width that no list reaches, so ruamel never wraps a flow sequence."""
+
+
+def _render(editor: YAML, node: object) -> str:
+    out = io.StringIO()
+    editor.dump(node, out)  # pyright: ignore[reportUnknownMemberType]
+    return out.getvalue()
+
+
+def _without_trailer(text: str) -> str:
+    """Cut the blank and comment-only lines off the end of ``text``."""
+    lines = text.splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+        _ = lines.pop()
+    return "\n".join(lines)
+
+
+def _comments_in(text: str) -> Counter[str]:
+    """
+    Count the comments in ``text``: a ``#`` that starts a line or follows a space.
+
+    Quoted text is skipped, as a quote that opens where a scalar starts. Block
+    scalars are not recognised, so a ``#`` line in one counts as a comment.
+    """
+    found: Counter[str] = Counter()
+    for line in text.splitlines():
+        quote, escaped = "", False
+        for index, char in enumerate(line):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\" and quote == '"':
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+            elif char in "'\"" and (index == 0 or not line[index - 1].isalnum()):
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                found[line[index:].rstrip()] += 1
+                break
+    return found
+
+
+class _Token(Protocol):
+    """A comment as ruamel keeps it: its text, and the lines up to the next entry."""
+
+    value: str
+
+
+class _Comments(Protocol):
+    """The comments of a mapping or a list, by key or index."""
+
+    items: dict[str | int, list[_Token | None]]
+
+
+class _Flow(Protocol):
+    def flow_style(self) -> bool | None: ...
+
+    def set_flow_style(self) -> None: ...
+
+
+class _Node(Protocol):
+    """The part of a ruamel mapping or list that ``set_in_text`` uses."""
+
+    @property
+    def ca(self) -> _Comments: ...
+
+    @property
+    def fa(self) -> _Flow: ...
+
+    def __len__(self) -> int: ...
+
+
+class _Seq(_Node, Protocol):
+    def append(self, value: object) -> None: ...
+
+
+class _Map(_Node, Protocol):
+    def get(self, key: str) -> object: ...
+
+    def __contains__(self, key: str) -> bool: ...
+
+    def __setitem__(self, key: str, value: object) -> None: ...
+
+    def __iter__(self) -> Iterator[str]: ...
+
+    def __reversed__(self) -> Iterator[str]: ...
+
+
+def _new_map() -> _Map:
+    return cast("_Map", CommentedMap())
+
+
+def _as_map(node: object) -> _Map | None:
+    return cast("_Map", node) if isinstance(node, CommentedMap) else None
+
+
+def _new_seq() -> _Seq:
+    return cast("_Seq", cast("object", CommentedSeq()))
+
+
+def _as_seq(node: object) -> _Seq | None:
+    if not isinstance(node, CommentedSeq):
+        return None
+    return cast("_Seq", cast("object", node))
+
+
+def _rebuild(value: JsonValue) -> object:
+    """Build what ruamel writes for ``value``: lists in flow style, maps in block."""
+    match value:
+        case list():
+            sequence = _new_seq()
+            for item in value:
+                sequence.append(_rebuild(item))
+            sequence.fa.set_flow_style()
+            return sequence
+        case dict():
+            mapping = _new_map()
+            for name, member in value.items():
+                mapping[name] = _rebuild(member)
+            return mapping
+        case _:
+            return value
+
+
+def _put(holder: _Map, key: str, value: object) -> None:
+    """
+    Set ``holder[key]``, keeping the comment lines that follow the entry after it.
+
+    Ruamel hangs the lines between two entries on the last scalar of the first,
+    so a new last entry or a replaced block list would be left above them.
+    """
+    last = key if key in holder else next(reversed(holder), None)
+    ending = None if last is None else _ending(holder, last)
+    own = holder.ca.items.get(key)
+    holder[key] = value
+    if ending is None or (own is not None and own[2] is ending):
+        return
+    head, newline, lines = ending.value.partition("\n")
+    if not lines:
+        return
+    moved = copy.copy(ending)
+    ending.value = head + newline
+    owner, name = _tail_owner(holder, key)
+    owned = owner.ca.items.get(name)
+    if owned is None:
+        moved.value = f"\n{lines}"
+        owner.ca.items[name] = [None, None, moved, None]
+    elif owned[2] is None:
+        moved.value = f"\n{lines}"
+        owned[2] = moved
+    else:
+        kept = owned[2]
+        kept.value = kept.value if kept.value.endswith("\n") else f"{kept.value}\n"
+        kept.value += lines
+
+
+def _tail_owner(holder: _Map, key: str) -> tuple[_Map, str]:
+    """Find the entry that holds the lines after ``holder[key]``: its last scalar."""
+    inner = _as_map(holder.get(key))
+    if inner is not None and len(inner) and not inner.fa.flow_style():
+        return _tail_owner(inner, next(reversed(inner)))
+    return holder, key
+
+
+def _ending(holder: _Map, key: str) -> _Token | None:
+    """Find the comment that ends ``holder[key]``: the one on its last scalar."""
+    value = holder.get(key)
+    inner = _as_map(value)
+    if inner is not None and len(inner) and not inner.fa.flow_style():
+        return _ending(inner, next(reversed(inner)))
+    items = _as_seq(value)
+    if items is not None and len(items) and not items.fa.flow_style():
+        entry = items.ca.items.get(len(items) - 1)
+        return None if entry is None else entry[0]
+    entry = holder.ca.items.get(key)
+    return None if entry is None else entry[2]
 
 
 class _Mark(Protocol):

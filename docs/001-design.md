@@ -923,7 +923,7 @@ Commands:
   - **Confirming** writes the new selection to `machine.yaml`. Then it links
     and unlinks that account's skills, as `atc sync` would, without touching
     its settings or instructions file.
-  - **Cancelling** changes nothing.
+  - **Cancelling** (Ctrl-C) changes nothing and exits 130.
   - **Without a terminal** on both stdin and stdout, it exits 2 and points at
     `add` and `rm`.
 - `atc skills add ACCOUNT SKILL... [--take-over]` and
@@ -1060,6 +1060,7 @@ personal asset (§3). It can go once atc is the only way sessions start.
 | 1    | Configuration error: registry, source discovery or trust rules, unit, template, layer policy, merge, git or snapshot setup |
 | 2    | Usage error, or `atc check` run outside a sandbox                                                                          |
 | 3    | `check` found a failure, or `sync` left changes, outside edits or link conflicts unwritten (with `--check`, any change)    |
+| 130  | Interrupted with Ctrl-C, or the skills picker was cancelled; nothing was changed by the interrupted step                   |
 
 All diagnostics go to stderr and name the file and the JSON pointer where
 that makes sense. A successful `run` replaces itself with the agent, so from
@@ -1094,7 +1095,7 @@ untyped mappings and sequences. `yamlval` contains them in one function that
 converts to `JsonValue` and rejects anything else, under the same discipline
 as `jsonval`. That still leaves two boundaries for parsed data.
 
-The picker adds a third, small one. questionary's `ask()` returns an untyped
+The picker adds a third, small one. questionary's `unsafe_ask()` (not `ask()`, which prints to stdout on Ctrl-C) returns an untyped
 value. `ui` narrows it on the spot to `list[str] | None` (`None` meaning
 cancelled), and nothing untyped leaves that function. The project's
 `CLAUDE.md` gets a line naming it.

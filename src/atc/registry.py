@@ -1,18 +1,19 @@
 """The machine registry: the accounts and projects of this machine."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from atc.errors import PathError, RegistryError
+from atc.errors import PathError, RegistryError, WriteError
+from atc.fsutil import atomic_write
 from atc.jsonval import JsonValue
 from atc.refs import Located, resolve_registry
 from atc.sources import Sources
-from atc.yamlval import load_yaml, parse_yaml
+from atc.yamlval import load_yaml, parse_yaml, set_in_text
 
 REGISTRY_VERSION = 1
 REGISTRY_FILE = "machine.yaml"
@@ -204,6 +205,37 @@ def parse_registry(text: str, origin: Path, home: Path) -> Registry:
 
     """
     return _build(parse_yaml(text, str(origin)), origin, home)
+
+
+def set_skills(path: Path, home: Path, account: str, refs: Sequence[str]) -> Registry:
+    """
+    Write ``refs`` as the ``skills`` of ``account`` in the registry file ``path``.
+
+    The file is edited in place, so its comments and key order stay. It is
+    replaced only when it is a valid registry before the edit and after it, and
+    in one step, as :func:`atc.fsutil.atomic_write` does. Returns the registry
+    as it now reads. ``home`` is what a leading ``~`` in a path stands for.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or has no such account. The file is as it
+            was.
+        WriteError: the file cannot be written.
+
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RegistryError(f"{path}: cannot be read: {exc}") from exc
+    _ = parse_registry(text, path, home).account(account)
+    selection: list[JsonValue] = [*refs]
+    edited = set_in_text(text, ["accounts", account, "skills"], selection)
+    registry = parse_registry(edited, path, home)
+    try:
+        atomic_write(path, edited)
+    except OSError as exc:
+        raise WriteError(f"{path}: cannot be written: {exc}") from exc
+    return registry
 
 
 def account_unit(sources: Sources, registry: Registry, account: Account) -> Located:

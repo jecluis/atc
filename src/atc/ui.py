@@ -1,15 +1,32 @@
 """Terminal output: data on standard output, diagnostics on standard error."""
 
-from collections.abc import Iterable
+import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, cast
 
+import click
+import questionary
 from rich.console import Console
 from rich.json import JSON
 from rich.table import Table
 from rich.text import Text
 
 from atc.jsonval import JsonValue, dumps
+
+
+@dataclass(frozen=True, slots=True)
+class PickChoice:
+    """
+    One line of the picker.
+
+    ``label`` is what the line shows, ``value`` is what picking it gives back,
+    and ``checked`` says whether it starts ticked.
+    """
+
+    value: str
+    label: str
+    checked: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +107,42 @@ class Ui:
     def table(self, table: Table) -> None:
         """Write ``table`` on standard output."""
         self.out.print(table)
+
+    def pick(self, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
+        """
+        Let the user tick any of ``choices``, and return the values of those ticked.
+
+        An empty list is a confirmed pick of nothing. ``None`` means the user
+        cancelled with Ctrl-C or Ctrl-Q, so nothing was chosen.
+
+        Raises:
+            click.UsageError: standard input or standard output is not a
+                terminal.
+
+        """
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            raise click.UsageError(
+                "atc skills pick needs a terminal; use atc skills add or atc skills rm"
+            )
+        question = questionary.checkbox(
+            title,
+            choices=[
+                questionary.Choice(
+                    title=choice.label, value=choice.value, checked=choice.checked
+                )
+                for choice in choices
+            ],
+        )
+        try:
+            # The one place questionary's untyped answer is taken. For a
+            # checkbox it is the list of the ticked choices' values, which are
+            # strings here. It is narrowed at once, so nothing untyped leaves.
+            answer: object = question.unsafe_ask()  # pyright: ignore[reportAny]
+        except KeyboardInterrupt:
+            return None
+        if not isinstance(answer, list):
+            return None
+        return [item for item in cast("list[object]", answer) if isinstance(item, str)]
 
     def _diagnostic(self, prefix: str, style: str, message: str) -> None:
         # Text takes the message as it is; a string given to print would be

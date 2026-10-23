@@ -1,5 +1,7 @@
 """The machine registry: what it accepts, and what it refuses."""
 
+import stat
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ from atc.registry import (
     load_registry,
     normalize_path,
     parse_registry,
+    set_skills,
 )
 from atc.sources import discover
 from tests.conftest import RegistryWriter
@@ -773,3 +776,84 @@ def test_skills_must_be_a_list_of_strings(
 
     with pytest.raises(RegistryError, match="/accounts/a/skills"):
         _ = load_registry(write_registry(text), home)
+
+
+COMMENTED = """\
+    # this machine
+    version: 1
+    default-account: a
+
+    accounts:
+      a:
+        agent: claude
+        dir: /a  # the main one
+
+      # the second
+      b: {agent: claude, dir: /b, skills: [x]}
+"""
+
+
+def test_set_skills_writes_the_selection_and_returns_the_registry(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    registry = set_skills(path, home, "a", ["git-commits", "@bravo/review"])
+
+    assert registry.accounts["a"].skills == ("git-commits", "@bravo/review")
+    assert registry.accounts["b"].skills == ("x",)
+    assert load_registry(path, home) == registry
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED).replace(
+        "dir: /a  # the main one\n",
+        "dir: /a  # the main one\n    skills: [git-commits, '@bravo/review']\n",
+    )
+
+
+def test_set_skills_can_empty_a_selection(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    registry = set_skills(path, home, "b", [])
+
+    assert registry.accounts["b"].skills == ()
+    assert "b: {agent: claude, dir: /b, skills: []}" in path.read_text(encoding="utf-8")
+
+
+def test_set_skills_refuses_an_unknown_account_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    with pytest.raises(RegistryError, match=r"no account named 'ghost'; .* a, b"):
+        _ = set_skills(path, home, "ghost", ["x"])
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED)
+
+
+def test_set_skills_refuses_a_registry_that_is_invalid_and_leaves_it(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = textwrap.dedent(COMMENTED) + "  c: {agent: claude, dir: /a}\n"
+    path = write_registry(text)
+
+    with pytest.raises(RegistryError, match="share the directory"):
+        _ = set_skills(path, home, "a", ["x"])
+
+    assert path.read_text(encoding="utf-8") == text
+
+
+def test_set_skills_keeps_the_permissions_of_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+    path.chmod(0o640)
+
+    _ = set_skills(path, home, "a", ["x"])
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+def test_set_skills_reports_a_file_that_is_missing(home: Path, tmp_path: Path) -> None:
+    with pytest.raises(RegistryError, match="cannot be read"):
+        _ = set_skills(tmp_path / "absent.yaml", home, "a", ["x"])

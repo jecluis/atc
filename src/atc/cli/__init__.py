@@ -34,7 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     Run atc and return the process exit status.
 
     A configuration problem is reported on standard error and gives status 1,
-    a usage problem gives 2.
+    a usage problem gives 2, and an interrupt such as Ctrl-C gives 130.
     """
     # click types `main` as returning Any. Without standalone mode that is the
     # status of a click `Exit` (`--help`, `--version`) and otherwise what the
@@ -52,4 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except click.UsageError as exc:
         exc.show()
         return exitcodes.USAGE
+    except (click.Abort, KeyboardInterrupt):
+        Ui.default().info("aborted")
+        return exitcodes.INTERRUPTED
     return exitcodes.OK if status is None else status

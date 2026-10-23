@@ -2,12 +2,16 @@
 
 import json
 import re
+import sys
+from typing import final
 
+import click
 import pytest
+import questionary
 from rich.console import Console
 
 from atc.jsonval import JsonObject, dumps
-from atc.ui import Ui
+from atc.ui import PickChoice, Ui
 
 YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
@@ -156,3 +160,81 @@ def test_dim_is_dimmed_on_a_terminal_and_shows_control_characters(
     out = capsys.readouterr().out
     assert "\x1b[2m" in out
     assert ANSI.sub("", out) == "a\\x1b[2Jb\n"
+
+
+type Answer = list[str] | BaseException | None
+"""What a picker gives: the values ticked, an interrupt, or no answer."""
+
+type Asked = list[tuple[str, list[tuple[str, str, bool]]]]
+"""What a picker was asked: its title, then each line's label, value and tick."""
+
+
+@final
+class FakeQuestion:
+    """What `questionary.checkbox` builds, answering without a terminal."""
+
+    def __init__(self, answer: Answer) -> None:
+        self.answer = answer
+
+    def unsafe_ask(self) -> list[str] | None:
+        if isinstance(self.answer, BaseException):
+            raise self.answer
+        return self.answer
+
+
+def ask_through(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer, asked: Asked | None = None
+) -> None:
+    """Make stdin and stdout terminals, and have the picker answer ``answer``."""
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def checkbox(title: str, choices: list[questionary.Choice]) -> FakeQuestion:
+        if asked is not None:
+            lines = [(str(c.title), str(c.value), bool(c.checked)) for c in choices]
+            asked.append((title, lines))
+        return FakeQuestion(answer)
+
+    monkeypatch.setattr(questionary, "checkbox", checkbox)
+
+
+CHOICES = [PickChoice("a", "a  x  The a", checked=True), PickChoice("b", "b  y", False)]
+
+
+def test_pick_gives_the_values_that_were_ticked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: Asked = []
+    ask_through(monkeypatch, ["b", "a"], asked)
+
+    assert Ui.default().pick("Skills", CHOICES) == ["b", "a"]
+    assert asked == [("Skills", [("a  x  The a", "a", True), ("b  y", "b", False)])]
+
+
+def test_pick_can_be_confirmed_with_nothing_ticked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ask_through(monkeypatch, [])
+
+    assert Ui.default().pick("Skills", CHOICES) == []
+
+
+@pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
+def test_pick_gives_none_when_it_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer
+) -> None:
+    ask_through(monkeypatch, answer)
+
+    assert Ui.default().pick("Skills", CHOICES) is None
+
+
+@pytest.mark.parametrize("terminal", ["stdin", "stdout"])
+def test_pick_needs_both_stdin_and_stdout_to_be_terminals(
+    monkeypatch: pytest.MonkeyPatch, terminal: str
+) -> None:
+    ask_through(monkeypatch, ["a"])
+    stream = sys.stdin if terminal == "stdin" else sys.stdout
+    monkeypatch.setattr(stream, "isatty", lambda: False)
+
+    with pytest.raises(click.UsageError, match="needs a terminal; use atc skills add"):
+        _ = Ui.default().pick("Skills", CHOICES)

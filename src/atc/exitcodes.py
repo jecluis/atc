@@ -11,3 +11,6 @@ USAGE = 2
 
 CHECK = 3
 """A check failed, or ``atc sync`` left something unwritten."""
+
+INTERRUPTED = 130
+"""The user interrupted the command, as with Ctrl-C."""
