@@ -145,8 +145,10 @@ def skill_md(name: str | None = None, description: str | None = None) -> str:
     return f"---\n{shown}---\n# Body\n"
 
 
-LINKED_REGISTRY = registry("use-default-agents-md: true")
-"""A registry whose `personal` account links the default instructions file."""
+LINKED_REGISTRY = registry(
+    "use-default-agents-md: true", top="default-agents-md: AGENTS.md\n"
+)
+"""A registry whose `personal` account links the plain asset `AGENTS.md`."""
 
 
 def skill_files(*names: str) -> dict[str, str | JsonObject]:

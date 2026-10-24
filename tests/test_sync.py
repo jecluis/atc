@@ -915,15 +915,13 @@ def test_a_template_that_cannot_be_rendered_is_a_config_error(
         _ = plan_for(ctx)
 
 
-def test_an_instructions_file_that_is_a_template_is_linked_as_its_copy(
+def test_the_default_instructions_template_is_linked_as_its_copy(
     build_context: ContextBuilder, home: Path
 ) -> None:
     (home / ".claude").mkdir()
     ctx = build_context(
         {PERSONAL: unit(SETTINGS), "assets/AGENTS.in.md": "for {{account.name}}\n"},
-        registry(
-            "use-default-agents-md: true", top="default-agents-md: AGENTS.in.md\n"
-        ),
+        registry("use-default-agents-md: true"),
     )
     entry = home / ".claude" / "CLAUDE.md"
 

@@ -87,7 +87,7 @@ claude-stuff/                 # this repository
     projects/
     langs/
   assets/                     # files the units point at
-    AGENTS.md                 # the default instructions file (§10.2)
+    AGENTS.in.md              # the default instructions file (§10.2)
     hooks/
     bin/
     statusline.sh
@@ -153,7 +153,7 @@ accounts:
   personal:
     agent: claude
     dir: ~/.claude
-    use-default-agents-md: true # link assets/AGENTS.md as ~/.claude/CLAUDE.md
+    use-default-agents-md: true # link assets/AGENTS.in.md's copy as CLAUDE.md
     skills: [git-commits, rust-2024, seq-docs-convention]
     vars:
       scratch: /mnt/pci4-scratch/cc/joao
@@ -182,7 +182,7 @@ projects:
 | `version`                               | yes      | Currently `1`                                                                                                                    |
 | `vars`                                  | no       | Machine-wide variables                                                                                                           |
 | `default-account`                       | yes      | An account name                                                                                                                  |
-| `default-agents-md`                     | no       | Asset reference (§7.2) to the default instructions file. Defaults to `AGENTS.md`                                                 |
+| `default-agents-md`                     | no       | Asset reference (§7.2) to the default instructions file. Defaults to `AGENTS.in.md`                                              |
 | `agents.<agent>.bin`                    | no       | The agent binary                                                                                                                 |
 | `accounts.<name>.agent`                 | yes      | `claude` (later also `codex`)                                                                                                    |
 | `accounts.<name>.dir`                   | yes      | The account's config directory                                                                                                   |
@@ -351,7 +351,7 @@ same lookup, relative to a source's `assets/` or `skills/` instead of
 `conf/`:
 
 - `default-agents-md` and `agents-md-file` name a file under `assets/`, such
-  as `AGENTS.md` or `@acme/AGENTS.md`. A value of `agents-md-file` that
+  as `AGENTS.in.md` or `@acme/AGENTS.in.md`. A value of `agents-md-file` that
   starts with `/` or `~` is a filesystem path instead (§10.2). A reference to
   a templated asset means its copy rendered for the account (§10.2).
 - each entry of `skills` names a skill directory under `skills/`, such as
@@ -577,7 +577,10 @@ check at that point:
 - The account's login lives in `auth.json`, and its configuration in
   `config.toml`.
 - The instructions file is `AGENTS.md` in that directory. This is why the
-  default file in `assets/` is named for no particular agent.
+  default file in `assets/` is named for no particular agent. The default
+  file is `AGENTS.in.md` and not `AGENTS.md` because agents working in the
+  source's own repository load an `AGENTS.md` there as that repository's
+  instructions.
 - `install-skills.sh` links Codex skills into `~/.agents/skills`, which
   doesn't belong to any one account. If that is the only place Codex looks,
   per-account skills won't work for Codex as they do for Claude.
@@ -1338,8 +1341,9 @@ Each step leaves a working setup.
    - Review `atc sync --diff`, then run `atc sync --take-over`.
 4. **Instructions and skills.**
    - `links`, `skills`, and the link half of `sync`.
-   - Copy `~/.claude/CLAUDE.md` into `assets/AGENTS.md`, commit and pull it,
-     and set `use-default-agents-md: true` on both accounts.
+   - Copy `~/.claude/CLAUDE.md` into `assets/AGENTS.in.md`, commit and pull it,
+     and set `use-default-agents-md: true` on both accounts. As a template it
+     must hold no `{{` other than a reference (§10.2).
      `atc sync --take-over` backs up the personal account's file and replaces
      it with the link. The Acme account has none, so it gets the link
      directly. Start a session in each account

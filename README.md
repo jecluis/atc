@@ -93,7 +93,7 @@ version: 1
 vars:
   scratch_root: /mnt/scratch
 default-account: personal
-default-agents-md: AGENTS.md
+default-agents-md: AGENTS.in.md
 agents:
   claude:
     bin: claude
@@ -107,7 +107,7 @@ accounts:
     agent: claude
     dir: ~/.config/work/claude
     unit: "@work/accounts/work.json"
-    agents-md-file: "@work/AGENTS.md"
+    agents-md-file: "@work/AGENTS.in.md"
     skills: [git-commits, "@work/review"]
     vars:
       scratch: /mnt/scratch/work
@@ -128,7 +128,7 @@ projects:
 | `version` | yes | Must be `1`. |
 | `vars` | no | Variables for every unit, as `{{vars.<name>}}` (see Templates). |
 | `default-account` | yes | The account used outside projects, and by projects that name none. It must be one of `accounts`. |
-| `default-agents-md` | no | The file that `use-default-agents-md` links, as an asset reference (see Units). Defaults to `AGENTS.md`. |
+| `default-agents-md` | no | The file that `use-default-agents-md` links, as an asset reference (see Units). Defaults to `AGENTS.in.md`: a template, linked as its copy rendered for the account (see Templated assets under `atc sync`), and not named `AGENTS.md` so that an agent working in the source's own repository does not load it as that repository's instructions. |
 | `agents.<agent>.bin` | no | The binary `atc run` starts for the agent: a command name, looked up on `PATH`, or a path, which is absolute or starts with `~/`. A value with a `/` in it is a path. Defaults to the agent's name. Only `claude` exists. |
 | `accounts.<name>.agent` | yes | The coding agent the account is for. Only `claude` exists. |
 | `accounts.<name>.dir` | yes | The account's configuration directory. |
@@ -252,12 +252,12 @@ source, or with names that never collide, the prefix is never needed.
 
 **Asset references** name a file under a source's `assets/` instead: the
 registry's `default-agents-md`, and an `agents-md-file` that is not a path, such
-as `AGENTS.md` or `@work/docs/AGENTS.md`. They follow the same rules as unit
-references, with `assets/` in place of `conf/` and with no extension required:
-a reference must be relative and must stay inside the `assets/` of its source,
-links included, and without `@` exactly one source must contain the file. A
-reference to a templated asset means its copy rendered for the account (see
-Templated assets under `atc sync`).
+as `AGENTS.in.md` or `@work/docs/AGENTS.in.md`. They follow the same rules as
+unit references, with `assets/` in place of `conf/` and with no extension
+required: a reference must be relative and must stay inside the `assets/` of its
+source, links included, and without `@` exactly one source must contain the
+file. A reference to a templated asset means its copy rendered for the account
+(see Templated assets under `atc sync`).
 
 **Merging.** Imports are followed depth-first and in order, each before the
 unit's own `settings`, so an importing unit overrides what it imports and a
@@ -1022,10 +1022,13 @@ link to:
 
 1. the account's `agents-md-file`, if it sets one: a path, or an asset
 2. otherwise, if `use-default-agents-md` is `true`, the asset that
-   `default-agents-md` names, which is `AGENTS.md` unless the registry says
+   `default-agents-md` names, which is `AGENTS.in.md` unless the registry says
    otherwise
 3. otherwise nothing: atc creates nothing and leaves alone any file it did not
    make, while a link it made earlier is removed
+
+An asset that is a template, such as the default, is linked as its copy (see
+Templated assets).
 
 The link is symbolic and its target is absolute. The target must exist, or the
 account cannot be planned (and so none is changed). An `agents-md-file` that

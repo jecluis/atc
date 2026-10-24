@@ -560,14 +560,16 @@ def test_agents_md_file_can_be_an_asset_reference(
     assert wanted == ctx.dirs.conf_d / "bravo" / "assets" / "AGENTS.md"
 
 
-def test_the_flag_links_the_default(build_context: ContextBuilder) -> None:
+def test_the_flag_links_the_copy_of_the_default_template(
+    build_context: ContextBuilder,
+) -> None:
     ctx = build_context(
-        {"assets/AGENTS.md": "shared\n"}, registry("use-default-agents-md: true")
+        {"assets/AGENTS.in.md": "shared\n"}, registry("use-default-agents-md: true")
     )
 
     wanted = wanted_instructions(ctx, ctx.registry.account("personal"))
 
-    assert wanted == ctx.dirs.conf_d / "assets" / "AGENTS.md"
+    assert wanted == ctx.dirs.state_dir / "sync" / "personal" / "assets" / "AGENTS.md"
 
 
 def test_the_default_can_be_renamed(build_context: ContextBuilder) -> None:
@@ -600,7 +602,10 @@ def test_the_flag_turned_off_wants_nothing(build_context: ContextBuilder) -> Non
 @pytest.mark.parametrize(
     ("lines", "message"),
     [
-        (["use-default-agents-md: true"], r"default-agents-md: 'AGENTS.md': no such"),
+        (
+            ["use-default-agents-md: true"],
+            r"default-agents-md: 'AGENTS\.in\.md': no such",
+        ),
         (
             ['agents-md-file: "@bravo/AGENTS.md"'],
             r"agents-md-file: .*'@bravo/AGENTS.md': no such",
@@ -634,7 +639,7 @@ def test_an_ambiguous_default_asks_for_a_source_prefix(
     build_context: ContextBuilder,
 ) -> None:
     ctx = build_context(
-        {"bravo/assets/AGENTS.md": "a\n", "personal/assets/AGENTS.md": "b\n"},
+        {"bravo/assets/AGENTS.in.md": "a\n", "personal/assets/AGENTS.in.md": "b\n"},
         registry("use-default-agents-md: true"),
     )
 

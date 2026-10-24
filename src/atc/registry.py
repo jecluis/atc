@@ -18,8 +18,13 @@ from atc.yamlval import delete_in_text, load_yaml, parse_yaml, set_in_text
 REGISTRY_VERSION = 1
 REGISTRY_FILE = "machine.yaml"
 """The registry's file name, in atc's configuration directory."""
-DEFAULT_AGENTS_MD = "AGENTS.md"
-"""The asset that ``default-agents-md`` names when the registry says nothing."""
+DEFAULT_AGENTS_MD = "AGENTS.in.md"
+"""
+The asset that ``default-agents-md`` names when the registry says nothing.
+
+An agent working in the source's own repository would load an ``AGENTS.md``
+there as that repository's instructions; a template is linked as its copy.
+"""
 DEFAULT_GC_HOURS = 24
 """The hours between full ``git gc`` runs when the registry says nothing."""
 DEFAULT_BRANCH_FROM = "main"

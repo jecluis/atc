@@ -703,7 +703,7 @@ def test_instructions_settings_default_to_none(
     registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
 
     account = registry.accounts["personal"]
-    assert registry.default_agents_md == "AGENTS.md"
+    assert registry.default_agents_md == "AGENTS.in.md"
     assert account.use_default_agents_md is False
     assert account.agents_md_file is None
     assert registry.warnings == ()
