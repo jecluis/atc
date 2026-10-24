@@ -551,7 +551,10 @@ names both units and both rules, and leaves the fix to you.
 Claude Code reads a trailing `:*` and a trailing ` *` alike (F14), so the
 matcher turns the first into the second in both rules before comparing them. A
 `*` in the middle needs the text around it to be there, which the comparison
-keeps: `Bash(git * push*)` doesn't cover `Bash(git push:*)`.
+keeps: `Bash(git * push*)` doesn't cover `Bash(git push:*)`. A rule that ends
+in `:*` is a literal prefix, though: a `*` before the `:*` stands for itself,
+so `Bash(SQLX_* cargo build:*)` matches only commands that start with
+`SQLX_* cargo build`, and covers no rule whose `*` is a wildcard.
 
 ## 9. Backends
 

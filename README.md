@@ -1306,7 +1306,10 @@ A rule **covers** another when it matches everything the other one matches:
 - for `Bash` rules, its pattern, with `*` as a wildcard, matches the text of the
   other read literally. A trailing `:*` means the same as a trailing ` *`, so
   `Bash(git *)` covers `Bash(git rebase:*)`, and `Bash(rm:*)` covers
-  `Bash(rm -rf target:*)`
+  `Bash(rm -rf target:*)`. Claude Code reads a rule that ends in `:*` as a
+  literal prefix, so a `*` before the `:*` stands for itself:
+  `Bash(SQLX_* cargo build:*)` matches only commands that start with
+  `SQLX_* cargo build`. Write `Bash(SQLX_* cargo build *)` for the wildcard
 
 The check is conservative: it can miss a conflict, but it does not report one
 that is not there. A partial overlap is not reported, so denying

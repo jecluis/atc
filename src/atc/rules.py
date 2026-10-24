@@ -51,8 +51,11 @@ def covers(by: str, rule: str) -> bool:
     neither covers nor is covered. A bare tool covers every rule for that tool,
     and equal rules cover each other. For ``Bash``, ``by`` covers ``rule`` when
     ``by``'s spec, with ``*`` as a wildcard, matches the text of ``rule``'s spec
-    read literally. A trailing ``:*`` counts as `` *`` in both. Other tools are
-    compared only for equal text.
+    read literally. A trailing ``:*`` counts as `` *`` in both. Claude Code
+    reads a rule ending in ``:*`` as a literal prefix, so a ``*`` before the
+    ``:*`` stands for itself, in either rule. Such a ``*`` in ``by`` therefore
+    covers only the same character, never a wildcard in ``rule``. Other tools
+    are compared only for equal text.
     """
     covering = _RULE.fullmatch(by)
     covered = _RULE.fullmatch(rule)
@@ -71,7 +74,13 @@ def covers(by: str, rule: str) -> bool:
         return True
     if tool != "Bash":
         return False
-    pattern = ".*".join(re.escape(part) for part in _bash_spec(by_spec).split("*"))
+    if by_spec.endswith(":*"):
+        prefix = by_spec.removesuffix(":*")
+        if "*" in prefix and "*" in rule_spec and not rule_spec.endswith(":*"):
+            return False
+        pattern = f"{re.escape(prefix)} .*"
+    else:
+        pattern = ".*".join(re.escape(part) for part in by_spec.split("*"))
     return re.fullmatch(pattern, _bash_spec(rule_spec), re.DOTALL) is not None
 
 

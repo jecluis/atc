@@ -25,6 +25,11 @@ PERSONAL = "conf/accounts/personal.json"
         ("Read(*.env)", "Read(.env)", False),
         ("Edit(x)", "Read(x)", False),
         ("Bash(git * push*)", "Bash(git push:*)", False),
+        ("Bash(SQLX_* cargo build:*)", "Bash(SQLX_OFFLINE=1 cargo build -q)", False),
+        ("Bash(SQLX_* cargo build:*)", "Bash(SQLX_* cargo build --release)", False),
+        ("Bash(SQLX_* cargo build:*)", "Bash(SQLX_* cargo build -q:*)", True),
+        ("Bash(git *:*)", "Bash(git * push)", False),
+        ("Bash(SQLX_* cargo build *)", "Bash(SQLX_OFFLINE=1 cargo build -q)", True),
     ],
 )
 def test_covers(by: str, rule: str, expected: bool) -> None:
