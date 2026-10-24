@@ -1,4 +1,4 @@
-"""Expanding ``{{name}}`` references in a unit's settings."""
+"""Expanding ``{{name}}`` references in a unit's settings, and in templated assets."""
 
 import re
 from collections.abc import Mapping
@@ -38,6 +38,25 @@ def expand(
 
     """
     return _Expander(variables, origin).mapping(settings, {}, "")
+
+
+def expand_text(text: str, variables: Mapping[str, VarValue], *, origin: str) -> str:
+    """
+    Replace the references in ``text``, the content of a file.
+
+    Only string references can be used: a file has no array element for a list
+    to expand. ``origin`` names the file for the error messages, which also
+    give the line at fault.
+
+    Raises:
+        TemplateError: a reference is unknown, malformed or names a list.
+
+    """
+    expander = _Expander(variables, origin)
+    return "".join(
+        expander.line(line, f"line {number}")
+        for number, line in enumerate(text.splitlines(keepends=True), start=1)
+    )
 
 
 def check_syntax(settings: JsonObject, *, origin: str) -> None:
@@ -150,6 +169,15 @@ class _Expander:
                     self.check(element, f"{pointer}/{index}")
             case _:
                 pass
+
+    def line(self, text: str, where: str) -> str:
+        """Expand one line of a file, in which only string references can be used."""
+        self._well_formed(text, where)
+        for match in REFERENCE.finditer(text):
+            if isinstance(self._variables.get(match[1]), tuple):
+                message = f"list reference {{{{{match[1]}}}}} cannot be used in a file"
+                raise self._error(where, message)
+        return self._substitute(text, {}, where)
 
     def _well_formed(self, text: str, pointer: str) -> None:
         """Refuse a ``{{`` in ``text`` that does not start a reference."""

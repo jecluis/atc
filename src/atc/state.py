@@ -7,6 +7,7 @@ from pathlib import Path
 from atc.errors import UnitError
 from atc.fsutil import atomic_write, make_private_dir
 from atc.jsonval import JsonObject, dumps, parse_json
+from atc.sources import Source
 
 SETTINGS_RECORD = "settings.json"
 LINKS_RECORD = "links.json"
@@ -17,9 +18,10 @@ class SyncState:
     """
     The record that ``atc sync`` keeps for one account, under ``state_dir``.
 
-    ``root`` holds the settings it last wrote, the links it made, and the
-    ``backups_dir`` of what it replaced. It stays private to the user, because
-    settings can hold secrets.
+    ``root`` holds the settings it last wrote, the links it made, the
+    ``backups_dir`` of what it replaced, and the ``rendered_dir`` of the
+    templated assets it rendered for the account. It stays private to the user,
+    because settings can hold secrets.
     """
 
     state_dir: Path
@@ -32,6 +34,14 @@ class SyncState:
     @property
     def backups_dir(self) -> Path:
         return self.root / "backups"
+
+    @property
+    def rendered_dir(self) -> Path:
+        return self.root / "assets"
+
+    def rendered(self, source: Source) -> Path:
+        """Give where the templated assets of ``source`` are rendered."""
+        return self.rendered_dir / source.name if source.name else self.rendered_dir
 
     def last_settings(self) -> JsonObject | None:
         """

@@ -14,6 +14,7 @@ from atc.errors import ConfigError, PathError
 from atc.fsutil import backup
 from atc.refs import resolve_registry
 from atc.registry import Account
+from atc.rendered import rendered_copy
 
 type LinkAction = Literal[
     "none",
@@ -182,7 +183,8 @@ def wanted_instructions(ctx: BuildContext, account: Account) -> Path | None:
 
     It is the account's ``agents-md-file``, a path or an asset; else, when
     ``use-default-agents-md`` is set, the asset ``default-agents-md`` names;
-    else ``None``, no link.
+    else ``None``, no link. An asset that is a template is linked as its copy
+    rendered for ``account``.
 
     Raises:
         ConfigError: the file does not exist, an asset is in several sources, or
@@ -207,7 +209,7 @@ def wanted_instructions(ctx: BuildContext, account: Account) -> Path | None:
             raise PathError(f"{where}: {key}: {exc}") from exc
         if found is None:
             raise PathError(f"{where}: {key}: '{wanted}': no such asset")
-        target = found.path
+        target = rendered_copy(ctx, account, found) or found.path
     entry = backend_for(account.agent, ctx.home).instructions_file(account)
     if target == entry:
         raise ConfigError(f"{where}: {key}: {target} is the instructions file itself")

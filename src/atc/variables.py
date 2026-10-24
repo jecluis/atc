@@ -7,6 +7,7 @@ from atc.backends import backend_for
 from atc.context import BuildContext
 from atc.registry import Account, Project
 from atc.sources import Source
+from atc.state import SyncState
 from atc.template import VarValue
 
 
@@ -19,8 +20,11 @@ def layer_variables(
     These are every variable except the ones that depend on the unit being
     expanded (see :func:`with_source`). The ``project.*`` ones exist when a
     ``project`` is given, which is the project layer, and not otherwise. The
-    named ``sources.<name>.*`` variables exist only in the multi layout.
+    named ``sources.<name>.*`` variables exist only in the multi layout. Their
+    ``rendered`` is where ``atc sync`` renders the source's templated assets for
+    ``account``.
     """
+    state = SyncState(ctx.dirs.state_dir, account.name)
     variables: dict[str, VarValue] = {
         "home": str(ctx.home),
         "atc.config_dir": str(ctx.dirs.config_dir),
@@ -32,7 +36,11 @@ def layer_variables(
     }
     for source in ctx.sources.items:
         if source.name:
-            variables.update(_source_variables(f"sources.{source.name}", source))
+            variables.update(
+                _source_variables(
+                    f"sources.{source.name}", source, state.rendered(source)
+                )
+            )
     variables.update({f"vars.{name}": v for name, v in ctx.registry.vars.items()})
 
     own = backend_for(account.agent, ctx.home)
@@ -64,21 +72,29 @@ def layer_variables(
 
 
 def with_source(
-    variables: Mapping[str, VarValue], source: Source
+    variables: Mapping[str, VarValue], source: Source, rendered: Path
 ) -> dict[str, VarValue]:
-    """Add the ``source.*`` variables of ``source``, the one that holds a unit."""
+    """
+    Add the ``source.*`` variables of ``source``, the one that holds a unit.
+
+    ``rendered`` is where ``atc sync`` renders that source's templated assets for
+    the layer's account.
+    """
     return {
         **variables,
         "source.name": source.name,
-        **_source_variables("source", source),
+        **_source_variables("source", source, rendered),
     }
 
 
-def _source_variables(prefix: str, source: Source) -> dict[str, VarValue]:
+def _source_variables(
+    prefix: str, source: Source, rendered: Path
+) -> dict[str, VarValue]:
     return {
         f"{prefix}.root": str(source.root),
         f"{prefix}.conf": str(source.conf),
         f"{prefix}.assets": str(source.assets),
+        f"{prefix}.rendered": str(rendered),
     }
 
 

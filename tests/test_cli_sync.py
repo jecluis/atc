@@ -1038,3 +1038,53 @@ def test_directories_and_unrecorded_entries_are_left_alone(
     assert capsys.readouterr().out == "personal: current\n"
     assert (skills / "phase-review" / "keep.txt").is_file()
     assert (skills / "synced" / "keep.txt").is_file()
+
+
+def test_sync_renders_each_template_and_says_so_when_its_copy_changes(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (home / ".claude").mkdir()
+    configure(
+        {PERSONAL: unit(SETTINGS), "assets/bin/x.in.sh": "echo {{account.name}}\n"}
+    )
+    copy = state(dirs).rendered_dir / "bin" / "x.sh"
+    line = f"personal: bin/x.in.sh rendered as {copy}"
+
+    checked = main(["sync", "--check"])
+    _ = capsys.readouterr()
+    diffed = main(["sync", "--diff"])
+    diff = capsys.readouterr().out
+    synced = main(["sync"])
+    out = capsys.readouterr().out
+
+    assert (checked, diffed, synced) == (CHECK, OK, OK)
+    assert f"{line} (would change)" in diff
+    assert "+echo personal" in diff
+    assert out == f"personal: written\n{line} (changed)\n"
+    assert copy.read_text() == "echo personal\n"
+    assert main(["sync", "--check"]) == OK
+
+
+def test_diff_shows_a_copy_removed_and_a_copy_whose_mode_alone_changed(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (home / ".claude").mkdir()
+    configure({PERSONAL: unit(SETTINGS), "assets/a.in": "a\n", "assets/b.in": "b\n"})
+    _ = main(["sync"])
+    rendered = state(dirs).rendered_dir
+    (rendered / "a").chmod(0o644)
+    (dirs.conf_d / "assets" / "b.in").unlink()
+    _ = capsys.readouterr()
+
+    assert main(["sync", "--diff"]) == OK
+
+    out = capsys.readouterr().out
+    assert f"{rendered / 'a'}: mode 644 → 600" in out
+    assert f"personal: {rendered / 'b'}: removed, as its template is gone" in out
+    assert "-b" in out

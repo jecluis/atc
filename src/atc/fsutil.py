@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-def atomic_write(path: Path, text: str, *, default_mode: int = 0o600) -> None:
+def atomic_write(
+    path: Path, text: str, *, default_mode: int = 0o600, mode: int | None = None
+) -> None:
     """
     Replace the file at ``path`` with ``text``, all at once.
 
@@ -16,19 +18,20 @@ def atomic_write(path: Path, text: str, *, default_mode: int = 0o600) -> None:
     disk and then renamed over ``path``, so a reader sees the old file or the new
     one and never half of either. When ``path`` is a symbolic link, such as one
     into a dotfiles repository, the file it leads to is the one replaced, in its
-    own directory, and the link stays. The new file has the permissions of the
-    one it replaces, or ``default_mode`` when there is none. Nothing is left
-    behind if the write fails.
+    own directory, and the link stays. The new file has the permissions ``mode``
+    when it is given, else those of the one it replaces, or ``default_mode``
+    when there is none. Nothing is left behind if the write fails.
 
     Raises:
         OSError: the file cannot be written.
 
     """
     target = path.resolve() if path.is_symlink() else path
-    try:
-        mode = stat.S_IMODE(target.stat().st_mode)
-    except FileNotFoundError:
-        mode = default_mode
+    if mode is None:
+        try:
+            mode = stat.S_IMODE(target.stat().st_mode)
+        except FileNotFoundError:
+            mode = default_mode
     descriptor, name = tempfile.mkstemp(
         dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
     )

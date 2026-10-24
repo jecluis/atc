@@ -11,6 +11,7 @@ from atc.merge import merge_objects
 from atc.refs import Located
 from atc.registry import Account, Project, account_unit, project_unit
 from atc.resolve import Resolution, UnitTransform, resolve
+from atc.state import SyncState
 from atc.template import VarValue, expand
 from atc.variables import layer_variables, with_source
 
@@ -83,6 +84,7 @@ def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> La
     transform = _unit_transform(
         "account",
         layer_variables(ctx, account),
+        SyncState(ctx.dirs.state_dir, account.name),
         f"account layer for {account.name}",
         origins,
     )
@@ -117,6 +119,7 @@ def build_project_layer(
     transform = _unit_transform(
         "project",
         layer_variables(ctx, account, project),
+        SyncState(ctx.dirs.state_dir, account.name),
         f"project layer for {project.name} with account {account.name}",
         origins,
     )
@@ -174,6 +177,7 @@ def _layer(
 def _unit_transform(
     kind: LayerKind,
     variables: Mapping[str, VarValue],
+    state: SyncState,
     layer: str,
     origins: dict[tuple[str, str], list[str]],
 ) -> UnitTransform:
@@ -181,14 +185,15 @@ def _unit_transform(
     Make the transform that prepares a unit for layer ``kind``.
 
     It expands the unit's references, with ``variables`` and the unit's own
-    source, applies the policy, and adds the unit's permission rules to
-    ``origins``. ``layer`` names the layer in error messages.
+    source, whose templated assets are rendered under the account's ``state``,
+    applies the policy, and adds the unit's permission rules to ``origins``.
+    ``layer`` names the layer in error messages.
     """
 
     def prepare(unit: Located, settings: JsonObject) -> JsonObject:
         expanded = expand(
             settings,
-            with_source(variables, unit.source),
+            with_source(variables, unit.source, state.rendered(unit.source)),
             origin=f"{unit.display} ({layer})",
         )
         check_policy(expanded, kind, unit.display)

@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import stat
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from atc.backends.claude import ClaudeBackend
-from atc.context import BuildContext
+from atc.context import BuildContext, load_context
 from atc.errors import ConfigError, WriteError
 from atc.jsonval import JsonObject, dumps
 from atc.links import LinkAction, LinkPlan, apply_link
@@ -26,7 +27,14 @@ from atc.sync import (
     plan_account,
 )
 from tests.conftest import ContextBuilder
-from tests.helpers import LINKED_REGISTRY, MINIMAL_REGISTRY, registry, skill_files, unit
+from tests.helpers import (
+    LINKED_REGISTRY,
+    MINIMAL_REGISTRY,
+    UID,
+    registry,
+    skill_files,
+    unit,
+)
 
 NEW: JsonObject = {"a": 1}
 CLAUDE = ClaudeBackend(Path("/h"))
@@ -361,8 +369,8 @@ def linked_context(
     return build_context(files, LINKED_REGISTRY)
 
 
-def test_all_parts_are_the_settings_the_instructions_and_the_skills() -> None:
-    assert {"settings", "instructions", "skills"} == ALL_PARTS
+def test_all_parts_are_the_settings_the_links_and_the_rendered_assets() -> None:
+    assert {"settings", "instructions", "skills", "assets"} == ALL_PARTS
 
 
 def test_the_plan_links_the_instructions_file(
@@ -783,3 +791,252 @@ def test_a_record_that_cannot_be_written_does_not_hide_the_failure_before_it(
     cause = raised.value.__cause__
     assert cause is not None
     assert any("No space left on device" in note for note in cause.__notes__)
+
+
+TEMPLATE = "assets/bin/clean.in.sh"
+
+
+def templated_context(
+    build_context: ContextBuilder, home: Path, text: str = "ROOT={{account.name}}\n"
+) -> BuildContext:
+    """Set up an account, and a source with one template."""
+    (home / ".claude").mkdir()
+    return build_context({PERSONAL: unit(SETTINGS), TEMPLATE: text})
+
+
+def copy_of(ctx: BuildContext) -> Path:
+    """Where the template of :func:`templated_context` is rendered."""
+    return SyncState(ctx.dirs.state_dir, "personal").rendered_dir / "bin/clean.sh"
+
+
+def test_the_plan_renders_each_template(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+
+    account_plan = plan_for(ctx)
+
+    (asset,) = account_plan.assets
+    assert (asset.path, asset.action) == (copy_of(ctx), "write")
+    assert (asset.live_text, asset.live_mode) == (None, None)
+    assert asset.rendering is not None
+    assert asset.rendering.text == "ROOT=personal\n"
+    assert account_plan.pending
+
+
+def test_applying_writes_a_private_copy_that_is_then_current(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+
+    apply_account(plan_for(ctx), ctx, NOW)
+
+    copy = copy_of(ctx)
+    assert copy.read_text() == "ROOT=personal\n"
+    assert stat.S_IMODE(copy.stat().st_mode) == 0o600
+    assert stat.S_IMODE(copy.parent.stat().st_mode) == 0o700
+    (asset,) = plan_for(ctx).assets
+    assert asset.action == "none"
+    assert not plan_for(ctx).pending
+
+
+def test_an_executable_template_gives_a_copy_only_its_owner_can_run(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+    (ctx.dirs.conf_d / TEMPLATE).chmod(0o755)
+
+    apply_account(plan_for(ctx), ctx, NOW)
+
+    assert stat.S_IMODE(copy_of(ctx).stat().st_mode) == 0o700
+
+
+def test_a_copy_that_differs_in_text_or_in_mode_is_written_again(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+    apply_account(plan_for(ctx), ctx, NOW)
+    copy = copy_of(ctx)
+    _ = copy.write_text("edited\n")
+
+    (edited,) = plan_for(ctx).assets
+    apply_account(plan_for(ctx), ctx, NOW)
+    copy.chmod(0o644)
+    (opened,) = plan_for(ctx).assets
+
+    assert (edited.action, edited.live_text) == ("write", "edited\n")
+    assert copy.read_text() == "ROOT=personal\n"
+    assert (opened.action, opened.live_mode) == ("write", 0o644)
+
+
+def test_a_copy_whose_template_is_gone_is_removed(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+    apply_account(plan_for(ctx), ctx, NOW)
+    (ctx.dirs.conf_d / TEMPLATE).unlink()
+
+    (asset,) = plan_for(ctx).assets
+    apply_account(plan_for(ctx), ctx, NOW)
+
+    assert (asset.path, asset.rendering, asset.action) == (copy_of(ctx), None, "remove")
+    assert asset.live_text == "ROOT=personal\n"
+    assert not copy_of(ctx).parent.exists()
+    assert SyncState(ctx.dirs.state_dir, "personal").rendered_dir.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("parts", "planned"),
+    [({"skills"}, False), ({"assets"}, True), ({"instructions"}, True)],
+)
+def test_templates_are_rendered_with_the_assets_or_the_instructions(
+    build_context: ContextBuilder, home: Path, parts: set[Part], planned: bool
+) -> None:
+    ctx = templated_context(build_context, home)
+
+    account_plan = plan_account(
+        ctx,
+        ctx.registry.account("personal"),
+        take_over=False,
+        discard_live=False,
+        lax=False,
+        parts=frozenset(parts),
+    )
+
+    assert bool(account_plan.assets) == planned
+
+
+def test_a_template_that_cannot_be_rendered_is_a_config_error(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = templated_context(build_context, home, "{{nope}}\n")
+
+    with pytest.raises(ConfigError, match=r"unknown reference \{\{nope\}\}"):
+        _ = plan_for(ctx)
+
+
+def test_an_instructions_file_that_is_a_template_is_linked_as_its_copy(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    (home / ".claude").mkdir()
+    ctx = build_context(
+        {PERSONAL: unit(SETTINGS), "assets/AGENTS.in.md": "for {{account.name}}\n"},
+        registry(
+            "use-default-agents-md: true", top="default-agents-md: AGENTS.in.md\n"
+        ),
+    )
+    entry = home / ".claude" / "CLAUDE.md"
+
+    apply_account(plan_for(ctx), ctx, NOW)
+
+    rendered = SyncState(ctx.dirs.state_dir, "personal").rendered_dir
+    assert entry.readlink() == rendered / "AGENTS.md"
+    assert entry.read_text() == "for personal\n"
+
+
+def test_a_link_where_a_copy_goes_is_replaced_not_written_through(
+    build_context: ContextBuilder, home: Path, tmp_path: Path
+) -> None:
+    ctx = templated_context(build_context, home)
+    elsewhere = tmp_path / "elsewhere.sh"
+    _ = elsewhere.write_text("untouched\n")
+    copy = copy_of(ctx)
+    copy.parent.mkdir(parents=True)
+    copy.symlink_to(elsewhere)
+
+    apply_account(plan_for(ctx), ctx, NOW)
+
+    assert not copy.is_symlink()
+    assert copy.read_text() == "ROOT=personal\n"
+    assert elsewhere.read_text() == "untouched\n"
+
+
+@pytest.mark.parametrize("linked", ["", "bin"])
+def test_a_directory_of_copies_that_is_a_link_is_a_config_error(
+    build_context: ContextBuilder, home: Path, tmp_path: Path, linked: str
+) -> None:
+    ctx = templated_context(build_context, home)
+    directory = SyncState(ctx.dirs.state_dir, "personal").rendered_dir / linked
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "elsewhere").mkdir()
+    directory.symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(ConfigError, match="is a symbolic link, and atc writes"):
+        _ = plan_for(ctx)
+
+
+def test_the_old_copy_of_a_renamed_instructions_template_outlives_a_failure(
+    build_context: ContextBuilder, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (home / ".claude").mkdir()
+    files: dict[str, str | JsonObject] = {
+        PERSONAL: unit(SETTINGS),
+        "assets/AGENTS.in.md": "old\n",
+    }
+    ctx = build_context(
+        files,
+        registry(
+            "use-default-agents-md: true", top="default-agents-md: AGENTS.in.md\n"
+        ),
+    )
+    apply_account(plan_for(ctx), ctx, NOW)
+    (ctx.dirs.conf_d / "assets" / "AGENTS.in.md").unlink()
+    ctx = build_context(
+        {"assets/RULES.in.md": "new\n"},
+        registry("use-default-agents-md: true", top="default-agents-md: RULES.in.md\n"),
+    )
+    entry = home / ".claude" / "CLAUDE.md"
+    renamed = plan_for(ctx)
+
+    def refuse(*_: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    with monkeypatch.context() as patched:
+        patched.setattr("atc.sync._apply_links", refuse)
+        with pytest.raises(ConfigError, match="Permission denied"):
+            apply_account(renamed, ctx, NOW)
+    kept = entry.read_text()
+    apply_account(renamed, ctx, NOW)
+
+    rendered = SyncState(ctx.dirs.state_dir, "personal").rendered_dir
+    assert kept == "old\n"
+    assert entry.readlink() == rendered / "RULES.md"
+    assert entry.read_text() == "new\n"
+    assert not (rendered / "AGENTS.md").exists()
+
+
+def test_the_copies_of_a_source_that_is_gone_are_removed(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    (home / ".claude").mkdir()
+    two = (
+        "version: 1\ndefault-account: a\n"
+        "accounts:\n  a: {agent: claude, dir: ~/.claude}\n"
+    )
+    ctx = build_context(
+        {
+            "main/conf/accounts/a.json": unit(SETTINGS),
+            "main/assets/x.in": "x\n",
+            "other/assets/y.in": "y\n",
+        },
+        two,
+    )
+    account = ctx.registry.account("a")
+    rendered = SyncState(ctx.dirs.state_dir, "a").rendered_dir
+    apply_account(
+        plan_account(ctx, account, take_over=False, discard_live=False, lax=False),
+        ctx,
+        NOW,
+    )
+    shutil.rmtree(ctx.dirs.conf_d / "other")
+    ctx = load_context(env=os.environ, home=home, uid=UID, conf_d=None)
+
+    gone = plan_account(ctx, account, take_over=False, discard_live=False, lax=False)
+    apply_account(gone, ctx, NOW)
+
+    assert [(a.path, a.action) for a in gone.assets] == [
+        (rendered / "main" / "x", "none"),
+        (rendered / "other" / "y", "remove"),
+    ]
+    assert not (rendered / "other").exists()
+    assert (rendered / "main" / "x").read_text() == "x\n"

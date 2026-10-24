@@ -122,7 +122,8 @@ a valid config source (§6). Cloning it into atc's `conf.d/` deploys it.
 | `runtime_dir` | `${XDG_RUNTIME_DIR:-/run/user/<uid>}/atc` | Repository session locks                                            |
 
 `<state_dir>/sync/<account>/` holds what `atc sync` last wrote for an account
-(§10.2): `settings.json`, `links.json`, and `backups/`.
+(§10.2): `settings.json`, `links.json`, `backups/`, and `assets/`, the copies of
+templated assets rendered for it.
 
 As the XDG specification requires, an `XDG_*` variable that is set but not an
 absolute path is ignored. Sessions must not be able to write to any of these
@@ -351,7 +352,8 @@ same lookup, relative to a source's `assets/` or `skills/` instead of
 
 - `default-agents-md` and `agents-md-file` name a file under `assets/`, such
   as `AGENTS.md` or `@acme/AGENTS.md`. A value of `agents-md-file` that
-  starts with `/` or `~` is a filesystem path instead (§10.2).
+  starts with `/` or `~` is a filesystem path instead (§10.2). A reference to
+  a templated asset means its copy rendered for the account (§10.2).
 - each entry of `skills` names a skill directory under `skills/`, such as
   `git-commits` or `@personal/git-commits`
 
@@ -469,7 +471,8 @@ is cloned:
 | `atc.python_dir`                                                   | str  | The Python installation that environment is built on (`sys.base_prefix`, links resolved)    |
 | `source.name`                                                      | str  | The name of the source that contains the unit. Empty in the single layout                   |
 | `source.root`, `source.conf`, `source.assets`                      | str  | That source's directory, its `conf/` and its `assets/`                                      |
-| `sources.<name>.root`, `.conf`, `.assets`                          | str  | The same for any named source (multi layout)                                                |
+| `source.rendered`                                                  | str  | Where `atc sync` renders that source's templated assets for the account (§10.2)             |
+| `sources.<name>.root`, `.conf`, `.assets`, `.rendered`             | str  | The same for any named source (multi layout)                                                |
 | `vars.<name>`                                                      | str  | Registry `vars`                                                                             |
 | `account.name`, `account.agent`, `account.dir`                     | str  | The account being built (account layer) or chosen (project layer)                           |
 | `account.files`                                                    | list | Files the account owns outside its `dir` (from the backend, §9)                             |
@@ -615,6 +618,7 @@ a known command. A typo is an error; it never starts a session.
     layer with each account the project allows (all accounts if it sets no
     `accounts`). This resolves every template reference, applies the layer
     policy, and reports rule warnings (§8).
+  - every templated asset, rendered for each account (§10.2).
 
 - `atc src pull [NAME...]`: updates git sources, all of them by default. For
   each one:
@@ -647,12 +651,14 @@ if it turns out to be useful.
 
 ### 10.2 `atc sync [ACCOUNT...] [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 
-For each named account (all accounts by default), `sync` brings three things
-in the account directory in line with the configuration:
+For each named account (all accounts by default), `sync` brings four things in
+line with the configuration:
 
 - `settings.json`, built from the account layer
 - the instructions file (`CLAUDE.md` for Claude), as a link
 - the selected skills, as links (§10.10)
+- the copies of templated assets, rendered for the account into
+  `<state_dir>/sync/<account>/assets/`
 
 atc works out everything for an account before it changes anything, so an
 error leaves that account as it was. The account directory must already
@@ -705,6 +711,8 @@ The account's instructions file links to:
 3. Otherwise nothing. atc creates nothing, and leaves alone any file it
    didn't make. A link it made earlier is removed (third row below).
 
+An asset that is a template is linked as its rendered copy (below).
+
 #### Links
 
 The instructions file and the skills are symbolic links with absolute
@@ -731,10 +739,44 @@ the way `last` does for settings.
   as settings, named `<UTC timestamp>-<file name>`. The last ten of each
   file name are kept.
 
+#### Templated assets
+
+A file under a source's `assets/` named `<stem>.in.<ext>` or `<stem>.in` is a
+template, such as `bin/clean-scratch-targets.in.sh`. It holds what differs
+between accounts or machines, such as a scratch directory, so that the source
+doesn't have to name it.
+
+- **Rendering:** for each account, the template's references are replaced as
+  in a unit's settings (§7.3), with the account layer's variables and those of
+  the template's own source, never a project's. Only string references can be
+  used, since a file has no array element to expand. A reference error names
+  the template, the account and the line. A template that isn't UTF-8 text,
+  and two templates whose copies need one path (`a.in.sh` and `a.sh.in`, or
+  `bin.in` and `bin/x.in.sh`), are errors too. Each stops that account.
+- **No escape:** as in units (§7.3), a `{{` that doesn't start a reference is
+  an error. A shell script that needs a literal `{{` writes `'{''{'`.
+- **The copy:** it goes to `<state_dir>/sync/<account>/assets/`, plus the
+  source's name in the multi layout, at the template's path under `assets/`
+  with `.in` dropped: `bin/clean-scratch-targets.sh`. It is executable by you
+  if the template is executable by anyone, and private to you either way.
+- **Reaching it:** units name it with `{{source.rendered}}` (§7.4). An
+  instructions file that is a template is linked as its copy.
+- **Why a copy, not a link:** a script whose safety rests on a fixed path,
+  like the scratch cleaner's root, keeps that property: the path is fixed when
+  the copy is made, and sessions can't write `state_dir` (§13) to change it.
+- **Writes:** a copy is written, in one step, when its text or mode differs
+  from the rendering. A copy whose template is gone is removed, along with
+  directories left empty, after the links: a renamed instructions template
+  keeps its old copy until the link has moved. Nothing else writes there, so
+  there is nothing to compare against a `last`. A changed template reaches an
+  account at its next `sync`, as a changed unit does.
+- **No links followed:** a symbolic link where a copy goes is replaced, and a
+  directory of copies that is a link is an error, as for skills.
+
 #### Options
 
-- **`--diff`** writes nothing. It shows the settings diff and each link
-  change that a plain `atc sync` would make.
+- **`--diff`** writes nothing. It shows the settings diff, each link change
+  and each change to a rendered copy that a plain `atc sync` would make.
 - **`--take-over`** writes settings that were never synced but differ, and
   replaces link entries that atc didn't make.
 - **`--discard-live`** applies to settings only.
@@ -1091,7 +1133,8 @@ personal asset (§3). It can go once atc is the only way sessions start.
    to release it.
 4. **Hooks and the statusline run outside the sandbox.** They run only from a
    source's `assets/`, under the trust rules in §6: no links, owned by you, not
-   group- or world-writable. This replaces today's statusline symlink into the
+   group- or world-writable, or from the copies `atc sync` renders from there
+   into `state_dir`. This replaces today's statusline symlink into the
    checkout.
 5. **The fragment is visible in the process list.** It is passed on the
    command line, so units must never carry secrets, including in `env`.
@@ -1109,7 +1152,8 @@ personal asset (§3). It can go once atc is the only way sessions start.
 8. **Instructions and skills come from deployed clones.** Today both
    accounts' skills link into the working checkout, so a session that edits
    it changes what the next session is told (F11). atc links into `conf_d`
-   instead, under the trust rules. An `agents-md-file` outside `conf_d` is
+   instead, under the trust rules, or to a copy rendered from it into
+   `state_dir`. An `agents-md-file` outside `conf_d` is
    allowed, because you chose it, and `atc check` fails if a session can write
    to it.
 

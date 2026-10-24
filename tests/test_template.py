@@ -1,10 +1,10 @@
-"""Expanding references in a unit's settings."""
+"""Expanding references in a unit's settings, and in templated assets."""
 
 import pytest
 
 from atc.errors import TemplateError
 from atc.jsonval import JsonObject
-from atc.template import VarValue, check_syntax, expand
+from atc.template import VarValue, check_syntax, expand, expand_text
 
 V: dict[str, VarValue] = {
     "home": "/h",
@@ -118,3 +118,28 @@ def test_check_syntax_refuses_a_key_with_braces() -> None:
 
 def test_check_syntax_takes_any_well_formed_reference() -> None:
     check_syntax({"a": ["{{nope}}", {"b": "x{{list.ref}}y"}], "c": 1}, origin="u")
+
+
+def test_a_file_has_its_references_replaced_on_every_line() -> None:
+    text = 'ROOT="{{home}}"\nDIR={{account.dir}}\nno newline at the end'
+
+    got = expand_text(text, V, origin="bin/x.in.sh")
+
+    assert got == 'ROOT="/h"\nDIR=/h/.claude\nno newline at the end'
+
+
+def test_an_unknown_reference_in_a_file_names_the_file_and_the_line() -> None:
+    expected = r"^bin/x\.in\.sh: line 2: unknown reference \{\{nope\}\}"
+    with pytest.raises(TemplateError, match=expected):
+        _ = expand_text("ok\n{{nope}}\n", V, origin="bin/x.in.sh")
+
+
+def test_a_list_reference_cannot_be_used_in_a_file() -> None:
+    with pytest.raises(TemplateError, match=r"line 1: list reference .* in a file"):
+        _ = expand_text("{{peers.dir}}\n", V, origin="f")
+
+
+@pytest.mark.parametrize("text", ["{{ home }}", "a {{ b", "{{Home}}"])
+def test_malformed_references_in_a_file_are_errors(text: str) -> None:
+    with pytest.raises(TemplateError, match="malformed reference"):
+        _ = expand_text(text, V, origin="f")

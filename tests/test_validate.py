@@ -408,3 +408,15 @@ def test_validate_config_warns_about_a_skill_with_odd_front_matter(
     assert result.errors == ()
     (warning,) = result.warnings
     assert "'code-review' differs from the directory name 'review'" in warning
+
+
+def test_validate_config_renders_every_template_for_every_account(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit(), "assets/x.in.sh": "{{nope}}\n"}
+    )
+
+    result = validate_config(ctx, lax=False)
+
+    assert result.errors == ("x.in.sh (personal): line 1: unknown reference {{nope}}",)

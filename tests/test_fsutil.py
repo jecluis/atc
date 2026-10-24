@@ -53,6 +53,19 @@ def test_atomic_write_makes_a_new_file_private_by_default(work: Path) -> None:
     assert mode(work / "other.json") == 0o640
 
 
+def test_atomic_write_gives_the_mode_asked_for_whatever_the_file_had(
+    work: Path,
+) -> None:
+    target = work / "x.sh"
+    _ = target.write_text("old")
+    target.chmod(0o600)
+
+    atomic_write(target, "new", mode=0o700)
+
+    assert mode(target) == 0o700
+    assert target.read_text() == "new"
+
+
 def test_atomic_write_writes_through_a_symbolic_link_and_keeps_it(
     work: Path,
 ) -> None:

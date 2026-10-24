@@ -114,7 +114,7 @@ def test_peers_are_every_other_account_of_any_agent(
 def test_with_source_adds_the_values_of_that_source() -> None:
     variables = {"home": "/h"}
 
-    got = with_source(variables, Source("s", Path("/c/s")))
+    got = with_source(variables, Source("s", Path("/c/s")), Path("/st/s"))
 
     assert got == {
         "home": "/h",
@@ -122,6 +122,7 @@ def test_with_source_adds_the_values_of_that_source() -> None:
         "source.root": "/c/s",
         "source.conf": "/c/s/conf",
         "source.assets": "/c/s/assets",
+        "source.rendered": "/st/s",
     }
     assert variables == {"home": "/h"}
 
@@ -173,6 +174,26 @@ def test_the_one_source_of_the_single_layout_has_no_name(
     assert layer.settings == {"env": {"NAME": "[]", "ROOT": str(ctx.dirs.conf_d)}}
 
 
+def test_source_rendered_is_where_sync_renders_for_the_layers_account(
+    build_context: ContextBuilder,
+) -> None:
+    registry = """\
+        version: 1
+        default-account: a
+        accounts:
+          a: {agent: claude, dir: /a, unit: "@bravo/a.json"}
+        """
+    ctx = build_context(
+        {"bravo/conf/a.json": unit({"env": {"R": "{{source.rendered}}/x.sh"}})},
+        registry,
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("a"), lax=False)
+
+    rendered = ctx.dirs.state_dir / "sync" / "a" / "assets" / "bravo"
+    assert layer.settings == {"env": {"R": f"{rendered}/x.sh"}}
+
+
 def test_named_source_variables_exist_only_in_the_multi_layout(
     build_context: ContextBuilder,
 ) -> None:
@@ -187,6 +208,8 @@ def test_named_source_variables_exist_only_in_the_multi_layout(
     assert got["sources.bravo.conf"] == str(bravo.conf)
     assert got["sources.bravo.assets"] == str(bravo.assets)
     assert got["sources.other.assets"] == str(multi.sources.named("other").assets)
+    rendered = multi.dirs.state_dir / "sync" / "personal" / "assets"
+    assert got["sources.bravo.rendered"] == str(rendered / "bravo")
 
 
 def test_the_single_layout_has_no_named_sources(

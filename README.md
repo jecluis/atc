@@ -255,7 +255,9 @@ registry's `default-agents-md`, and an `agents-md-file` that is not a path, such
 as `AGENTS.md` or `@work/docs/AGENTS.md`. They follow the same rules as unit
 references, with `assets/` in place of `conf/` and with no extension required:
 a reference must be relative and must stay inside the `assets/` of its source,
-links included, and without `@` exactly one source must contain the file.
+links included, and without `@` exactly one source must contain the file. A
+reference to a templated asset means its copy rendered for the account (see
+Templated assets under `atc sync`).
 
 **Merging.** Imports are followed depth-first and in order, each before the
 unit's own `settings`, so an importing unit overrides what it imports and a
@@ -316,7 +318,8 @@ variable as it is.
 | `atc.python_dir` | string | The Python installation that environment is built on, with symbolic links resolved. For uv, one of its managed interpreters under `~/.local/share/uv/python`. The same as `atc.install_dir` when atc does not run in a virtual environment. |
 | `source.name` | string | The name of the source that contains the unit. Empty with a single source. |
 | `source.root`, `source.conf`, `source.assets` | string | That source's directory, its `conf/` and its `assets/`. |
-| `sources.<name>.root`, `.conf`, `.assets` | string | The same for any source, by name. Only with several sources. |
+| `source.rendered` | string | Where `atc sync` renders that source's templated assets for the account (see Templated assets under `atc sync`). |
+| `sources.<name>.root`, `.conf`, `.assets`, `.rendered` | string | The same for any source, by name. Only with several sources. |
 | `vars.<name>` | string | The registry's `vars`. |
 | `account.name`, `account.agent`, `account.dir` | string | The account being built, or in a project's units the account chosen for the project. |
 | `account.files` | list | Files the account owns outside its `dir`. For Claude, `~/.claude.json` when `dir` is `~/.claude`, otherwise none. |
@@ -567,6 +570,8 @@ reports:
 - an account that selects a skill that does not exist or that several sources
   have, or two skills of one name, so a commit that removes a skill an account
   uses is not deployed by `atc src pull`
+- a templated asset that cannot be rendered for an account (see Templated
+  assets under `atc sync`)
 - a unit with a reference that cannot be expanded for an account, or for a
   project and one of its accounts, such as an unknown variable
 - a unit that sets a key its layer does not allow: `autoMemoryDirectory` is
@@ -934,14 +939,16 @@ repository, and a later `atc wt new` with the same branch checks it out again.
 
 ### `atc sync [ACCOUNT]... [--check] [--diff] [--take-over] [--discard-live] [--lax] [--conf-d DIR]`
 
-Brings three things in the directory of each account named, or of every account,
-in line with the configuration:
+Brings four things in line with the configuration, for each account named, or
+for every account:
 
-- `settings.json`, written from the settings atc builds for the account (see
-  `atc show account`)
-- the instructions file (`CLAUDE.md`), as a symbolic link
-- the skills the account selects, each as a symbolic link in `skills/` (see
-  Skills)
+- `settings.json` in the account's directory, written from the settings atc
+  builds for the account (see `atc show account`)
+- the instructions file (`CLAUDE.md`) there, as a symbolic link
+- the skills the account selects, each as a symbolic link in `skills/` there
+  (see Skills)
+- the copies of templated assets, rendered for the account (see Templated
+  assets)
 
 The directory must exist already, because creating an account means logging in,
 which atc does not do. Every account is planned before any is changed, so an
@@ -1060,12 +1067,47 @@ else is never touched. When something it did not make is where a selected
 skill's link is to go, it is a conflict: `--take-over` replaces a link, or backs
 a file up and replaces it, but a directory is never replaced.
 
+#### Templated assets
+
+A file under a source's `assets/` named `NAME.in.EXT`, or `NAME.in`, is a
+template, such as `bin/clean-scratch-targets.in.sh` or `AGENTS.in.md`. It holds
+what differs between accounts or machines, such as a scratch directory, so the
+source does not have to name it. For each account, atc renders every template
+to `<state_dir>/sync/ACCOUNT/assets/`, at the same path it has under `assets/`
+but with `.in` dropped: `bin/clean-scratch-targets.sh`. With several sources,
+each source's copies go in a directory named after it.
+
+- **Rendering:** references are replaced as in a unit's settings (see
+  Templates), with the account's variables and those of the template's own
+  source, never a project's. Only string references can be used. As in a unit,
+  a `{{` that does not start a reference is an error, and there is no escape: a
+  shell script that needs a literal `{{` can write `'{''{'`. Everything else is
+  copied as it is.
+- **Errors:** a reference that cannot be expanded is an error that names the
+  template, the account and the line. A template that is not UTF-8 text, and
+  two templates whose copies need one path (`a.in.sh` and `a.sh.in`), are
+  errors too. Any of them stops the account from being synced.
+- **Mode:** the copy is executable by you when the template is executable, and
+  readable only by you either way.
+- **Using a copy:** `{{source.rendered}}` is where a unit's own source has its
+  copies, so a unit that allows a script writes
+  `Bash({{source.rendered}}/bin/clean-scratch-targets.sh:*)`. An instructions
+  file that names a template links to its copy.
+- **Safety:** the copy is out of reach of sessions, as `conf.d` is, so a script
+  that relies on a path fixed in it keeps relying on it. atc follows no
+  symbolic link there: a link where a copy goes is replaced, and a directory
+  that is a link is an error.
+- **Changes:** a copy is written, in one step, only when its text or mode
+  differs from what its template gives. A copy whose template is gone is
+  removed, after the links are made, since atc alone writes there. A changed
+  template reaches an account at its next `atc sync`, like a changed unit.
+
 #### Options
 
 | Option | Effect |
 | --- | --- |
 | `--check` | Write nothing. Exit `3` if anything would be written, or was left alone. |
-| `--diff` | Write nothing, and show the settings diff of each account that would change, and each link that would change. |
+| `--diff` | Write nothing, and show the settings diff of each account that would change, each link that would change, and the diff of each rendered copy that would change. |
 | `--take-over` | Write settings that were never synced but differ from new, and replace a link or a file that is in the way of the instructions file link or of a skill's link. |
 | `--discard-live` | Write settings that were edited outside atc, discarding the edit. |
 | `--lax` | Report settings keys Claude Code does not define as warnings rather than errors. |

@@ -9,6 +9,7 @@ from atc.jsonval import JsonObject
 from atc.layers import Layer, build_account_layer, build_project_layer
 from atc.links import wanted_instructions
 from atc.refs import Located, locate
+from atc.rendered import render_templates
 from atc.resolve import resolve
 from atc.rules import dead_rules
 from atc.skills import discover_skills, wanted_skill_links
@@ -64,7 +65,8 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     Check every unit in the sources, then every account's and project's layer.
 
     Each account's instructions file, if it asks for one, must exist, and so must
-    each skill it selects, with no two sharing a name. Skills that are skipped,
+    each skill it selects, with no two sharing a name. Every templated asset must
+    render for every account. Skills that are skipped,
     or whose front matter looks wrong, are reported as warnings. Building an
     account layer finds the account's unit, which must exist, and
     checks each unit it merges against the policy for the layer. A project's
@@ -89,6 +91,10 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
             errors[str(exc)] = None
         try:
             _ = wanted_skill_links(ctx, account, catalog)
+        except ConfigError as exc:
+            errors[str(exc)] = None
+        try:
+            _ = render_templates(ctx, account)
         except ConfigError as exc:
             errors[str(exc)] = None
         try:

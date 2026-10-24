@@ -17,7 +17,7 @@ from atc.cli.options import (
 from atc.errors import ConfigError
 from atc.links import LinkPlan
 from atc.skills import discover_skills
-from atc.sync import AccountPlan, SettingsPlan, apply_account, plan_account
+from atc.sync import AccountPlan, AssetPlan, SettingsPlan, apply_account, plan_account
 from atc.ui import Ui
 
 
@@ -60,7 +60,7 @@ def sync(
     conf_d: Path | None,
 ) -> None:
     """
-    Write each account's settings, and link its instructions file and skills.
+    Write each account's settings, link its instructions and skills, render templates.
 
     Builds the settings of each ACCOUNT, or of every account, and writes them to
     settings.json in the account's directory. The directory must exist already:
@@ -95,6 +95,15 @@ def sync(
     conflict, which --take-over resolves by replacing a link, or by backing a file
     up and replacing it. A directory is never replaced.
 
+    A file under a source's assets named NAME.in.EXT, or NAME.in, is a template.
+    sync renders it for each account, as NAME.EXT or NAME, into
+    sync/ACCOUNT/assets in the same state directory, which sessions must not be
+    able to write to. Its {{...}} references are replaced as in a unit's
+    settings, with the account's variables and those of the template's source,
+    and the copy is executable when the template is. Units name the copies with
+    {{source.rendered}}, and an instructions file that is a template is linked
+    as its copy. A copy whose template is gone is removed.
+
     An account's registry entry may also select skills. Each one becomes a link
     named for the skill in the skills directory of the account's directory,
     which is created when it is missing. A skill that is deselected loses its
@@ -103,8 +112,9 @@ def sync(
     selected skill is to go is a conflict, as above.
 
     Prints one line per account, one more for each link that changes or is in
-    conflict, and on standard error the warnings of the account's settings and
-    of the skills that were skipped or whose front matter looks wrong. Exits
+    conflict and for each rendered copy that changes, and on standard error the
+    warnings of the account's settings and of the skills that were skipped or
+    whose front matter looks wrong. Exits
     with status 3 when something was left alone, or with --check when anything
     would be written. Run it from your own terminal: Claude Code does not let its
     sandboxed commands write settings.json.
@@ -149,6 +159,12 @@ def sync(
             ui.line(f"{name}: {_status(plan.settings, dry=dry)}")
             if show_diff or plan.settings.blocked:
                 ui.diff(_diff(plan.settings_path, plan.settings))
+        for asset in plan.assets:
+            if asset.pending:
+                change = "(would change)" if dry else "(changed)"
+                ui.line(f"{name}: {asset.describe()} {change}")
+                if show_diff:
+                    ui.diff(_asset_diff(asset))
         for link in plan.links:
             if link.pending or link.blocked:
                 ui.line(f"{name}: {link.describe()} {link_status(link, dry=dry)}")
@@ -207,3 +223,20 @@ def _diff(path: Path, settings: SettingsPlan) -> list[str]:
     return list(
         difflib.unified_diff(old.splitlines(), new.splitlines(), *names, lineterm="")
     )
+
+
+def _asset_diff(asset: AssetPlan) -> list[str]:
+    """Show the change to a rendered copy, as a unified diff, or of its mode alone."""
+    name = str(asset.path)
+    old = asset.live_text or ""
+    new = "" if asset.rendering is None else asset.rendering.text
+    names = (
+        "/dev/null" if asset.live_text is None else f"{name} (live)",
+        "/dev/null" if asset.rendering is None else f"{name} (new)",
+    )
+    lines = list(
+        difflib.unified_diff(old.splitlines(), new.splitlines(), *names, lineterm="")
+    )
+    if not lines and asset.rendering is not None and asset.live_mode is not None:
+        return [f"{name}: mode {asset.live_mode:o} → {asset.rendering.mode:o}"]
+    return lines
