@@ -187,7 +187,7 @@ def test_validate_config_reports_layer_warnings_once(
     result = validate_config(ctx, lax=True)
 
     assert result.errors == ()
-    assert len(result.warnings) == 1
+    assert len(besides_protection(result.warnings)) == 1
 
 
 def test_validate_sources_checks_the_template_syntax_of_every_unit(
@@ -315,6 +315,11 @@ def rules(**lists: list[str]) -> JsonObject:
     return unit({"permissions": {name: [*rule] for name, rule in lists.items()}})
 
 
+def besides_protection(warnings: tuple[str, ...]) -> tuple[str, ...]:
+    """Leave out the warnings about atc's directories, which no test unit here keeps."""
+    return tuple(warning for warning in warnings if " leaves atc's " not in warning)
+
+
 def test_validate_config_reports_a_dead_rule_once_however_many_layers_see_it(
     build_context: ContextBuilder,
 ) -> None:
@@ -331,7 +336,7 @@ def test_validate_config_reports_a_dead_rule_once_however_many_layers_see_it(
     result = validate_config(ctx, lax=False)
 
     assert result.errors == ()
-    assert result.warnings == (
+    assert besides_protection(result.warnings) == (
         "allow Bash(git rebase:*) (accounts/personal.json) never applies: "
         + "deny Bash(git rebase:*) (accounts/personal.json) takes precedence",
     )
@@ -353,7 +358,7 @@ def test_validate_config_checks_a_project_against_each_account_it_allows(
     result = validate_config(ctx, lax=False)
 
     assert result.errors == ()
-    assert result.warnings == (
+    assert besides_protection(result.warnings) == (
         "allow Bash(git rebase:*) (projects/both.json) never applies: "
         + "deny Bash(git rebase:*) (accounts/personal.json) takes precedence",
     )
@@ -374,7 +379,7 @@ def test_validate_config_checks_a_project_alone_when_its_account_layer_fails(
     result = validate_config(ctx, lax=False)
 
     assert len(result.errors) == 1
-    assert result.warnings == (
+    assert besides_protection(result.warnings) == (
         "allow Bash(git rebase:*) (projects/both.json) never applies: "
         + "deny Bash(git rebase:*) (projects/both.json) takes precedence",
     )
@@ -430,7 +435,7 @@ def test_validate_config_warns_about_a_skill_with_odd_front_matter(
     result = validate_config(ctx, lax=False)
 
     assert result.errors == ()
-    (warning,) = result.warnings
+    (warning,) = besides_protection(result.warnings)
     assert "'code-review' differs from the directory name 'review'" in warning
 
 

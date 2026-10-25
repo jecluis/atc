@@ -116,6 +116,20 @@ A registry with one account, `personal`, whose unit is `accounts/personal.json`.
 It is also the default account.
 """
 
+_ATC_DIRS = [
+    "{{atc.config_dir}}",
+    "{{atc.state_dir}}",
+    "{{atc.runtime_dir}}",
+    "{{atc.install_dir}}",
+    "{{atc.python_dir}}",
+]
+
+PROTECTING: JsonObject = {
+    "sandbox": {"enabled": True, "filesystem": {"denyWrite": [*_ATC_DIRS]}},
+    "permissions": {"deny": [f"Edit(/{path}/**)" for path in _ATC_DIRS]},
+}
+"""Settings that keep sessions from writing atc's own directories."""
+
 
 _PERSONAL_ACCOUNT = (
     "version: 1\n"

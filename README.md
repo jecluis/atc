@@ -584,6 +584,21 @@ written another way (see Rule warnings), and about skills that were skipped or
 whose front matter looks wrong (see Skills). Warnings never fail the check.
 Without a registry, only the units are checked, with a warning saying so.
 
+It warns, too, about an account whose settings leave one of atc's own
+directories writable: its configuration, state and runtime directories, the
+Python environment it runs from, and the Python installation that one is built
+on. The file tools cannot write a directory when an `Edit` rule in
+`permissions.deny` names it. Commands cannot write it when the sandbox is on
+(`sandbox.enabled` is `true`) and `sandbox.filesystem.denyWrite` names it, or
+such an `Edit` rule does, since Claude Code adds those rules' paths to
+`denyWrite`. A rule or entry for a directory above it protects it as well. A
+rule names a directory with a path that starts with `//` or `~` and ends in
+`/**`, and an entry with an absolute path or one under `~`, the `/**` optional.
+A bare `Edit` keeps the file tools out of everything, but not commands. A path
+with any other wildcard in it does not count, so a directory such a path covers
+is still reported. `atc check`, run inside a session, tests the same
+directories for real.
+
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
 it prints each problem, once, and exits `1`. Everything goes to standard
 error. A source that breaks the trust rules, or a registry that is invalid,

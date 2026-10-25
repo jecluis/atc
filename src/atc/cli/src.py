@@ -66,8 +66,9 @@ def check(conf_d: Path | None) -> None:
     be expanded, and units that set a key their layer does not allow. It also
     finds accounts that select a skill, or ask for an instructions file, that
     does not exist. It warns about permission rules that can never apply, or
-    that are better written another way, and about skills that were skipped or
-    whose front matter looks wrong, but warnings never fail the check. Prints a
+    that are better written another way, about accounts whose settings leave
+    atc's own directories writable, and about skills that were skipped or whose
+    front matter looks wrong, but warnings never fail the check. Prints a
     summary line when all is well and exits with status 1 otherwise.
     """
     ui = Ui.default()

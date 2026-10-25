@@ -8,6 +8,7 @@ from atc.errors import ConfigError
 from atc.jsonval import JsonObject
 from atc.layers import Layer, build_account_layer, build_project_layer
 from atc.links import wanted_instructions
+from atc.protection import unprotected
 from atc.refs import Located, locate
 from atc.rendered import render_templates
 from atc.resolve import resolve
@@ -83,8 +84,9 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     account when it allows none in particular. A project without a unit has no
     layer to build. Permission rules that can never apply are reported as
     warnings, for each account layer and for each project layer together with
-    its account's. All problems are collected, once each. Set ``lax`` to report
-    unknown settings keys as warnings instead of errors.
+    its account's, and so is each of atc's own directories that an account's
+    settings leave writable. All problems are collected, once each. Set ``lax``
+    to report unknown settings keys as warnings instead of errors.
     """
     checked = validate_sources(ctx.sources, lax=lax)
     errors = dict.fromkeys(checked.errors)
@@ -114,6 +116,8 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
             account_layers[account.name] = layer
             warnings.update(dict.fromkeys(layer.warnings))
             warnings.update(_rule_warnings([layer]))
+            exposed = unprotected(ctx, account.name, layer.settings)
+            warnings.update(dict.fromkeys(exposed))
     for project in ctx.registry.projects.values():
         names = (
             project.accounts

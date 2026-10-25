@@ -11,6 +11,7 @@ from atc.paths import Dirs
 from tests.conftest import ConfigWriter, RegistryWriter
 from tests.helpers import (
     MINIMAL_REGISTRY,
+    PROTECTING,
     bare_upstream,
     git_repo,
     make_source,
@@ -366,13 +367,24 @@ def test_src_check_conf_d_option_reads_another_directory(
 def test_src_check_passes_when_every_account_has_its_unit(
     configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    configure({"conf/accounts/personal.json": unit({"model": "x"})})
+    configure({"conf/accounts/personal.json": unit({"model": "x", **PROTECTING})})
 
     out, err = run_check(capsys)
 
     assert out == ""
     assert "ok: 1 units in 1 sources" in err
     assert "warning:" not in err
+
+
+def test_src_check_warns_about_an_account_that_leaves_atc_writable(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({"conf/accounts/personal.json": unit({"model": "x"})})
+
+    err = run_check(capsys)[1]
+
+    assert "warning: account personal leaves atc's state directory" in err
+    assert "ok: 1 units in 1 sources" in err
 
 
 def test_src_check_reports_an_account_whose_unit_is_missing(
