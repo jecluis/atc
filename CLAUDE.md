@@ -83,4 +83,7 @@ Components used in this project:
 - `atc` — the tool itself, its packaging, its tooling and its examples
 - `docs` — documentation
 
-Commits are DCO signed off (`-s`) and are not GPG-signed.
+Commits are DCO signed off (`-s`). Every commit must be GPG-signed by the
+user, not by an agent, unless the user says otherwise. Until then an agent
+commits with `--no-gpg-sign`, also when amending or rebasing, and leaves
+signing to the user.
