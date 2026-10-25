@@ -3,7 +3,8 @@
 - Date: 2026-10-23
 - Status: draft
 - Concept: [000-concept.md](000-concept.md)
-- Supersedes: `docs/superpowers/specs/2026-08-16-claudeconf-design.md`
+- Supersedes: `docs/superpowers/specs/2026-08-16-claudeconf-design.md`, in
+  the config repository (§3)
 
 This document describes how atc works. Read the concept first: it explains
 why atc exists and defines the terms used here (agent, account, project,
@@ -47,7 +48,7 @@ skills.
 | F8  | The JSON the statusline receives includes `rate_limits.five_hour.used_percentage`, though not always                                                                                                     | The existing statusline script reads it                                                                   |
 | F9  | With `objects/pack` and `packed-refs` write-protected, `git commit` still works, and deleting or rewriting either fails                                                                                  | Sandbox-hardening notes (as for F7), tested there with throwaway repositories                             |
 | F10 | The statusline command inherits the Claude Code process's environment                                                                                                                                    | The statusline script already reads `CLAUDE_CONFIG_DIR` to tell the accounts apart                        |
-| F11 | Claude Code loads user skills from `<dir>/skills/<name>/SKILL.md`, following symbolic links                                                                                                              | Both accounts' `skills/` hold links into this repository's `skills/`, and they load in sessions           |
+| F11 | Claude Code loads user skills from `<dir>/skills/<name>/SKILL.md`, following symbolic links                                                                                                              | Both accounts' `skills/` hold links into the config repository's `skills/`, and they load in sessions     |
 | F12 | `<dir>/skills/` also holds entries that nothing here created: `synced/` and `.trash/` in both accounts, and hand-made directories in the Acme one                                                        | Observed on this machine, 2026-10-23                                                                      |
 | F13 | Permission rules apply deny first, then ask, then allow, whichever settings file each comes from. A deny in any scope can't be overridden by an allow elsewhere                                          | Claude Code permissions documentation                                                                     |
 | F14 | `Bash` denies `echo a:*` and `echo a *` act alike: each refuses `echo a b` and bare `echo a`, not `echo ab`. `echo a*` refuses `echo ab`; `echo * b*` doesn't refuse `echo b c`. `*` spans spaces        | Headless probe, 2026-10-23; a `git * pull*` deny refused a commit with ` pulled` in its message           |
@@ -66,21 +67,24 @@ skills.
 
 ## 3. Repository layout
 
-The tool and the configuration it reads are kept apart. `atc/` could move to
-its own repository unchanged, and your configuration would stay where it is.
+The tool and the configuration it reads are kept apart, in two repositories:
+atc's, and the config repository, which holds your units, assets and skills.
+atc started there as `atc/`, and moved out of it unchanged.
 
 ```text
-claude-stuff/                 # this repository
-  atc/                        # the tool
-    pyproject.toml            # package "atc", script atc = "atc.cli:main"
-    pyrightconfig.json
-    check-and-fix.sh
-    README.md
-    CLAUDE.md
-    contrib/systemd/          # atc-maint.service, atc-maint.timer
-    docs/
-    src/atc/
-    tests/                    # fixture config only, never the real one
+atc/                          # this repository: the tool
+  pyproject.toml              # package "atc", script atc = "atc.cli:main"
+  pyrightconfig.json
+  check-and-fix.sh
+  README.md
+  CLAUDE.md
+  contrib/systemd/            # atc-maint.service, atc-maint.timer
+  docs/
+  examples/                   # a source and registry to start from
+  src/atc/
+  tests/                      # fixture config only, never the real one
+
+my-config/                    # the config repository
   conf/                       # personal units (was repo.conf/conf.d/)
     common/
     accounts/
@@ -94,8 +98,9 @@ claude-stuff/                 # this repository
   skills/                     # one directory per skill (§10.10)
 ```
 
-The repository root contains `conf/`, `assets/` and `skills/`, so it is itself
-a valid config source (§6). Cloning it into atc's `conf.d/` deploys it.
+The config repository's root contains `conf/`, `assets/` and `skills/`, so it
+is itself a valid config source (§6). Cloning it into atc's `conf.d/`
+deploys it.
 
 - **Toolchain:** Python 3.13, pydantic v2 and uv, as for `claudeconf`.
 - **New dependencies:**
@@ -104,7 +109,7 @@ a valid config source (§6). Cloning it into atc's `conf.d/` deploys it.
   - `rich` for output (§12)
   - `questionary` for the skills picker (§10.10). rich has no interactive
     selection
-- **Install:** `uv tool install ./atc`, from a commit you have reviewed. Not
+- **Install:** `uv tool install .`, from a commit you have reviewed. Not
   `--editable`: an editable install runs the code in the working checkout,
   which sessions can edit, and atc's code decides every session's
   protections. The hardening unit write-protects the installed copy too
@@ -238,8 +243,8 @@ projects:
 
 A **config source** is a directory that contains at least one of `conf/`
 (units), `assets/` (files the units and the registry point at) and `skills/`
-(§10.10). Anything else in it is ignored. That way a whole repository, such as
-this one with its `atc/`, can be a source as it is.
+(§10.10). Anything else in it is ignored. That way a whole repository can be a
+source as it is, whatever else it holds.
 
 atc reads sources from `conf_d`, in one of two layouts:
 
@@ -261,10 +266,10 @@ atc reads sources from `conf_d`, in one of two layouts:
   named in a reference such as `{{sources.<name>.root}}` (§7.3).
 
 Each source is normally a git clone, and it can come from a different
-repository than the others. For example, `personal` might be this repository
-and `acme` an Acme configuration repository. Moving from the single layout to
-the multi layout means moving the clone one level down. Units that don't refer
-to other sources need no changes (§7.2).
+repository than the others. For example, `personal` might be your own config
+repository and `acme` an Acme one. Moving from the single layout to the multi
+layout means moving the clone one level down. Units that don't refer to other
+sources need no changes (§7.2).
 
 **Trust rules.** Hooks and the statusline run from `assets/` outside the
 sandbox, and instructions files and skills tell every session what to do. So
@@ -294,7 +299,7 @@ You develop units in a separate working checkout. A change reaches atc only as
 a commit that you pull into `conf_d`.
 
 **Testing uncommitted changes.** Commands that write nothing accept
-`--conf-d DIR`, for example `atc show account acme --conf-d ~/code/claude-stuff`.
+`--conf-d DIR`, for example `atc show account acme --conf-d ~/code/my-config`.
 The trust rules still apply. Commands that write files or start sessions
 refuse the option.
 
@@ -959,7 +964,7 @@ This is `claude-guard --guard-maint`. For each repository in
    - run `git gc` if its stamp is older than `maint.gc-hours`, then renew the
      stamp. gc rewrites `packed-refs` too, so it needs the lock as well.
 
-`atc/contrib/systemd/atc-maint.{service,timer}` run it every 10 minutes. They
+`contrib/systemd/atc-maint.{service,timer}` run it every 10 minutes. They
 are installed by hand into `~/.config/systemd/user/`.
 
 ### 10.9 `atc usage`
@@ -1314,11 +1319,12 @@ Checking the real configuration is a job for that configuration's repository
 
 **The real configuration** is checked with `atc src check --conf-d <checkout>`,
 and `atc sync --check --conf-d <checkout>` against the reviewed account
-settings, from this repository rather than from atc's tests.
+settings, from the config repository rather than from atc's tests.
 
 ## 17. Migration
 
-Each step leaves a working setup.
+Each step leaves a working setup. The steps ran in the config repository,
+before atc moved out of its `atc/` (§3).
 
 1. **Split and rename.**
    - `git mv repo.conf atc`, then recreate the virtualenv.
@@ -1339,8 +1345,8 @@ Each step leaves a working setup.
      typo.
    - Merge the two hook versions into `assets/hooks/`.
    - Move the statusline and `clean-scratch-targets.sh` into `assets/`.
-   - Commit, then clone this repository into `~/.config/atc/conf.d` (single
-     layout).
+   - Commit, then clone the config repository into `~/.config/atc/conf.d`
+     (single layout).
    - Review `atc sync --diff`, then run `atc sync --take-over`.
 4. **Instructions and skills.**
    - `links`, `skills`, and the link half of `sync`.
@@ -1372,8 +1378,8 @@ Each step leaves a working setup.
 7. **Projects and worktrees:** `prj` and `wt`. Move `ccwtctl`'s
    `~/.config/ccwt/projects/*.yaml` into `machine.yaml` once, by hand.
 8. **Usage:** recording in the statusline, `atc usage`, then `-a auto`.
-9. **Shared memory** (from `000-todo.md`): add `autoMemoryDirectory` to
-   `conf/projects/anvil.json`, and merge the two memories once.
+9. **Shared memory:** add `autoMemoryDirectory` to `conf/projects/anvil.json`,
+   and merge the two memories once.
 10. **Cleanup,** once atc is the only way sessions start:
     - remove the duplicated protective entries from `settings.local.json`
     - uninstall `claude-guard`
@@ -1381,7 +1387,7 @@ Each step leaves a working setup.
     - drop the statusline's fallback
 
 If Acme configuration later gets its own repository, give it `conf/`,
-`assets/` or `skills/` as needed, clone it into `conf.d/acme`, move this
+`assets/` or `skills/` as needed, clone it into `conf.d/acme`, move the config
 repository's clone to `conf.d/personal`, and add `@personal/` to the imports
 and registry references that become ambiguous or cross over.
 
@@ -1389,7 +1395,7 @@ and registry references that become ambiguous or cross over.
 
 | Alternative                                              | Why not                                                                                                                                       |
 | :------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bundle units and assets with the tool                    | Your configuration would leave with atc if it moved to its own repository, and configuration couldn't be split across repositories            |
+| Bundle units and assets with the tool                    | Your configuration would have left with atc when it moved to its own repository, and configuration couldn't be split across repositories      |
 | atc's config file lists arbitrary source paths           | Pointing it at a working checkout is the easy mistake, and then an agent editing that checkout changes the rules for the next session         |
 | One flat namespace across sources, later ones overriding | Shadowing would be silent, and the outcome would depend on directory names sorting a particular way                                           |
 | Copy sources into an install directory (`atc install`)   | A git clone already is a copy. `git pull`, checked by `src pull`, is the update, and git history is the rollback                              |
@@ -1405,7 +1411,7 @@ and registry references that become ambiguous or cross over.
 | atc settles conflicting rules between units              | What is allowed or denied is your configuration. atc warns about rules that can never take effect (§8) and leaves the decision to you         |
 | Copy the instructions file and skills into account dirs  | Copies drift. Links follow `src pull` with nothing to re-run, and Claude Code already loads linked skills (F11)                               |
 | Keep skill selections in a config source                 | Accounts are defined per machine, so what each account uses is chosen next to it. A shared default set can come later if picking gets tedious |
-| Skills under `assets/skills/`                            | Skills are already at this repository's root, and a top-level `skills/` keeps a source's layout self-describing                               |
+| Skills under `assets/skills/`                            | Skills are already at the config repository's root, and a top-level `skills/` keeps a source's layout self-describing                         |
 
 ## 19. Open questions
 

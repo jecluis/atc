@@ -69,9 +69,9 @@ as a design constraint, not a lint setting.
 
 ## Before committing
 
-`./atc/check-and-fix.sh` must pass. It runs ruff format, ruff check,
-basedpyright, and pytest, in that order. Use `./atc/check-and-fix.sh --check`
-for a non-mutating verification.
+`./check-and-fix.sh` must pass. It runs ruff format, ruff check, basedpyright,
+and pytest, in that order. Use `./check-and-fix.sh --check` for a non-mutating
+verification.
 
 ## Commit messages
 
@@ -80,10 +80,7 @@ at most 80 columns and 2–4 sentences, omitted when the subject says enough.
 
 Components used in this project:
 
-- `atc` — the tool itself, its packaging, and its tooling
-- `conf` — the configuration units
-- `assets` — the files the units point at
-- `skills` — the skills
+- `atc` — the tool itself, its packaging, its tooling and its examples
 - `docs` — documentation
 
 Commits are DCO signed off (`-s`) and are not GPG-signed.

@@ -16,14 +16,14 @@ Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 ## Install
 
 ```sh
-UV_LINK_MODE=copy uv tool install ./atc
+UV_LINK_MODE=copy uv tool install .
 ```
 
-Run this from a commit you have reviewed, and never with `--editable`: an
-editable install runs the code in the working checkout, which sessions can
-edit, and atc's code decides every session's protections. `UV_LINK_MODE=copy`
-makes the installed files copies, not hard links into uv's cache, which
-sessions may be allowed to write.
+Run this at the repository root, from a commit you have reviewed, and never
+with `--editable`: an editable install runs the code in the working checkout,
+which sessions can edit, and atc's code decides every session's protections.
+`UV_LINK_MODE=copy` makes the installed files copies, not hard links into uv's
+cache, which sessions may be allowed to write.
 
 atc's code also includes the Python installation its environment is built on,
 which for uv is one of its managed interpreters. Keep sessions from writing
@@ -79,8 +79,8 @@ before it deploys it.
 
 ### Examples
 
-`atc/examples/` holds a small source to start from, in the single layout, with
-a registry for it in `atc/examples/machine.yaml`. Its units, under `conf/`:
+`examples/` holds a small source to start from, in the single layout, with a
+registry for it in `examples/machine.yaml`. Its units, under `conf/`:
 
 - `accounts/example.json`, an account that imports the base, git and hardening
   units, with a setting of its own
@@ -97,8 +97,8 @@ a registry for it in `atc/examples/machine.yaml`. Its units, under `conf/`:
 Its one asset, `assets/statusline.sh`, is a status line that also records the
 account's rate limits, where `atc usage` and `atc run -a auto` read them.
 
-To try them, copy `atc/examples/conf/` and `atc/examples/assets/` into
-`~/.config/atc/conf.d/`, and `atc/examples/machine.yaml` into `~/.config/atc/`.
+To try them, copy `examples/conf/` and `examples/assets/` into
+`~/.config/atc/conf.d/`, and `examples/machine.yaml` into `~/.config/atc/`.
 Set the account's `scratch` there, run `chmod -R go-w ~/.config/atc/conf.d` if
 your umask left the copies group-writable, then run `atc src check`.
 
@@ -1239,14 +1239,14 @@ maintained. The status is `1` when any repository failed, and `0` otherwise.
 
 Run it from your own terminal or a timer, not through the agent: it writes to
 the repositories. atc comes with a systemd user service and timer for it in
-`atc/contrib/systemd/`: the timer starts the service 5 minutes after boot and
-every 10 minutes after the last run, and the service runs
-`%h/.local/bin/atc maint` at low priority, which is where `uv tool install`
-puts atc. Install them by hand, changing `ExecStart` if atc is elsewhere:
+`contrib/systemd/`: the timer starts the service 5 minutes after boot and every
+10 minutes after the last run, and the service runs `%h/.local/bin/atc maint`
+at low priority, which is where `uv tool install` puts atc. Install them by
+hand, changing `ExecStart` if atc is elsewhere:
 
 ```sh
 mkdir -p ~/.config/systemd/user
-cp atc/contrib/systemd/atc-maint.service atc/contrib/systemd/atc-maint.timer \
+cp contrib/systemd/atc-maint.service contrib/systemd/atc-maint.timer \
     ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now atc-maint.timer
@@ -1399,7 +1399,7 @@ write, or when a check of `atc check` fails, and `130` when the command is inter
 From the repository root:
 
 ```sh
-uv run --directory atc atc show --help    # run atc from the working tree
-./atc/check-and-fix.sh                    # format, lint, type check, test
-./atc/check-and-fix.sh --check            # verify without changing anything
+uv run atc show --help        # run atc from the working tree
+./check-and-fix.sh            # format, lint, type check, test
+./check-and-fix.sh --check    # verify without changing anything
 ```

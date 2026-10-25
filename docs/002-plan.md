@@ -6,6 +6,8 @@
 - Status: draft
 - Design: [001-design.md](001-design.md) · Concept: [000-concept.md](000-concept.md)
 
+This plan was carried out in the config repository, before atc moved out of its `atc/` (design §3). Its paths are relative to that repository: drop the leading `atc/` for this one. `conf/`, `assets/`, `skills/` and `000-todo.md` stay in the config repository.
+
 **Goal:** Turn `repo.conf/` (`claudeconf`) into `atc`, which generates each account's settings, links its instructions file and skills, and starts guarded agent sessions, as the design specifies.
 
 **Architecture:** One Python package in `atc/src/atc/`. Functions that decide (`decide_*`, `plan_*`, `validate_*`) are kept apart from those that write or exec (`apply_*`, `execute`), so nearly all behaviour is tested without side effects. Configuration comes only from config sources under `conf_d` and from `machine.yaml`. Everything specific to Claude Code sits behind the `Backend` protocol.

@@ -55,7 +55,6 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
    one by available capacity.
 6. **Memory is split by account.** The same repository builds up separate,
    and in places contradictory, memories depending on which account was used.
-   See `000-todo.md` at the repository root.
 
 ## What atc does
 
@@ -92,7 +91,7 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
 | :------ | :---------------------------- | :----------------- | :------------------------------------------------------------------------------------ |
 | Account | `<account dir>/settings.json` | `atc sync`         | Strict sandbox mode, isolation from other accounts, hooks, plugins, preferences       |
 | Project | the session's `--settings`    | every `atc` launch | A project's network domains, `denyRead` rules, MCP permissions, `autoMemoryDirectory` |
-| Session | the session's `--settings`    | every `atc` launch | Write protection for this repository's packed git history                             |
+| Session | the session's `--settings`    | every `atc` launch | Write protection for the project's packed git history                                 |
 
 The account layer goes in a file because some settings only behave correctly
 from user settings. It also means a session started without atc still gets
@@ -106,8 +105,8 @@ apply to every worktree, and they never mix with what Claude Code writes into
 
 | What                           | Where                                             | Shared between machines? | Who changes it                         |
 | :----------------------------- | :------------------------------------------------ | :----------------------- | :------------------------------------- |
-| atc's code                     | this repository, `atc/` (could move out)          | yes                      | you, through git                       |
-| Your units, assets and skills  | this repository, `conf/`, `assets/` and `skills/` | yes                      | you, through git                       |
+| atc's code                     | this repository                                   | yes                      | you, through git                       |
+| Your units, assets and skills  | your own repositories, as config sources          | yes                      | you, through git                       |
 | Deployed configuration         | `~/.config/atc/conf.d/`, one or more git clones   | yes (the same commits)   | `atc src pull`                         |
 | Machine registry               | `~/.config/atc/machine.yaml`                      | no                       | you, `atc prj add`, or `atc skills`    |
 | Account settings               | `<account dir>/settings.json`                     | no (generated)           | `atc sync`                             |
@@ -123,8 +122,7 @@ apply to every worktree, and they never mix with what Claude Code writes into
 - **The tool and your configuration are separate.** atc reads units and
   assets from config sources under `~/.config/atc/conf.d/`. That can be one
   repository, or several, such as one for personal and one for Acme
-  configuration. atc can move to a repository of its own without taking any
-  configuration with it.
+  configuration. atc has its own repository, which holds no configuration.
 - **A session can't change its own rules.**
   - atc reads only the deployed clones in `conf.d/`, never the checkout an
     agent might be editing. A change arrives only as a commit that you pull,
@@ -185,7 +183,7 @@ $ atc usage                  # how close each account is to its limits
 
 | Today                                                 | Becomes                                                                                    |
 | :---------------------------------------------------- | :----------------------------------------------------------------------------------------- |
-| `repo.conf/` and `claudeconf`                         | `atc/` for the tool; its unit format and merge rules carry over. The units move to `conf/` |
+| `repo.conf/` and `claudeconf`                         | atc for the tool; its unit format and merge rules carry over. The units move to `conf/`    |
 | account dirs' `statusline-command.sh` symlinks, hooks | `assets/`, run from the deployed clone                                                     |
 | `acme-claude` alias                                   | `atc` (`-a` picks another account)                                                         |
 | `claude-guard`                                        | `atc` (protects history during a session) and `atc maint`                                  |
