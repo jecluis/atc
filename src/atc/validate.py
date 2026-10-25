@@ -11,7 +11,7 @@ from atc.links import wanted_instructions
 from atc.refs import Located, locate
 from atc.rendered import render_templates
 from atc.resolve import resolve
-from atc.rules import dead_rules
+from atc.rules import dead_rules, rule_shape_warnings
 from atc.skills import discover_skills, wanted_skill_links
 from atc.sources import Sources
 from atc.template import check_syntax
@@ -37,13 +37,21 @@ def validate_sources(sources: Sources, *, lax: bool) -> Validation:
 
     Resolving a unit follows its imports, across sources, so a unit with a
     broken import is reported along with every unit that reaches it. The
-    references in each unit's settings are checked for their form, whether or
-    not a layer uses the unit. All problems are collected, not just the first.
+    references in each unit's settings are checked for their form, and its
+    permission rules for ones better written another way, whether or not a
+    layer uses the unit. All problems are collected, not just the first.
     Set ``lax`` to report unknown settings keys as warnings instead of errors.
     """
     # Dicts as ordered sets: the first report of a message is the one kept.
     errors: dict[str, None] = {}
     warnings = dict.fromkeys(sources.warnings)
+    shapes: dict[str, None] = {}
+
+    def check(unit: Located, settings: JsonObject) -> JsonObject:
+        check_syntax(settings, origin=unit.display)
+        shapes.update(dict.fromkeys(rule_shape_warnings(settings, unit.display)))
+        return settings
+
     units = 0
     for source in sources.items:
         for path in sorted(source.conf.rglob("*.json")):
@@ -52,11 +60,12 @@ def validate_sources(sources: Sources, *, lax: bool) -> Validation:
             units += 1
             try:
                 unit = locate(source, path.relative_to(source.conf).as_posix())
-                resolution = resolve(sources, [unit], lax=lax, transform=_syntax)
+                resolution = resolve(sources, [unit], lax=lax, transform=check)
             except ConfigError as exc:
                 errors[str(exc)] = None
             else:
                 warnings.update(dict.fromkeys(resolution.warnings))
+    warnings.update(shapes)
     return Validation(units=units, errors=tuple(errors), warnings=tuple(warnings))
 
 
@@ -129,12 +138,6 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     return Validation(
         units=checked.units, errors=tuple(errors), warnings=tuple(warnings)
     )
-
-
-def _syntax(unit: Located, settings: JsonObject) -> JsonObject:
-    """Check the form of the references in ``unit``'s settings, and keep them."""
-    check_syntax(settings, origin=unit.display)
-    return settings
 
 
 def _rule_warnings(layers: Sequence[Layer]) -> dict[str, None]:

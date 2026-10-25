@@ -579,10 +579,10 @@ reports:
   itself and every project would share it, and `sandbox.allowUnsandboxedCommands`
   is refused in a project's
 
-It also warns about permission rules that can never apply (see Rule warnings),
-and about skills that were skipped or whose front matter looks wrong (see
-Skills). Warnings never fail the check. Without a registry, only the units are checked,
-with a warning saying so.
+It also warns about permission rules that can never apply, or that are better
+written another way (see Rule warnings), and about skills that were skipped or
+whose front matter looks wrong (see Skills). Warnings never fail the check.
+Without a registry, only the units are checked, with a warning saying so.
 
 When all is well it prints `ok: N units in M sources` and exits `0`. Otherwise
 it prints each problem, once, and exits `1`. Everything goes to standard
@@ -1324,6 +1324,22 @@ from there. `atc src check` checks every account, and every project with each
 account it allows. `atc sync` checks the account it writes. A launch without
 `--print` does not check. These warnings go to standard error. They never change
 what atc prints or writes, and never change the exit status.
+
+`atc src check` also warns about a rule, in any unit, that is better written
+another way:
+
+- a file path on a `Write`, `NotebookEdit`, `Grep` or `Glob` rule, such as
+  `Write(*.env)`, which never matches anything. Claude Code matches file paths
+  only on `Edit` rules, which cover `Edit`, `Write` and `NotebookEdit`, and on
+  `Read` rules, which cover `Read`, `Grep` and `Glob`. In an `allow`, the
+  `Edit` or `Read` rule that replaces it allows that tool as well
+- a `Bash` rule whose only `*` is a trailing ` *`, such as `Bash(git log *)`. It
+  matches the same commands as `Bash(git log:*)`, and is reported so that every
+  prefix is written the same way
+
+```text
+warning: deny Write(*.env) (common/base.json) never matches: Claude Code matches file paths only on Edit rules, which cover Edit, Write and NotebookEdit; write it as Edit(*.env)
+```
 
 ### Output and exit status
 

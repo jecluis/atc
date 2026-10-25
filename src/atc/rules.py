@@ -1,11 +1,12 @@
-"""Permission rules that another rule always overrides."""
+"""Permission rules that another rule overrides, or better written another way."""
 
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from atc.layers import Layer
+from atc.jsonval import JsonObject
+from atc.layers import Layer, permission_rules
 
 type DeadList = Literal["allow", "ask"]
 type CoverList = Literal["ask", "deny"]
@@ -17,6 +18,12 @@ _COVERED_BY: Mapping[DeadList, tuple[CoverList, ...]] = {
 """For each list, the lists whose rules override it, strongest first."""
 
 _RULE = re.compile(r"(?P<tool>[\w.-]+)(?:\((?P<spec>.*)\))?", re.DOTALL)
+
+_PATH_TOOLS: Mapping[str, tuple[str, ...]] = {
+    "Edit": ("Edit", "Write", "NotebookEdit"),
+    "Read": ("Read", "Grep", "Glob"),
+}
+"""The tools whose file paths Claude Code matches on each tool's rules."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +116,46 @@ def dead_rules(layers: Sequence[Layer]) -> tuple[RuleWarning, ...]:
                     warnings.append(warning)
                     break
     return tuple(warnings)
+
+
+def rule_shape_warnings(settings: JsonObject, origin: str) -> tuple[str, ...]:
+    """
+    Describe the rules in ``settings`` that are better written another way.
+
+    A file path on a ``Write``, ``NotebookEdit``, ``Grep`` or ``Glob`` rule
+    never matches: Claude Code matches paths only on ``Edit`` and ``Read``
+    rules, which cover those tools. A ``Bash`` rule whose only ``*`` is a
+    trailing `` *`` matches as the prefix before it, as one ending in ``:*``
+    does, and is reported so that it is written that way. ``origin`` names the
+    unit the settings are from.
+    """
+    warnings: list[str] = []
+    for name, rule in permission_rules(settings):
+        match = _RULE.fullmatch(rule)
+        if match is None or match["spec"] is None:
+            continue
+        tool: str = match["tool"]
+        spec: str = match["spec"]
+        where = f"{name} {rule} ({origin})"
+        by = next((by for by, tools in _PATH_TOOLS.items() if tool in tools[1:]), None)
+        if by is not None:
+            *first, last = _PATH_TOOLS[by]
+            warnings.append(
+                f"{where} never matches: Claude Code matches file paths only on "
+                + f"{by} rules, which cover {', '.join(first)} and {last}; write it "
+                + f"as {by}({spec})"
+            )
+        elif tool == "Bash" and (prefix := _loose_prefix(spec)) is not None:
+            warnings.append(f"{where} is a prefix: write it as Bash({prefix}:*)")
+    return tuple(warnings)
+
+
+def _loose_prefix(spec: str) -> str | None:
+    """Give the prefix a ``Bash`` spec stands for by ending in `` *``, if any."""
+    prefix = spec.removesuffix(" *")
+    if prefix == spec or "*" in prefix or not prefix or prefix != prefix.strip():
+        return None
+    return prefix
 
 
 def _group(layers: Sequence[Layer]) -> dict[str, dict[str, tuple[str, ...]]]:

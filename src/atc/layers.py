@@ -139,8 +139,19 @@ def session_layer(settings: JsonObject, origin: str) -> Layer:
 
     """
     check_policy(settings, "session", origin)
-    origins = dict.fromkeys(_rules(settings), (origin,))
+    origins = dict.fromkeys(permission_rules(settings), (origin,))
     return Layer("session", settings, (), origins)
+
+
+def permission_rules(settings: JsonObject) -> Iterator[tuple[str, str]]:
+    """Yield ``(list, rule)`` for each string in the ``permissions`` rule lists."""
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return
+    for name in RULE_LISTS:
+        rules = permissions.get(name)
+        if isinstance(rules, list):
+            yield from ((name, rule) for rule in rules if isinstance(rule, str))
 
 
 def merge_fragment(layers: Sequence[Layer]) -> JsonObject:
@@ -197,24 +208,13 @@ def _unit_transform(
             origin=f"{unit.display} ({layer})",
         )
         check_policy(expanded, kind, unit.display)
-        for key in _rules(expanded):
+        for key in permission_rules(expanded):
             units = origins.setdefault(key, [])
             if unit.display not in units:
                 units.append(unit.display)
         return expanded
 
     return prepare
-
-
-def _rules(settings: JsonObject) -> Iterator[tuple[str, str]]:
-    """Yield ``(list, rule)`` for each string in the ``permissions`` rule lists."""
-    permissions = settings.get("permissions")
-    if not isinstance(permissions, dict):
-        return
-    for name in RULE_LISTS:
-        rules = permissions.get(name)
-        if isinstance(rules, list):
-            yield from ((name, rule) for rule in rules if isinstance(rule, str))
 
 
 def _is_set(settings: JsonObject, pointer: str) -> bool:

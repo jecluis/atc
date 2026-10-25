@@ -4,7 +4,7 @@ import pytest
 
 from atc.jsonval import JsonObject
 from atc.layers import Layer, build_account_layer, build_project_layer
-from atc.rules import covers, dead_rules
+from atc.rules import covers, dead_rules, rule_shape_warnings
 from tests.conftest import ContextBuilder
 from tests.helpers import MINIMAL_REGISTRY, unit
 
@@ -247,3 +247,72 @@ def test_rules_in_lists_other_than_the_three_are_ignored() -> None:
     layer = Layer("account", {}, (), {("other", REBASE): ("x.json",)})
 
     assert dead_rules([layer]) == ()
+
+
+@pytest.mark.parametrize(
+    ("rule", "prefix"),
+    [
+        ("Bash(git log *)", "Bash(git log:*)"),
+        ("Bash(cargo build --release *)", "Bash(cargo build --release:*)"),
+    ],
+)
+def test_a_bash_prefix_not_written_as_one_is_reported(rule: str, prefix: str) -> None:
+    settings: JsonObject = {"permissions": {"allow": [rule]}}
+
+    assert rule_shape_warnings(settings, "a.json") == (
+        f"allow {rule} (a.json) is a prefix: write it as {prefix}",
+    )
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Bash(git log:*)",
+        "Bash(git config *alias.*)",
+        "Bash(SQLX_* cargo build *)",
+        "Bash(git add * -p*)",
+        "Bash(ls)",
+        "Bash",
+        "Bash( *)",
+        "Bash(git log  *)",
+    ],
+)
+def test_a_bash_rule_that_is_or_cannot_be_a_prefix_is_not_reported(rule: str) -> None:
+    settings: JsonObject = {"permissions": {"ask": [rule]}}
+
+    assert rule_shape_warnings(settings, "a.json") == ()
+
+
+EDIT_RULES = "Edit rules, which cover Edit, Write and NotebookEdit"
+READ_RULES = "Read rules, which cover Read, Grep and Glob"
+
+
+@pytest.mark.parametrize(
+    ("rule", "advice"),
+    [
+        ("Write(*.env)", f"{EDIT_RULES}; write it as Edit(*.env)"),
+        ("NotebookEdit(//x/**)", f"{EDIT_RULES}; write it as Edit(//x/**)"),
+        ("Grep(//**/secrets/**)", f"{READ_RULES}; write it as Read(//**/secrets/**)"),
+        ("Glob(*.pem)", f"{READ_RULES}; write it as Read(*.pem)"),
+    ],
+)
+def test_a_path_on_a_tool_matched_through_another_is_reported(
+    rule: str, advice: str
+) -> None:
+    settings: JsonObject = {"permissions": {"deny": [rule]}}
+
+    assert rule_shape_warnings(settings, "a.json") == (
+        f"deny {rule} (a.json) never matches: Claude Code matches file paths only "
+        + f"on {advice}",
+    )
+
+
+def test_bare_tools_and_lists_other_than_the_three_are_not_reported() -> None:
+    settings: JsonObject = {
+        "permissions": {
+            "deny": ["Write", "Grep", "Edit(*.env)", "Read(*.env)"],
+            "additionalDirectories": ["Bash(git log *)"],
+        }
+    }
+
+    assert rule_shape_warnings(settings, "a.json") == ()

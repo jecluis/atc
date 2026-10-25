@@ -53,6 +53,30 @@ def test_a_warning_shared_by_several_units_is_given_once(tmp_path: Path) -> None
     assert len(result.warnings) == 1
 
 
+def test_rules_better_written_otherwise_are_reported_once_each(
+    tmp_path: Path,
+) -> None:
+    rules: JsonObject = {"allow": ["Bash(git log *)"], "deny": ["Write(*.env)"]}
+    conf_d = make_source(
+        tmp_path / "conf.d",
+        {
+            "conf/base.json": unit({"permissions": rules}),
+            "conf/one.json": unit(imports=["base.json"]),
+            "conf/two.json": unit(imports=["base.json"]),
+        },
+    )
+
+    result = validate_sources(discover(conf_d, uid=UID), lax=False)
+
+    assert result.errors == ()
+    assert result.warnings == (
+        "allow Bash(git log *) (base.json) is a prefix: write it as Bash(git log:*)",
+        "deny Write(*.env) (base.json) never matches: Claude Code matches file "
+        + "paths only on Edit rules, which cover Edit, Write and NotebookEdit; "
+        + "write it as Edit(*.env)",
+    )
+
+
 def test_discovery_warnings_come_first(tmp_path: Path) -> None:
     conf_d = tmp_path / "conf.d"
     _ = make_source(conf_d / "personal", {"conf/a.json": unit({"permisions": {}})})
