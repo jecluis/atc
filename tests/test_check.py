@@ -608,7 +608,7 @@ def test_a_writable_skill_target_fails(world: World) -> None:
 
 def test_a_skill_link_the_registry_does_not_select_is_checked(world: World) -> None:
     entry = world.personal / "skills" / "legacy"
-    checkout = world.home / "claude-stuff" / "skills" / "legacy"
+    checkout = world.home / "my-config" / "skills" / "legacy"
     world.probe.listings[world.personal / "skills"].append(entry)
     world.probe.links[entry] = checkout
     world.probe.writable_paths.add(checkout)
@@ -702,7 +702,7 @@ def test_the_skill_md_of_a_skill_that_is_not_a_link_must_not_be_writable(
 
 def test_a_dangling_skill_link_under_a_writable_parent_fails(world: World) -> None:
     entry = world.personal / "skills" / "legacy"
-    parent = world.home / "claude-stuff" / "skills"
+    parent = world.home / "my-config" / "skills"
     target = parent / "legacy"
     world.probe.listings[world.personal / "skills"].append(entry)
     world.probe.links[entry] = target
@@ -716,7 +716,7 @@ def test_a_dangling_skill_link_under_a_writable_parent_fails(world: World) -> No
 def test_a_link_to_a_dangling_link_is_followed(world: World) -> None:
     entry = world.personal / "skills" / "legacy"
     middle = world.home / "links" / "legacy"
-    target = world.home / "claude-stuff" / "legacy"
+    target = world.home / "my-config" / "legacy"
     world.probe.listings[world.personal / "skills"].append(entry)
     world.probe.links |= {entry: middle, middle: target}
     world.probe.existing.add(middle)
@@ -861,7 +861,7 @@ def test_a_dangling_link_on_disk_fails_when_its_target_could_be_made(
 ) -> None:
     skills = home / ".claude" / "skills"
     skills.mkdir(parents=True)
-    checkout = tmp_path / "claude-stuff" / "skills"
+    checkout = tmp_path / "my-config" / "skills"
     checkout.mkdir(parents=True)
     (skills / "foo").symlink_to(checkout / "foo")
     monkeypatch.chdir(tmp_path)
