@@ -77,6 +77,31 @@ You develop units in a separate working checkout. A change reaches atc only as a
 commit that you pull into `conf.d` with `atc src pull`, which checks the commit
 before it deploys it.
 
+### Examples
+
+`atc/examples/` holds a small source to start from, in the single layout, with
+a registry for it in `atc/examples/machine.yaml`. Its units, under `conf/`:
+
+- `accounts/example.json`, an account that imports the base, git and hardening
+  units, with a setting of its own
+- `common/base.json`, the settings every account shares: a scratch directory,
+  the sandbox, credentials and `.env` files out of reach, and the status line.
+  It needs the account variable `scratch` (see Templates)
+- `common/git.json`, the git commands sessions are refused, or asked about first
+- `common/hardening.json`, which keeps sessions from writing atc's own files,
+  and from reading the account's secrets and anything of every other account's
+- `langs/rust.json`, the Rust toolchain and the crate registry, and
+  `projects/rust-app.json`, a project that imports it and uses its repository
+  and its own variables
+
+Its one asset, `assets/statusline.sh`, is a status line that also records the
+account's rate limits, where `atc usage` and `atc run -a auto` read them.
+
+To try them, copy `atc/examples/conf/` and `atc/examples/assets/` into
+`~/.config/atc/conf.d/`, and `atc/examples/machine.yaml` into `~/.config/atc/`.
+Set the account's `scratch` there, run `chmod -R go-w ~/.config/atc/conf.d` if
+your umask left the copies group-writable, then run `atc src check`.
+
 ## The machine registry
 
 `machine.yaml`, in atc's configuration directory next to `conf.d/`, holds what

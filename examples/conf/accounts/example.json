@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "description": "An account built from the shared units, with a setting of its own",
+  "imports": ["common/base.json", "common/git.json", "common/hardening.json"],
+  "settings": {
+    "model": "opus"
+  }
+}

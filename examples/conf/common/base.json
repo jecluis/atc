@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "description": "Settings every account shares: a scratch directory, the sandbox, credentials and .env files out of reach, and the status line",
+  "settings": {
+    "env": {
+      "CLAUDE_CODE_TMPDIR": "{{account.vars.scratch}}"
+    },
+    "permissions": {
+      "deny": ["Bash(rm:*)", "Read(//**/*.env)", "Edit(//**/*.env)"],
+      "ask": ["Bash(gh pr create:*)"]
+    },
+    "statusLine": {
+      "type": "command",
+      "command": "bash {{source.assets}}/statusline.sh"
+    },
+    "sandbox": {
+      "enabled": true,
+      "filesystem": {
+        "allowWrite": ["{{account.vars.scratch}}"]
+      },
+      "credentials": {
+        "files": [
+          { "path": "~/.ssh", "mode": "deny" },
+          { "path": "~/.gnupg", "mode": "deny" }
+        ],
+        "envVars": [
+          { "name": "GITHUB_TOKEN", "mode": "deny" },
+          { "name": "GH_TOKEN", "mode": "deny" }
+        ]
+      }
+    }
+  }
+}

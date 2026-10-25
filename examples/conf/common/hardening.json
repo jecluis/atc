@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "description": "Strict sandbox, each account's secrets and every other account out of reach, and atc's own directories and Python write-protected",
+  "settings": {
+    "sandbox": {
+      "allowUnsandboxedCommands": false,
+      "failIfUnavailable": true,
+      "filesystem": {
+        "denyWrite": [
+          "{{atc.config_dir}}",
+          "{{atc.state_dir}}",
+          "{{atc.runtime_dir}}",
+          "{{atc.install_dir}}",
+          "{{atc.python_dir}}"
+        ]
+      },
+      "credentials": {
+        "files": [
+          { "path": "{{account.secrets}}", "mode": "deny" },
+          { "path": "{{peers.dir}}", "mode": "deny" },
+          { "path": "{{peers.files}}", "mode": "deny" }
+        ]
+      }
+    },
+    "permissions": {
+      "deny": [
+        "Read(/{{peers.dir}}/**)",
+        "Edit(/{{peers.dir}}/**)",
+        "Read(/{{peers.files}})",
+        "Edit(/{{peers.files}})",
+        "Edit(/{{atc.config_dir}}/**)",
+        "Edit(/{{atc.state_dir}}/**)",
+        "Edit(/{{atc.runtime_dir}}/**)",
+        "Edit(/{{atc.install_dir}}/**)",
+        "Edit(/{{atc.python_dir}}/**)"
+      ]
+    }
+  }
+}

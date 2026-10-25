@@ -1,4 +1,4 @@
-"""The layout of atc's own shell scripts."""
+"""The layout of atc's own shell scripts, and of its examples'."""
 
 import shutil
 import subprocess
@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[1]
-SCRIPTS = [ROOT / "check-and-fix.sh"]
-"""atc's own scripts."""
+SCRIPTS = [ROOT / "check-and-fix.sh", *sorted((ROOT / "examples").rglob("*.sh"))]
+"""atc's own scripts, and its examples'."""
 
 SHFMT = ("shfmt", "-i", "2", "-ci", "-bn")
 """shfmt with the options every script is formatted with."""

@@ -1,8 +1,11 @@
 """The usage records the statusline writes, and ``atc usage``, which shows them."""
 
 import contextlib
+import json
 import os
 import re
+import shutil
+import subprocess
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -594,3 +597,81 @@ def test_usage_without_a_registry_is_a_config_error(
 ) -> None:
     assert main(["usage"]) == CONFIG
     assert "machine.yaml: not found" in capsys.readouterr().err
+
+
+STATUSLINE = Path(__file__).parents[1] / "examples" / "assets" / "statusline.sh"
+
+needs_jq = pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="the statusline needs bash and jq",
+)
+
+
+def _statusline(payload: JsonObject, env: Mapping[str, str], cwd: Path) -> None:
+    """Run the example statusline on ``payload``, as Claude Code would."""
+    _ = subprocess.run(  # noqa: S603 - fixed program, no shell
+        ["bash", str(STATUSLINE)],  # noqa: S607 - bash from PATH, as Claude Code runs it
+        input=json.dumps(payload),
+        env=dict(env),
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+
+
+@needs_jq
+def test_read_usage_reads_what_the_statusline_records(
+    dirs: Dirs, tmp_path: Path
+) -> None:
+    payload: JsonObject = {
+        "workspace": {"current_dir": str(tmp_path)},
+        "model": {"display_name": "Opus"},
+        "rate_limits": {
+            "five_hour": {"used_percentage": 42.5, "resets_at": 1792000000},
+            "seven_day": {"used_percentage": 3, "resets_at": 1792500000},
+        },
+    }
+    env = {
+        **os.environ,
+        "ATC_ACCOUNT": "personal",
+        "ATC_STATE_DIR": str(dirs.state_dir),
+    }
+    # The statusline makes the state directory, but not the ones above it.
+    dirs.state_dir.parent.mkdir(parents=True)
+
+    _statusline(payload, env, tmp_path)
+
+    record, warning = read_usage(dirs, "personal")
+    assert warning is None
+    assert record is not None
+    assert record.five_hour_pct == 42.5
+    assert timedelta(0) <= datetime.now(UTC) - record.recorded_at < timedelta(minutes=5)
+
+
+@needs_jq
+@pytest.mark.parametrize(
+    ("unset", "limits"),
+    [("ATC_ACCOUNT", True), ("ATC_STATE_DIR", True), (None, False)],
+)
+def test_the_statusline_records_nothing_without_atc_or_rate_limits(
+    dirs: Dirs, tmp_path: Path, unset: str | None, limits: bool
+) -> None:
+    payload: JsonObject = {"workspace": {"current_dir": str(tmp_path)}}
+    if limits:
+        payload["rate_limits"] = {
+            "five_hour": {"used_percentage": 1, "resets_at": 1792000000}
+        }
+    env = {
+        **os.environ,
+        "ATC_ACCOUNT": "personal",
+        "ATC_STATE_DIR": str(dirs.state_dir),
+    }
+    if unset is not None:
+        del env[unset]
+    dirs.state_dir.parent.mkdir(parents=True)
+
+    _statusline(payload, env, tmp_path)
+
+    assert read_usage(dirs, "personal") == (None, None)

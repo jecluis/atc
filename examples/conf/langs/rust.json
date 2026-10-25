@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "description": "Rust toolchain: inspection, formatting, building, the test loop, crate documentation, and fetching crates from the registry",
+  "settings": {
+    "permissions": {
+      "allow": [
+        "Bash(cargo tree:*)",
+        "Bash(cargo search:*)",
+        "Bash(cargo metadata:*)",
+        "Bash(cargo fmt:*)",
+        "Bash(cargo build:*)",
+        "Bash(cargo check:*)",
+        "Bash(cargo clippy:*)",
+        "Bash(cargo doc:*)",
+        "Bash(cargo test:*)",
+        "Bash(cargo bench:*)",
+        "Bash(cargo run:*)",
+        "WebFetch(domain:docs.rs)",
+        "WebFetch(domain:crates.io)",
+        "WebFetch(domain:lib.rs)",
+        "WebFetch(domain:index.crates.io)",
+        "WebFetch(domain:static.crates.io)"
+      ]
+    },
+    "sandbox": {
+      "network": {
+        "allowedDomains": ["crates.io", "index.crates.io", "static.crates.io"]
+      },
+      "filesystem": {
+        "allowWrite": ["~/.cargo/registry", "~/.cargo/git"]
+      }
+    },
+    "enabledPlugins": {
+      "rust-analyzer-lsp@claude-plugins-official": true
+    }
+  }
+}

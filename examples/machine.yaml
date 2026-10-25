@@ -1,0 +1,18 @@
+# A machine registry for the example source: copy this file to
+# ~/.config/atc/machine.yaml, and conf/ and assets/ to ~/.config/atc/conf.d/.
+version: 1
+default-account: example
+accounts:
+  example:
+    agent: claude
+    dir: ~/.claude
+    vars:
+      # The account's scratch directory: an absolute path to a directory of
+      # yours. Change it; one in a shared /tmp can be taken by another user.
+      scratch: /home/you/.cache/claude-scratch
+projects:
+  rust-app:
+    repo: ~/src/rust-app
+    account: example
+    vars:
+      log_level: info

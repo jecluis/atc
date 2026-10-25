@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "description": "Git commands sessions are refused, or asked about first",
+  "settings": {
+    "permissions": {
+      "ask": ["Bash(git rebase:*)", "Bash(git switch:*)"],
+      "deny": [
+        "Bash(git -C:*)",
+        "Bash(git push:*)",
+        "Bash(git pull:*)",
+        "Bash(git checkout:*)",
+        "Bash(git restore:*)",
+        "Bash(git reset:*)",
+        "Bash(git worktree:*)",
+        "Bash(git remote:*)",
+        "Bash(git tag:*)",
+        "Bash(git config *alias.*)",
+        "Bash(git add --interactive:*)",
+        "Bash(git add -i:*)",
+        "Bash(git add --patch:*)",
+        "Bash(git add -p:*)",
+        "Bash(git add --edit:*)",
+        "Bash(git add -e:*)",
+        "Bash(git add * --interactive*)",
+        "Bash(git add * -i*)",
+        "Bash(git add * --patch*)",
+        "Bash(git add * -p*)",
+        "Bash(git add * --edit*)",
+        "Bash(git add * -e*)"
+      ]
+    }
+  }
+}

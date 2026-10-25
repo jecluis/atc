@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "description": "A Rust project: the Rust toolchain, its git host, the repository's secrets out of reach, and one memory for every account",
+  "imports": ["langs/rust.json"],
+  "settings": {
+    "autoMemoryDirectory": "~/.local/share/claude-memory/rust-app",
+    "env": {
+      "RUST_LOG": "{{project.vars.log_level}}"
+    },
+    "permissions": {
+      "deny": [
+        "Read(/{{project.repo}}/secrets/**)",
+        "Edit(/{{project.repo}}/secrets/**)"
+      ]
+    },
+    "sandbox": {
+      "network": {
+        "allowedDomains": ["github.com"]
+      }
+    }
+  }
+}
