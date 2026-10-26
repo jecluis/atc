@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -13,7 +13,13 @@ from atc.fsutil import atomic_write
 from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located, resolve_registry
 from atc.sources import Sources
-from atc.yamlval import delete_in_text, load_yaml, parse_yaml, set_in_text
+from atc.yamlval import (
+    delete_in_text,
+    delete_item_in_text,
+    load_yaml,
+    parse_yaml,
+    set_in_text,
+)
 
 REGISTRY_VERSION = 1
 REGISTRY_FILE = "machine.yaml"
@@ -227,9 +233,13 @@ def load_registry(path: Path, home: Path) -> Registry:
 
     """
     if not path.exists():
-        message = f"{path}: not found; create it, with a version and the accounts"
-        raise RegistryError(message)
+        raise RegistryError(_not_found(path))
     return _build(load_yaml(path), path, home)
+
+
+def _not_found(path: Path) -> str:
+    """Say that there is no registry file at ``path``."""
+    return f"{path}: not found; create it, with a version and the accounts"
 
 
 def parse_registry(text: str, origin: Path, home: Path) -> Registry:
@@ -308,6 +318,178 @@ def remove_project(path: Path, home: Path, name: str) -> Registry:
     _ = parse_registry(text, path, home).project(name)
     edited = delete_in_text(text, ["projects", name])
     return _write_checked(path, home, edited)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountUses:
+    """
+    Where the registry names one account, other than in its own entry.
+
+    ``default`` says whether it is the default account. ``defaulted`` are the
+    projects whose ``account`` it is, and ``allowed`` the projects whose
+    ``accounts`` name it, both in the order of the file.
+    """
+
+    default: bool
+    defaulted: tuple[str, ...]
+    allowed: tuple[str, ...]
+
+    def __bool__(self) -> bool:
+        return self.default or bool(self.defaulted) or bool(self.allowed)
+
+
+def account_uses(registry: Registry, name: str) -> AccountUses:
+    """Find where ``registry`` names the account ``name``, other than in its entry."""
+    projects = registry.projects.values()
+    return AccountUses(
+        default=registry.default_account == name,
+        defaulted=tuple(p.name for p in projects if p.account == name),
+        allowed=tuple(p.name for p in projects if name in (p.accounts or ())),
+    )
+
+
+def check_removable(registry: Registry, name: str) -> None:
+    """
+    Refuse to remove the account ``name`` when no removal could leave a valid registry.
+
+    That is when it is the only account, since the registry needs a default,
+    and when a project allows only it: dropping the emptied ``accounts`` would
+    allow every account instead.
+
+    Raises:
+        RegistryError: there is no such account, or it cannot be removed.
+
+    """
+    _ = registry.account(name)
+    if len(registry.accounts) == 1:
+        message = f"{registry.path}: '{name}' is the only account, and one is needed"
+        raise RegistryError(message)
+    alone = [
+        p.name
+        for p in registry.projects.values()
+        if p.accounts is not None and set(p.accounts) == {name}
+    ]
+    if alone:
+        projects = ", ".join(f"'{project}'" for project in alone)
+        message = (
+            f"{registry.path}: account '{name}' is the only one that project "
+            f"{projects} allows; allow another account there first"
+        )
+        raise RegistryError(message)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRemoval:
+    """
+    The removal of the account ``name`` from the registry file ``path``.
+
+    It is planned on ``text``, the file as it was read, which reads as
+    ``registry``; ``uses`` is where that names the account. The account's entry
+    goes as :func:`remove_project` removes a project's. A project whose
+    ``account`` it is loses that key, and so falls back to the default account,
+    and every project's ``accounts`` lose it, each item edited out in place.
+    """
+
+    path: Path
+    home: Path
+    text: str
+    registry: Registry
+    name: str
+    uses: AccountUses
+
+    @classmethod
+    def plan(cls, path: Path, home: Path, name: str) -> Self:
+        """
+        Read the registry file ``path``, to remove the account ``name`` from it.
+
+        ``home`` is what a leading ``~`` in a path stands for.
+
+        Raises:
+            RegistryError: the file is missing, cannot be read or is not a valid
+                registry, or has no such account, or the account cannot be
+                removed (see :func:`check_removable`).
+
+        """
+        if not path.exists():
+            raise RegistryError(_not_found(path))
+        text = _read_text(path)
+        registry = parse_registry(text, path, home)
+        check_removable(registry, name)
+        return cls(path, home, text, registry, name, account_uses(registry, name))
+
+    def edited(self, default: str | None) -> tuple[str, Registry]:
+        """
+        Edit the account out, with ``default`` as the new default account.
+
+        ``default`` is needed when the account is the default now. Returns the
+        new text and the registry it reads as.
+
+        Raises:
+            RegistryError: the new text is not a valid registry, or the edit
+                would lose a comment, or ``default`` is missing.
+
+        """
+        if self.uses.default and default is None:
+            message = f"{self.path}: '{self.name}' is the default account; name another"
+            raise RegistryError(message)
+        edited = delete_in_text(self.text, ["accounts", self.name])
+        if default is not None and default != self.registry.default_account:
+            edited = set_in_text(edited, ["default-account"], default)
+        for project in self.uses.defaulted:
+            edited = delete_in_text(edited, ["projects", project, "account"])
+        for project in self.uses.allowed:
+            keys = ["projects", project, "accounts"]
+            for _ in range(
+                (self.registry.projects[project].accounts or ()).count(self.name)
+            ):
+                edited = delete_item_in_text(edited, keys, self.name)
+        return edited, parse_registry(edited, self.path, self.home)
+
+    def defaults(self) -> list[str]:
+        """
+        Give the accounts that can be the default in its place.
+
+        Those are the ones that leave a valid registry, in the order of the file.
+
+        Raises:
+            RegistryError: none does. The message says why the first one does not.
+
+        """
+        found: list[str] = []
+        first: RegistryError | None = None
+        for other in self.registry.accounts:
+            if other == self.name:
+                continue
+            try:
+                _ = self.edited(other)
+            except RegistryError as exc:
+                first = first or exc
+                continue
+            found.append(other)
+        if not found and first is not None:
+            message = (
+                f"no other account can be the default in place of '{self.name}'; "
+                f"for one, {first}"
+            )
+            raise RegistryError(message) from first
+        return found
+
+    def write(self, edited: str) -> Registry:
+        """
+        Replace the file with ``edited``, as :func:`set_skills` does.
+
+        Returns the registry as it now reads.
+
+        Raises:
+            RegistryError: the file no longer holds the text the removal was
+                planned on, or cannot be read. It is left as it is.
+            WriteError: the file cannot be written.
+
+        """
+        if _read_text(self.path) != self.text:
+            message = f"{self.path}: changed since it was read; nothing was removed"
+            raise RegistryError(message)
+        return _write_checked(self.path, self.home, edited)
 
 
 def _read_text(path: Path) -> str:

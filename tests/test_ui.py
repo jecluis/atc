@@ -3,6 +3,7 @@
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import final
 
@@ -13,7 +14,7 @@ from rich.console import Console
 
 from atc.cli.options import worktrees_table
 from atc.jsonval import JsonObject, dumps
-from atc.ui import PickChoice, Ui, shown
+from atc.ui import PickChoice, Ui, need_terminal, shown
 from atc.worktree import Worktree
 
 YELLOW = "\x1b[33m"
@@ -236,8 +237,11 @@ def test_verdict_is_green_or_red_on_a_terminal_and_shows_control_characters(
     assert ANSI.sub("", out) == "PASS  a\\x1b[2Jb\nFAIL  c\n"
 
 
-type Answer = list[str] | BaseException | None
-"""What a picker gives: the values ticked, an interrupt, or no answer."""
+type Answer = list[str] | str | bool | BaseException | None
+"""
+What a question gives: the values ticked, the choice, yes or no, an interrupt,
+or no answer.
+"""
 
 type Asked = list[tuple[str, list[tuple[str, str, bool]]]]
 """What a picker was asked: its title, then each line's label, value and tick."""
@@ -245,15 +249,24 @@ type Asked = list[tuple[str, list[tuple[str, str, bool]]]]
 
 @final
 class FakeQuestion:
-    """What `questionary.checkbox` builds, answering without a terminal."""
+    """What a questionary question builds, answering without a terminal."""
 
     def __init__(self, answer: Answer) -> None:
         self.answer = answer
 
-    def unsafe_ask(self) -> list[str] | None:
+    def unsafe_ask(self) -> list[str] | str | bool | None:
         if isinstance(self.answer, BaseException):
             raise self.answer
         return self.answer
+
+
+def answering(answer: Answer) -> Callable[..., FakeQuestion]:
+    """Make a stand-in for a questionary question builder, answering ``answer``."""
+
+    def build(*_args: object, **_kwargs: object) -> FakeQuestion:
+        return FakeQuestion(answer)
+
+    return build
 
 
 def ask_through(
@@ -312,3 +325,66 @@ def test_pick_needs_both_stdin_and_stdout_to_be_terminals(
 
     with pytest.raises(click.UsageError, match="needs a terminal; use atc skills add"):
         _ = Ui.default().pick("Skills", CHOICES)
+
+
+@pytest.mark.parametrize("answer", [True, False])
+def test_confirm_gives_the_answer_and_offers_the_default(
+    monkeypatch: pytest.MonkeyPatch, answer: bool
+) -> None:
+    asked: list[tuple[str, bool]] = []
+
+    def confirm(question: str, default: bool) -> FakeQuestion:
+        asked.append((question, default))
+        return FakeQuestion(answer)
+
+    monkeypatch.setattr(questionary, "confirm", confirm)
+
+    assert Ui.default().confirm("Remove it?") is answer
+    assert asked == [("Remove it?", False)]
+
+
+@pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
+def test_confirm_gives_none_when_it_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer
+) -> None:
+    monkeypatch.setattr(questionary, "confirm", answering(answer))
+
+    assert Ui.default().confirm("Remove it?", default=True) is None
+
+
+def test_choose_gives_the_choice_made(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[tuple[str, list[str]]] = []
+
+    def select(question: str, choices: list[str]) -> FakeQuestion:
+        asked.append((question, choices))
+        return FakeQuestion("b")
+
+    monkeypatch.setattr(questionary, "select", select)
+
+    assert Ui.default().choose("Which?", ("a", "b")) == "b"
+    assert asked == [("Which?", ["a", "b"])]
+
+
+@pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
+def test_choose_gives_none_when_it_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer
+) -> None:
+    monkeypatch.setattr(questionary, "select", answering(answer))
+
+    assert Ui.default().choose("Which?", ["a"]) is None
+
+
+@pytest.mark.parametrize("terminal", ["stdin", "stdout"])
+def test_need_terminal_needs_both_stdin_and_stdout(
+    monkeypatch: pytest.MonkeyPatch, terminal: str
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    need_terminal("atc thing")
+    stream = sys.stdin if terminal == "stdin" else sys.stdout
+    monkeypatch.setattr(stream, "isatty", lambda: False)
+
+    with pytest.raises(click.UsageError, match=r"^atc thing needs a terminal$"):
+        need_terminal("atc thing")
+    with pytest.raises(click.UsageError, match=r"needs a terminal; do it later$"):
+        need_terminal("atc thing", "do it later")

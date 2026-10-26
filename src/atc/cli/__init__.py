@@ -7,6 +7,7 @@ import click
 import rich_click
 
 from atc import exitcodes
+from atc.cli.account import account
 from atc.cli.check import check
 from atc.cli.maint import maint
 from atc.cli.options import HELP_OPTIONS
@@ -27,6 +28,9 @@ PROGRAM = "atc"
 _GROUP_OPTIONS = frozenset({"--help", "-h", "--version"})
 """The first arguments that are the group's own, not ``run``'s."""
 
+_ALIASES = {"acc": "account"}
+"""The other names that commands answer to, and the commands they name."""
+
 
 class AtcGroup(rich_click.RichGroup):
     """
@@ -34,7 +38,8 @@ class AtcGroup(rich_click.RichGroup):
 
     No arguments, or a first argument that starts with ``-`` and is not one of
     the group's own options, means ``run``. That includes ``--``. Any other
-    first word must be a command, so a typo never starts a session.
+    first word must be a command, or one of its aliases, so a typo never starts
+    a session.
     """
 
     @override
@@ -43,6 +48,10 @@ class AtcGroup(rich_click.RichGroup):
             args = ["run", *args]
         return super().parse_args(ctx, args)
 
+    @override
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        return super().get_command(ctx, _ALIASES.get(cmd_name, cmd_name))
+
 
 @click.group(cls=AtcGroup, name=PROGRAM, context_settings=HELP_OPTIONS)
 @click.version_option(package_name=PROGRAM, prog_name=PROGRAM)
@@ -50,6 +59,7 @@ def app() -> None:
     """Start coding agents in the right account, with shared settings."""
 
 
+app.add_command(account)
 app.add_command(check)
 app.add_command(maint)
 app.add_command(prj)

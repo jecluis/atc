@@ -145,10 +145,7 @@ class Ui:
                 terminal.
 
         """
-        if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            raise click.UsageError(
-                "atc skills pick needs a terminal; use atc skills add or atc skills rm"
-            )
+        need_terminal("atc skills pick", "use atc skills add or atc skills rm")
         question = questionary.checkbox(
             title,
             choices=[
@@ -158,22 +155,66 @@ class Ui:
                 for choice in choices
             ],
         )
-        try:
-            # The one place questionary's untyped answer is taken. For a
-            # checkbox it is the list of the ticked choices' values, which are
-            # strings here. It is narrowed at once, so nothing untyped leaves.
-            answer: object = question.unsafe_ask()  # pyright: ignore[reportAny]
-        except KeyboardInterrupt:
-            return None
+        # A checkbox answers with the list of the ticked choices' values, which
+        # are strings here.
+        answer = _answer(question)
         if not isinstance(answer, list):
             return None
         return [item for item in cast("list[object]", answer) if isinstance(item, str)]
+
+    def confirm(self, question: str, *, default: bool = False) -> bool | None:
+        """
+        Ask ``question``, to be answered yes or no, and return the answer.
+
+        ``default`` is what enter alone answers. ``None`` means the user
+        cancelled with Ctrl-C. Check for a terminal first, with
+        :func:`need_terminal`.
+        """
+        answer = _answer(questionary.confirm(question, default=default))
+        return answer if isinstance(answer, bool) else None
+
+    def choose(self, question: str, choices: Sequence[str]) -> str | None:
+        """
+        Let the user choose one of ``choices``, and return it.
+
+        ``None`` means the user cancelled with Ctrl-C. Check for a terminal
+        first, with :func:`need_terminal`.
+        """
+        answer = _answer(questionary.select(question, choices=list(choices)))
+        return answer if isinstance(answer, str) else None
 
     def _diagnostic(self, prefix: str, style: str, message: str) -> None:
         # Text takes the message as it is; a string given to print would be
         # parsed as markup, and a path or branch name can look like markup.
         line = Text.assemble((prefix, style), " ", _visible(message))
         self.err.print(line, soft_wrap=True)
+
+
+def need_terminal(command: str, advice: str | None = None) -> None:
+    """
+    Refuse to go on unless standard input and standard output are terminals.
+
+    ``command`` names what needs them, and ``advice`` says what to do instead.
+
+    Raises:
+        click.UsageError: either is not a terminal.
+
+    """
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return
+    message = f"{command} needs a terminal"
+    raise click.UsageError(message if advice is None else f"{message}; {advice}")
+
+
+def _answer(question: questionary.Question) -> object:
+    """Ask ``question``, and give its answer; ``None`` when Ctrl-C cancels it."""
+    try:
+        # The one place questionary's untyped answers are taken. Each is taken
+        # as `object`, and the method that asked narrows it at once, so nothing
+        # untyped leaves `Ui`.
+        return question.unsafe_ask()  # pyright: ignore[reportAny]
+    except KeyboardInterrupt:
+        return None
 
 
 def shown(text: str, style: str = "") -> Text:

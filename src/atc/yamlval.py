@@ -198,6 +198,57 @@ def delete_in_text(text: str, keys: Sequence[str]) -> str:
     return edited
 
 
+def delete_item_in_text(text: str, keys: Sequence[str], item: str) -> str:
+    """
+    Remove ``item`` from the list at ``keys`` in the YAML document ``text``.
+
+    Returns the new text. It is edited as :func:`set_in_text` does it, so what
+    else is in it stays as it was, and the list keeps its style. The comment on
+    the item's own line, and the block of comment lines directly above it, at
+    its indentation and with no blank line between, go with it, as
+    :func:`delete_in_text` removes an entry's; above the first item, the
+    comments stay, as the list's. The lines that followed it now follow the
+    item before it, or come first in the list.
+
+    Raises:
+        RegistryError: ``text`` is not valid YAML, has no list at ``keys``, the
+            list does not have ``item`` or has nothing else, or the edit would
+            lose a comment that is not the item's, as it would for comment lines
+            that follow the first item.
+        ValueError: ``keys`` is empty.
+
+    """
+    if not keys:
+        raise ValueError("delete_item_in_text needs at least one key")
+    editor, root = _open(text)
+    holder, depth = _walk(root, keys)
+    where = f"/{'/'.join(keys)}"
+    sequence = _as_seq(holder.get(keys[-1])) if depth == len(keys) - 1 else None
+    if sequence is None:
+        raise RegistryError(f"{where}: is not a list")
+    items = list(sequence)
+    if item not in items:
+        raise RegistryError(f"{where}: has no item '{item}'")
+    if all(other == item for other in items):
+        raise RegistryError(f"{where}: has no item but '{item}'")
+    index = items.index(item)
+    own = sequence.ca.items.get(index)
+    ending = None if own is None else own[_ITEM_END]
+    lines = "" if ending is None else _detach_lines(ending)
+    allowed = Counter[str]() if ending is None else _comments_in(ending.value)
+    if index and not sequence.fa.flow_style():
+        before = _Tail(sequence, index - 1, _ITEM_END).token()
+        allowed += _drop_above(before, _item_column(sequence, index))
+    del sequence[index]
+    if lines and index:
+        _Tail(sequence, index - 1, _ITEM_END).attach(lines)
+    elif lines:
+        _attach_before_items(sequence, lines)
+    edited = _render(editor, root)
+    _refuse_lost_comments(text, edited, keys, allowed)
+    return edited
+
+
 def _refuse_lost_comments(
     text: str, edited: str, keys: Sequence[str], allowed: Counter[str]
 ) -> None:
@@ -297,8 +348,21 @@ class _Node(Protocol):
     def __len__(self) -> int: ...
 
 
+class _ItemLineCol(Protocol):
+    """Where in the text the items of a list were."""
+
+    def item(self, index: int) -> Sequence[int]: ...
+
+
 class _Seq(_Node, Protocol):
+    @property
+    def lc(self) -> _ItemLineCol: ...
+
     def append(self, value: object) -> None: ...
+
+    def __iter__(self) -> Iterator[object]: ...
+
+    def __delitem__(self, index: int) -> None: ...
 
 
 class _LineCol(Protocol):
@@ -502,6 +566,20 @@ def _attach_first(holder: _Map, above: _Above | None, lines: str) -> None:
         slots[_PRE_COMMENT] = added
 
 
+def _attach_before_items(sequence: _Seq, lines: str) -> None:
+    """Put ``lines`` before the first item of ``sequence``, after the comments there."""
+    body = lines.lstrip("\n")
+    if not body.strip():
+        return
+    comment = sequence.ca.comment
+    first = None if comment is None else comment[1]
+    if isinstance(first, list) and first:
+        first[-1].value = _joined(first[-1].value, lines)
+        return
+    own = None if comment is None else comment[0]
+    sequence.ca.comment = [own, [_new_comment(body)]]
+
+
 def _empty(holder: _Map, above: _Above | None, lines: str) -> None:
     """
     Write ``holder``, which has lost its last entry, as ``{}``, and keep its comments.
@@ -536,6 +614,18 @@ def _open_up(root: _Map, keys: Sequence[str], holder: _Map) -> str:
     above = _Tail(_walk(root, keys)[0], keys[-1], _LINE_END)
     ending = above.token()
     return "" if ending is None else _detach_lines(ending)
+
+
+def _item_column(sequence: _Seq, index: int) -> int:
+    """
+    Give the column the ``-`` of block list item ``index`` is at, or -1 if not known.
+
+    Ruamel knows where the item's value starts, two columns after it.
+    """
+    try:
+        return sequence.lc.item(index)[1] - 2
+    except KeyError:
+        return -1
 
 
 def _key_column(holder: _Map, key: str) -> int:

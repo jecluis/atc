@@ -8,10 +8,10 @@ configuration that lives in your own repositories, apart from the tool. Claude
 Code is the first agent it supports.
 
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
-`atc show account`, `atc show project`, `atc prj ls`, `atc prj show`,
-`atc prj add`, `atc prj rm`, `atc wt new`, `atc wt ls`, `atc wt rm`,
-`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
-`atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
+`atc show account`, `atc show project`, `atc account ls`, `atc account rm`,
+`atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`, `atc wt new`,
+`atc wt ls`, `atc wt rm`, `atc skills ls`, `atc skills pick`, `atc skills add`,
+`atc skills rm`, `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
 
 ## Install
 
@@ -860,6 +860,59 @@ output and the exit status are the same as without the check.
 | `-a`, `--account ACCOUNT` | Build the settings for `ACCOUNT` instead of the project's own.                                                                                                                                 |
 | `--conf-d DIR`            | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). The trust rules still apply. The registry is still read from atc's configuration directory. |
 | `--lax`                   | Report settings keys Claude Code does not define as warnings rather than errors.                                                                                                               |
+
+### `atc account ls`
+
+Lists the accounts of the machine registry as a table, one row per account, in
+the order of the file: its name, its agent, its directory and its unit, which is
+`accounts/<name>.json` when the registry names none. The default account is
+marked `(default)`. The table goes to standard output. Without a `machine.yaml`
+it prints no table, and says so on standard error.
+
+`atc acc` is the same command as `atc account`, here and for every `atc account`
+command.
+
+### `atc account rm NAME [--force]`
+
+Removes the account `NAME` from the machine registry once you confirm it: atc
+asks first, and no is what enter alone answers. What goes is its entry, with the
+comments in it and the comment lines directly above it, as for `atc prj rm`. The
+rest of the file stays as it was. Nothing else is touched: not the account's
+directory, not its units and not the copies atc rendered for it. When the
+directory is still there, a warning says so afterwards, since it holds the
+account's credentials, and once the other accounts are synced again their
+sessions are no longer kept out of it.
+
+An unknown `NAME` is an error that lists the accounts there are. The only
+account is never removed, since the registry needs a default account.
+
+An account in use is removed only with `--force`: the default account, an
+account that a project uses by default (its `account`), and an account that a
+project allows (in its `accounts`). Without `--force` the error names each use.
+With it, atc takes the account out of those places, and lists what that changes
+before it asks:
+
+- If it was the default account, a question picks the new default, from the
+  accounts that remain and leave a valid registry.
+- A project that used it by default loses its `account`, and so uses the default
+  account.
+- It leaves every project's `accounts`. It is edited out of the list in place,
+  so the list keeps its style and the other accounts their comments.
+
+Even with `--force`, an account that is the only one a project allows is not
+removed: dropping the emptied `accounts` would allow every account instead.
+Allow another account there first. Nor is a removal that would leave the
+registry invalid, for instance because a project would fall back to a default
+account it does not allow, whichever account became the default; the error says
+which. Either is reported before anything is asked. Should `machine.yaml` change
+while atc asks, nothing is written.
+
+It needs a terminal, to ask, and without one it is a usage error, exit `2`.
+Answering no changes nothing. So does Ctrl-C, with status `130`.
+
+| Option    | Effect                                                                                 |
+| --------- | -------------------------------------------------------------------------------------- |
+| `--force` | Remove the account even while it is in use, and take it out of the places that use it. |
 
 ### `atc prj ls`
 

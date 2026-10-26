@@ -9,7 +9,13 @@ import pytest
 from atc import yamlval
 from atc.errors import RegistryError
 from atc.jsonval import JsonValue
-from atc.yamlval import delete_in_text, load_yaml, parse_yaml, set_in_text
+from atc.yamlval import (
+    delete_in_text,
+    delete_item_in_text,
+    load_yaml,
+    parse_yaml,
+    set_in_text,
+)
 
 
 def test_an_unquoted_timestamp_is_refused() -> None:
@@ -632,3 +638,72 @@ def test_delete_in_text_puts_the_lines_after_a_block_list_below_it() -> None:
     assert (
         changed == "p:\n  a:\n    xs:\n      - 1  # one\n      - 2\n\n# the end\nq: 1\n"
     )
+
+
+ALLOWED = """\
+projects:
+  bar:
+    accounts:
+      # who may work on it
+      - personal  # mine
+      # the one for work
+      - work  # job
+      - spare
+    unit: x
+# the end
+"""
+ACCOUNTS = ["projects", "bar", "accounts"]
+
+
+def test_delete_item_in_text_keeps_the_other_items_comments() -> None:
+    changed = delete_item_in_text(ALLOWED, ACCOUNTS, "work")
+
+    assert changed == ALLOWED.replace(
+        "      # the one for work\n      - work  # job\n", ""
+    )
+
+
+def test_delete_item_in_text_gives_a_last_items_following_lines_to_the_one_before() -> (
+    None
+):
+    text = "accounts:\n  - personal  # mine\n  - work  # job\n\n# the end\n"
+
+    changed = delete_item_in_text(text, ["accounts"], "work")
+
+    assert changed == "accounts:\n  - personal  # mine\n\n# the end\n"
+
+
+def test_delete_item_in_text_puts_the_first_items_following_lines_before_the_next() -> (
+    None
+):
+    changed = delete_item_in_text(ALLOWED, ACCOUNTS, "personal")
+
+    assert changed == ALLOWED.replace("      - personal  # mine\n", "")
+
+
+def test_delete_item_in_text_keeps_a_flow_list_in_flow_style() -> None:
+    text = "projects:\n  bar:\n    accounts: [personal, work]  # two\n    unit: x\n"
+
+    changed = delete_item_in_text(text, ACCOUNTS, "work")
+
+    assert parse_yaml(changed, "t") == {
+        "projects": {"bar": {"accounts": ["personal"], "unit": "x"}}
+    }
+    assert "accounts: [personal]" in changed
+    assert "# two" in changed
+
+
+@pytest.mark.parametrize(
+    ("text", "item", "message"),
+    [
+        ("accounts: [a, b]\n", "c", "/accounts: has no item 'c'"),
+        ("accounts: [a, a]\n", "a", "/accounts: has no item but 'a'"),
+        ("accounts: {a: 1}\n", "a", "/accounts: is not a list"),
+        ("other: 1\n", "a", "/accounts: is not a list"),
+    ],
+)
+def test_delete_item_in_text_refuses_what_it_cannot_remove(
+    text: str, item: str, message: str
+) -> None:
+    with pytest.raises(RegistryError, match=f"^{message}$"):
+        _ = delete_item_in_text(text, ["accounts"], item)
