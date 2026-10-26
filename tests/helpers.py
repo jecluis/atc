@@ -303,3 +303,51 @@ def answering(monkeypatch: pytest.MonkeyPatch) -> Answers:
     monkeypatch.setattr(Ui, "ask_path", ask_path)
     monkeypatch.setattr(Ui, "pick", pick)
     return given
+
+
+VARIABLE_FILES = {
+    "conf/accounts/personal.json": unit(imports=["common/base.json"]),
+    "conf/accounts/work.json": unit({"env": {"W": "{{account.vars.scratch}}"}}),
+    "conf/common/base.json": unit(
+        {
+            "env": {
+                "SCRATCH": "{{account.vars.scratch}}",
+                "ROOT": "{{vars.root}}/{{account.name}}",
+            }
+        }
+    ),
+    "assets/status.in.sh": (
+        "echo {{account.vars.notes}} {{vars.root}} {{project.vars.nope}}\n"
+    ),
+    "conf/projects/bar.json": unit(
+        {
+            "env": {
+                "CACHE": "{{account.vars.cache}}",
+                "PORT": "{{project.vars.port}}",
+                "HOST": "{{vars.host}}",
+            }
+        }
+    ),
+    "conf/projects/baz.json": unit(
+        {"env": {"X": "{{account.vars.other}}", "Y": "{{project.vars.port}}"}}
+    ),
+}
+"""Units and a templated asset that use variables of every level."""
+VARIABLE_REGISTRY = """\
+    version: 1
+    vars: {root: /r, zeta: z, alpha: a}
+    default-account: personal
+    accounts:
+      personal:
+        agent: claude
+        dir: ~/.claude
+        vars: {scratch: s}
+      work: {agent: claude, dir: ~/.config/work, unit: accounts/work.json}
+    projects:
+      bar: {repo: /src/bar}
+      baz:
+        repo: /src/baz
+        accounts: [personal]
+        vars: {port: '1', extra: e}
+"""
+"""A registry for :data:`VARIABLE_FILES`, defining some of what they use."""

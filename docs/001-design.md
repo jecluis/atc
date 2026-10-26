@@ -1032,6 +1032,13 @@ line shows the name, the source and the start of the description.
 **Plugins and marketplaces** may later get their own commands on the same
 pattern: chosen per account, recorded in the registry, applied by `sync`.
 
+### 10.11 `atc vars`
+
+- `atc vars ls`: every variable the registry defines or a unit needs, with its
+  owner (the machine, an account or a project), its value or `undefined`, and
+  what uses it. See
+  [004-project-and-variable-commands-design.md](004-project-and-variable-commands-design.md).
+
 ## 11. Environment passed to the agent
 
 | Variable            | Value                                                                                       | Used by                                      |

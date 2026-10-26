@@ -1,21 +1,19 @@
 """The variables that a new account needs and nothing defines yet."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from atc.context import BuildContext
-from atc.jsonval import JsonObject, JsonValue
+from atc.inventory import (
+    ACCOUNT_VARS,
+    MACHINE_VARS,
+    template_references,
+    unit_references,
+)
 from atc.layers import build_account_layer, build_project_layer
-from atc.refs import Located
 from atc.registry import Account, Project, account_unit, project_unit
-from atc.rendered import render_templates, rendered_name
-from atc.resolve import resolve
-from atc.template import REFERENCE
+from atc.rendered import render_templates
 
-ACCOUNT_VARS = "account.vars."
-"""How a reference to one of the account's own variables starts."""
-MACHINE_VARS = "vars."
-"""How a reference to a machine-wide variable starts."""
 _STAND_IN = "x"
 
 
@@ -65,28 +63,18 @@ def needed_variables(ctx: BuildContext, account: Account) -> list[Needed]:
             can define, and so on.
 
     """
-    found: dict[str, list[str]] = {}
-
-    def record(user: str, texts: Iterator[str]) -> None:
-        for text in texts:
-            for match in REFERENCE.finditer(text):
-                users = found.setdefault(match[1], [])
-                if user not in users:
-                    users.append(user)
-
-    def collect(unit: Located, settings: JsonObject) -> JsonObject:
-        record(unit.display, _strings(settings))
-        return settings
-
     projects = _open_projects(ctx)
     roots = [account_unit(ctx.sources, ctx.registry, account)]
-    _ = resolve(ctx.sources, roots, lax=True, transform=collect)
-    for user, text in _templates(ctx):
-        record(user, iter([text]))
+    pairs = [*unit_references(ctx, roots), *template_references(ctx)]
     for project in projects:
         root = project_unit(ctx.sources, ctx.registry, project)
         if root is not None:
-            _ = resolve(ctx.sources, [root], lax=True, transform=collect)
+            pairs.extend(unit_references(ctx, [root]))
+    found: dict[str, list[str]] = {}
+    for user, reference in pairs:
+        users = found.setdefault(reference, [])
+        if user not in users:
+            users.append(user)
 
     needed = [
         Needed(reference, tuple(users))
@@ -130,36 +118,3 @@ def _build_with_stand_ins(
     _ = render_templates(trial, trial_account)
     for project in projects:
         _ = build_project_layer(trial, project, trial_account, lax=True)
-
-
-def _templates(ctx: BuildContext) -> Iterator[tuple[str, str]]:
-    """
-    Give each templated asset of the sources, as its name and its text.
-
-    One that cannot be read as UTF-8 text is left out here: rendering it, which
-    follows, reports it.
-    """
-    for source in ctx.sources.items:
-        for path in sorted(source.assets.rglob("*")):
-            if rendered_name(path.name) is None or not path.is_file():
-                continue
-            try:
-                text = path.read_bytes().decode("utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            yield source.display(path.relative_to(source.assets).as_posix()), text
-
-
-def _strings(value: JsonValue) -> Iterator[str]:
-    """Give every string in ``value``; keys are never substituted, so not those."""
-    match value:
-        case str():
-            yield value
-        case dict():
-            for member in value.values():
-                yield from _strings(member)
-        case list():
-            for item in value:
-                yield from _strings(item)
-        case _:
-            pass

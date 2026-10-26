@@ -18,6 +18,7 @@ from atc.cli.skills import skills
 from atc.cli.src import src
 from atc.cli.sync import sync
 from atc.cli.usage import usage
+from atc.cli.vars import vars_
 from atc.cli.wt import wt
 from atc.errors import ConfigError
 from atc.ui import Ui
@@ -69,6 +70,7 @@ app.add_command(skills)
 app.add_command(src)
 app.add_command(sync)
 app.add_command(usage)
+app.add_command(vars_)
 app.add_command(wt)
 
 
