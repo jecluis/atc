@@ -15,10 +15,11 @@ from atc.cli.options import (
     load_machine_registry,
 )
 from atc.cli.values import as_value, value_fault
-from atc.errors import ConfigError
+from atc.errors import ConfigError, RegistryError
 from atc.inventory import MACHINE, Inventory, Owner, Variable, take_inventory
 from atc.registry import (
     REGISTRY_FILE,
+    VariableRemoval,
     set_variables,
     variable_name_problem,
     variables_at,
@@ -31,7 +32,7 @@ _USERS_SHOWN = 3
 
 @click.group(cls=rich_click.RichGroup, name="vars")
 def vars_() -> None:
-    """List and define the variables of the machine registry."""
+    """List, define and remove the variables of the machine registry."""
 
 
 @vars_.command(cls=rich_click.RichCommand, name="ls")
@@ -170,6 +171,85 @@ def set_(
     was = "" if old is None else f", was {old}"
     ui.line(f"{reference}: set to {written} for {owner} in {updated.path}{was}")
     _warn_if_unused(ui, owner, name)
+    _say_when(ui, [owner])
+
+
+@vars_.command(cls=rich_click.RichCommand, name="rm")
+@click.argument("name", metavar="NAME")
+@click.option(
+    "-a",
+    "--account",
+    "account_name",
+    metavar="ACCOUNT",
+    help="Remove it from the vars of ACCOUNT; not with -p.",
+)
+@click.option(
+    "-p",
+    "--project",
+    "project_name",
+    metavar="PROJECT",
+    help="Remove it from the vars of PROJECT; not with -a.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Remove it even when something uses it, which leaves that undefined, or "
+        "when what uses it cannot all be known."
+    ),
+)
+def rm(
+    name: str, account_name: str | None, project_name: str | None, force: bool
+) -> None:
+    """
+    Remove a variable from the machine registry.
+
+    NAME is taken from the vars of ACCOUNT with -a, of PROJECT with -p, and from
+    the machine-wide vars with neither. A variable not defined there is an error
+    that lists the ones that are. One that a unit or a templated asset uses is
+    refused unless --force is given, since it would then be undefined, and so
+    is any variable when what uses it cannot all be known: when the config
+    sources do not load, or the units of an account or project cannot be read.
+    A vars left empty goes with it, with the comment lines directly above it,
+    and the rest of the file stays as it was.
+
+    It asks first, no being the answer that enter alone gives. Needs a terminal,
+    to ask. Ctrl-C cancels: nothing is changed, and the status is 130. If
+    machine.yaml changes while it waits for the answer, nothing is written.
+    """
+    ui = Ui.default()
+    owner = _owner(account_name, project_name)
+    path = current_dirs().config_dir / REGISTRY_FILE
+    removal = VariableRemoval.plan(path, Path.home(), owner.keys, name)
+    for warning in removal.registry.warnings:
+        ui.warning(warning)
+    reference = owner.reference(name)
+    inventory = _inventory(ui)
+    users = _users(inventory, owner, name)
+    unknown = inventory is None or bool(inventory.warnings)
+    if users and not force:
+        message = (
+            f"{path}: {reference} for {owner} is used by {_users_text(users)}; "
+            "give --force to remove it anyway"
+        )
+        raise RegistryError(message)
+    if unknown and not force:
+        message = (
+            f"{path}: what uses {reference} for {owner} cannot all be known, as "
+            "the warnings say; give --force to remove it anyway"
+        )
+        raise RegistryError(message)
+    need_terminal("atc vars rm")
+    if users:
+        ui.info(f"{_users_text(users)} will find {reference} undefined")
+    answer = ui.confirm(f"Remove {name} from {owner}?", default=False)
+    if answer is None:
+        cancelled(ui)
+    if not answer:
+        ui.info("nothing changed")
+        return
+    updated = removal.write()
+    ui.line(f"{reference}: removed from {owner} in {updated.path}")
     _say_when(ui, [owner])
 
 

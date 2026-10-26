@@ -630,6 +630,69 @@ class AccountRemoval:
         return _write_checked(self.path, self.home, edited)
 
 
+@dataclass(frozen=True, slots=True)
+class VariableRemoval:
+    """
+    The removal of the variable ``name`` from the ``vars`` mapping at ``keys``.
+
+    ``keys`` are as :func:`variables_at` takes them. It is planned on ``text``,
+    the registry file ``path`` as it was read, which reads as ``registry``. The
+    entry goes as :func:`~atc.yamlval.delete_in_text` removes one, and the
+    mapping goes too when nothing is left in it.
+    """
+
+    path: Path
+    home: Path
+    text: str
+    registry: Registry
+    keys: tuple[str, ...]
+    name: str
+
+    @classmethod
+    def plan(cls, path: Path, home: Path, keys: Sequence[str], name: str) -> Self:
+        """
+        Read the registry file ``path``, to remove the variable ``name`` from it.
+
+        Raises:
+            RegistryError: the file is missing, cannot be read or is not a valid
+                registry, has no such account or project, or does not define
+                the variable there. The message names the ones it defines.
+
+        """
+        if not path.exists():
+            raise RegistryError(_not_found(path))
+        text = _read_text(path)
+        registry = parse_registry(text, path, home)
+        defined = variables_at(registry, keys)
+        if name not in defined:
+            there = (
+                f"the variables there are {', '.join(defined)}"
+                if defined
+                else "there are none"
+            )
+            message = f"{path}: /{'/'.join(keys)}: no variable named '{name}'; {there}"
+            raise RegistryError(message)
+        return cls(path, home, text, registry, tuple(keys), name)
+
+    def write(self) -> Registry:
+        """
+        Remove the variable, and replace the file as :func:`set_skills` does.
+
+        Returns the registry as it now reads.
+
+        Raises:
+            RegistryError: the file no longer holds the text the removal was
+                planned on, or cannot be read. It is left as it is.
+            WriteError: the file cannot be written.
+
+        """
+        _refuse_changed(self.path, self.text)
+        edited = delete_in_text(self.text, [*self.keys, self.name])
+        if len(variables_at(self.registry, self.keys)) == 1:
+            edited = delete_in_text(edited, list(self.keys))
+        return _write_checked(self.path, self.home, edited)
+
+
 def _refuse_changed(path: Path, text: str) -> None:
     """
     Refuse to go on when the registry file ``path`` no longer holds ``text``.

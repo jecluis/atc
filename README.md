@@ -10,9 +10,9 @@ Code is the first agent it supports.
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc account ls`, `atc account add`,
 `atc account rm`, `atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`,
-`atc vars ls`, `atc vars set`, `atc wt new`, `atc wt ls`, `atc wt rm`,
-`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
-`atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
+`atc vars ls`, `atc vars set`, `atc vars rm`, `atc wt new`, `atc wt ls`,
+`atc wt rm`, `atc skills ls`, `atc skills pick`, `atc skills add`,
+`atc skills rm`, `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
 
 ## Install
 
@@ -124,13 +124,13 @@ is specific to this machine: which accounts exist and where each one lives.
 belongs to this machine and working out the rest from the config sources, and
 `atc account` and `atc prj` add and remove accounts and projects from then on
 (see Usage). `atc vars ls` lists the variables it defines and those the units
-need, and `atc vars set` defines them. It belongs to no config source, so it
-never lands in a git repository by accident. It may be a symbolic link, into a
-dotfiles repository for example: the commands that edit it write the file the
-link leads to, and the link stays. That file must then be as far out of
-sessions' reach as atc's configuration directory, since a session that could
-edit the registry could change the agent's command or widen the sandbox;
-`atc check` verifies that a session cannot write it.
+need, and `atc vars set` and `atc vars rm` define and remove them. It belongs to
+no config source, so it never lands in a git repository by accident. It may be a
+symbolic link, into a dotfiles repository for example: the commands that edit it
+write the file the link leads to, and the link stays. That file must then be as
+far out of sessions' reach as atc's configuration directory, since a session
+that could edit the registry could change the agent's command or widen the
+sandbox; `atc check` verifies that a session cannot write it.
 
 ```yaml
 version: 1
@@ -1143,6 +1143,25 @@ question changes nothing, with exit status `130`.
 
 It ends by saying when the change takes effect: a project's variables at its
 next `atc run`, the others once `atc sync` runs. It does not run `atc sync`.
+
+### `atc vars rm NAME [-a ACCOUNT | -p PROJECT] [--force]`
+
+Removes a variable, from the same level `atc vars set` writes it at. One not
+defined there is an error that lists the ones that are. One that a unit or a
+templated asset uses is refused with exit status `1`, naming what uses it,
+unless `--force` is given; then what uses it will find it undefined, which a
+line says. When what uses it cannot all be known, because the config sources do
+not load or the units of an account or project cannot be read, which warnings
+say, it is refused the same way, since it may be in use. A `vars` left empty
+goes with it, with the comment lines directly above it, as `atc prj rm` removes
+an entry, and the rest of the file stays as it was.
+
+Before anything is removed it asks `Remove NAME from OWNER? [y/N]`. No is the
+default, and it changes nothing, with exit status `0`. Ctrl-C changes nothing
+too, with exit status `130`. Without a terminal it is a usage error, exit status
+`2`. If `machine.yaml` changes while it waits for the answer, nothing is written
+and the error exits `1`. It ends by saying when the change takes effect, as
+`atc vars set` does.
 
 ### `atc wt new BRANCH [--from REF] [--run]`
 

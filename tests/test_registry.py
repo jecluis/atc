@@ -1,5 +1,6 @@
 """The machine registry: what it accepts, and what it refuses."""
 
+import re
 import stat
 import textwrap
 from pathlib import Path
@@ -10,6 +11,7 @@ from atc.errors import PathError, RegistryError
 from atc.registry import (
     REGISTRY_FILE,
     ProjectRemoval,
+    VariableRemoval,
     account_unit,
     add_account,
     add_project,
@@ -1223,6 +1225,63 @@ def test_variable_name_problem_says_what_names_can_be() -> None:
     problem = variable_name_problem("2x")
     assert problem is not None
     assert "lowercase letters, digits and '_'" in problem
+
+
+def test_variable_removal_takes_an_emptied_vars_mapping_with_it(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    registry = VariableRemoval.plan(path, home, ("accounts", "a", "vars"), "x").write()
+
+    assert registry.accounts["a"].vars == {}
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(VARS_FILE).replace(
+        "    vars: {x: '1'}  # a's\n", ""
+    )
+
+
+def test_variable_removal_keeps_the_other_variables(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE.replace("{x: '1'}", "{x: '1', y: '2'}"))
+
+    registry = VariableRemoval.plan(path, home, ("accounts", "a", "vars"), "x").write()
+
+    assert registry.accounts["a"].vars == {"y": "2"}
+    # The comment keeps its column, as ruamel keeps it.
+    assert re.search(
+        r"\n    vars: \{y: '2'\} +# a's\n", path.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    ("keys", "there"),
+    [
+        (("accounts", "a", "vars"), "the variables there are x"),
+        (("vars",), "there are none"),
+    ],
+)
+def test_variable_removal_refuses_a_variable_not_defined_there(
+    write_registry: RegistryWriter, home: Path, keys: tuple[str, ...], there: str
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    with pytest.raises(RegistryError, match=f"no variable named 'nope'; {there}"):
+        _ = VariableRemoval.plan(path, home, keys, "nope")
+
+
+def test_variable_removal_refuses_a_file_that_changed_since_the_plan(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+    removal = VariableRemoval.plan(path, home, ("accounts", "a", "vars"), "x")
+    changed = path.read_text(encoding="utf-8") + "# edited\n"
+    _ = path.write_text(changed, encoding="utf-8")
+
+    with pytest.raises(RegistryError, match="changed since it was read"):
+        _ = removal.write()
+
+    assert path.read_text(encoding="utf-8") == changed
 
 
 def test_add_account_puts_new_machine_wide_vars_before_the_accounts(
