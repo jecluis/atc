@@ -15,15 +15,25 @@ Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 
 ## Install
 
+From a checkout, at the repository root:
+
 ```sh
 UV_LINK_MODE=copy uv tool install .
 ```
 
-Run this at the repository root, from a commit you have reviewed, and never with
-`--editable`: an editable install runs the code in the working checkout, which
-sessions can edit, and atc's code decides every session's protections.
-`UV_LINK_MODE=copy` makes the installed files copies, not hard links into uv's
-cache, which sessions may be allowed to write.
+Or straight from the repository, without a checkout, where `COMMIT` is the
+commit to install:
+
+```sh
+UV_LINK_MODE=copy uv tool install git+https://github.com/jecluis/atc@COMMIT
+```
+
+Install only a commit you have reviewed; without `@COMMIT`, uv installs whatever
+the default branch holds at the time. Never install with `--editable`: an
+editable install runs the code in the working checkout, which sessions can edit,
+and atc's code decides every session's protections. `UV_LINK_MODE=copy` makes
+the installed files copies, not hard links into uv's cache, which sessions may
+be allowed to write.
 
 atc's code also includes the Python installation its environment is built on,
 which for uv is one of its managed interpreters. Keep sessions from writing
