@@ -1,0 +1,19 @@
+# Git hooks for this repo, run via lefthook (https://lefthook.dev).
+#
+# One-time setup per clone:
+#   1. Install the lefthook binary (any method: package manager, `go install
+#      github.com/evilmartians/lefthook@latest`, or the release binaries at
+#      https://github.com/evilmartians/lefthook/releases).
+#   2. Run `lefthook install` from the repo root.
+#
+# What actually runs, how, and which tool version is pinned lives in
+# scripts/normalize-markdown.sh — the single source of truth Claude Code and
+# this hook both call, rather than duplicating invocations here.
+
+pre-commit:
+  parallel: true
+  commands:
+    markdown:
+      glob: "*.md"
+      run: scripts/normalize-markdown.sh --fix {staged_files}
+      stage_fixed: true

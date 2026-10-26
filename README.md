@@ -1421,3 +1421,7 @@ Both also cover the markdown files, through `scripts/normalize-markdown.sh`: the
 first formats and lints them, the second only checks them. It needs Node.js: it
 runs pinned versions of prettier and markdownlint-cli2 through pnx or npx,
 fetched from the npm registry when they are not cached.
+
+To have staged markdown formatted and linted on every commit, install
+[lefthook](https://lefthook.dev) and run `lefthook install` once per clone; a
+commit then stops on what markdownlint-cli2 reports.
