@@ -56,6 +56,16 @@ CONFIG_WORKTREE = (
     "config.worktree",
 )
 NOT_IN_A_REPOSITORY = "not in a git repository, so the repository checks are skipped"
+GUARD_CHECKS = 3
+"""The repository checks of the guard: objects/pack, packed-refs and gc."""
+NOT_STARTED = (
+    "atc run did not start this session, so nothing guards its packed history, and "
+    "the objects/pack, packed-refs and automatic gc checks are skipped"
+)
+UNGUARDED = (
+    "atc run started this session unguarded (--no-guard, or outside a repository), "
+    "so the objects/pack, packed-refs and automatic gc checks are skipped"
+)
 REPOSITORY_CHECKS = 7
 PROTECTED = 21
 """How many checks a session in a repository, in the `personal` account, makes."""
@@ -196,7 +206,8 @@ def make_world(home: Path, dirs: Dirs, registry: Registry) -> World:
         },
         listings={personal / "skills": [personal / "skills" / "grill-me"]},
     )
-    return World(probe, registry, dirs, home, {"ATC_ACCOUNT": "personal"}, git_dir)
+    env = {"ATC_ACCOUNT": "personal", "ATC_GUARD": str(git_dir)}
+    return World(probe, registry, dirs, home, env, git_dir)
 
 
 @pytest.fixture
@@ -388,6 +399,63 @@ def test_a_repository_git_refuses_fails_instead_of_skipping(world: World) -> Non
     assert not report.ok
 
 
+def unguard(world: World) -> None:
+    """Leave the repository's packed history and gc as an unguarded session has them."""
+    world.probe.writable_paths |= {
+        world.git_dir / "objects" / "pack",
+        world.git_dir / "packed-refs",
+    }
+    del world.probe.answers[GC_AUTO]
+
+
+def test_a_session_atc_run_did_not_start_skips_the_guard_checks(
+    world: World,
+) -> None:
+    unguard(world)
+    world.env.clear()
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert report.notes == (NOT_STARTED,)
+    assert len(report.results) == PROTECTED - GUARD_CHECKS
+    assert report.ok
+
+
+def test_an_unguarded_atc_run_session_skips_the_guard_checks(world: World) -> None:
+    unguard(world)
+    del world.env["ATC_GUARD"]
+
+    report = world.run()
+
+    assert failures(report) == []
+    assert report.notes == (UNGUARDED,)
+    assert len(report.results) == PROTECTED - GUARD_CHECKS
+    assert not [r for r in report.results if "packed-refs" in r.what]
+
+
+def test_an_empty_guard_variable_counts_as_unset(world: World) -> None:
+    world.env["ATC_GUARD"] = ""
+
+    assert world.run().notes == (UNGUARDED,)
+
+
+def test_a_guard_of_another_repository_still_checks_this_one(world: World) -> None:
+    unguard(world)
+    world.env["ATC_GUARD"] = "/elsewhere/.git"
+
+    report = world.run()
+
+    (pack, refs, gc) = failures(report)
+    assert (pack, refs) == (
+        f"{world.git_dir}/objects/pack is read-only",
+        f"{world.git_dir}/packed-refs is read-only",
+    )
+    assert gc.startswith("automatic gc is off in this session")
+    assert report.notes == ("atc run guarded /elsewhere/.git, not this repository",)
+    assert len(report.results) == PROTECTED
+
+
 def test_outside_a_repository_the_repository_checks_are_skipped(world: World) -> None:
     world.probe.common = None
     world.probe.writable_paths |= {
@@ -466,8 +534,9 @@ def test_an_unidentified_account_fails_and_every_account_is_a_peer(
         "CLAUDE_CONFIG_DIR=/somewhere/else is not an account's directory" in failed[0]
     )
     assert failed[1] == f"{world.personal} is not readable (account personal)"
-    assert len(report.notes) == 1
-    assert "instructions and skills checks are skipped" in report.notes[0]
+    assert len(report.notes) == 2
+    assert report.notes[0] == NOT_STARTED
+    assert "instructions and skills checks are skipped" in report.notes[1]
 
 
 def test_the_unidentified_account_message_is_accurate_without_the_variable(
@@ -1088,6 +1157,7 @@ def use_probe(monkeypatch: pytest.MonkeyPatch, world: World) -> None:
     module = import_module("atc.cli.check")
     monkeypatch.setattr(module, "RealProbe", lambda: world.probe)
     monkeypatch.setenv("ATC_ACCOUNT", "personal")
+    monkeypatch.setenv("ATC_GUARD", str(world.git_dir))
 
 
 def test_outside_a_sandbox_exits_2_before_reading_anything(
@@ -1179,6 +1249,28 @@ def test_notes_are_plain_lines_and_do_not_fail_the_check(
     assert lines[0] == NOT_IN_A_REPOSITORY
     assert all(line.startswith("PASS  ") for line in lines[1:])
     assert len(lines) == PROTECTED - REPOSITORY_CHECKS + 1
+
+
+def test_a_session_atc_run_did_not_start_exits_0_with_a_note(
+    world: World,
+    write_registry: RegistryWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _ = write_registry(REGISTRY)
+    unguard(world)
+    use_probe(monkeypatch, world)
+    monkeypatch.delenv("ATC_ACCOUNT")
+    monkeypatch.delenv("ATC_GUARD")
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    status = main(["check"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert status == OK
+    assert lines[0] == NOT_STARTED
+    assert all(line.startswith("PASS  ") for line in lines[1:])
+    assert len(lines) == PROTECTED - GUARD_CHECKS + 1
 
 
 def test_output_is_plain_text_when_not_a_terminal(

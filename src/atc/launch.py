@@ -232,6 +232,7 @@ def plan_launch(
     guarded = entries is not None
     if guarded:
         selected = guard.with_gc_disabled(selected)
+        selected[guard.GUARD_VARIABLE] = str(common)
     binary = _agent_binary(ctx.registry, chosen.agent, self_path, which)
     return LaunchPlan(
         cwd=cwd,

@@ -38,6 +38,12 @@ def check() -> None:
       a link, nor can the files that its instructions file and every entry of
       its skills directory lead to, nor each skill's SKILL.md
 
+    The objects/pack, packed-refs and gc checks are of the guard that atc run
+    sets up, so they are made only when it guarded the session: a plain line
+    says when atc run did not start it, or started it unguarded. When the guard
+    is another repository's, they are made for this one, and a line names the
+    one that is guarded.
+
     A path that is missing passes only if a session could not create it: if the
     nearest directory above it that exists cannot be written. A check that does
     not apply, such as the repository checks outside a repository, gives a plain

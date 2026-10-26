@@ -915,6 +915,12 @@ and exits 2. These checks come from `claude-guard-check`:
   - `objects` is writable.
   - `gc.auto` is `0`.
   - The worktree's parent directory is read-only.
+  - The `objects/pack`, `packed-refs` and `gc.auto` checks are the guard's, so
+    they are made only in a session `atc run` guarded, which it says in
+    `ATC_GUARD` (§11). Otherwise a note says the session was not started by
+    `atc run`, or was started unguarded, and they are skipped. When `ATC_GUARD`
+    names another repository, they are made for this one, with a note naming the
+    guarded one.
 - **Accounts:**
   - The current account's `secrets` are unreadable. The current account comes
     from `ATC_ACCOUNT`, otherwise from the backend's environment.
@@ -1032,6 +1038,7 @@ pattern: chosen per account, recorded in the registry, applied by `sync`.
 | `ATC_ACCOUNT`       | The chosen account's name                                                                   | the statusline (display, usage), `atc check` |
 | `ATC_PROJECT`       | The project's name. Removed outside a registered project                                    | the statusline, hooks                        |
 | `ATC_STATE_DIR`     | `state_dir`                                                                                 | the statusline's usage recording             |
+| `ATC_GUARD`         | When guarded: the git common directory of the guarded repository                            | `atc check`                                  |
 | `CLAUDE_CONFIG_DIR` | Set, or removed, by the backend (§9)                                                        | Claude Code                                  |
 | `GIT_CONFIG_*`      | When guarded: `gc.auto=0` and `maintenance.auto=false`, added after any entries already set | git                                          |
 

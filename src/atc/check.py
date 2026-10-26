@@ -12,12 +12,24 @@ from atc.backends.claude import CONFIG_DIR_VARIABLE
 from atc.errors import GitError, RegistryError
 from atc.git import common_dir as git_common_dir
 from atc.git import run_git
+from atc.guard import GUARD_VARIABLE
 from atc.paths import Dirs
 from atc.refs import SKILL_FILE
 from atc.registry import REGISTRY_FILE, Account, Registry, normalize_path
 
 ACCOUNT_VARIABLE = "ATC_ACCOUNT"
 """The variable that names the account a session was started in."""
+_GUARD_SKIPPED = "the objects/pack, packed-refs and automatic gc checks are skipped"
+_NOT_STARTED = (
+    "atc run did not start this session, so nothing guards its packed history, "
+    f"and {_GUARD_SKIPPED}"
+)
+"""Why the guard's checks are skipped in a session that atc run did not start."""
+_UNGUARDED = (
+    "atc run started this session unguarded (--no-guard, or outside a "
+    f"repository), so {_GUARD_SKIPPED}"
+)
+"""Why the guard's checks are skipped in a session atc run started unguarded."""
 
 _TOP_LEVEL = ("rev-parse", "--show-toplevel")
 _GC_AUTO = ("config", "--get", "gc.auto")
@@ -223,11 +235,12 @@ def run_checks(
     and then the current account's settings file and what its instructions
     file and skills lead to. The registry and the settings file are checked
     where a link leads. A repository check that git cannot make fails, and one
-    that does not apply, outside a repository, is a note.
+    that does not apply, outside a repository, is a note. So are the checks of
+    the guard that ``atc run`` sets up, in a session it did not guard.
     """
     account = current_account(registry, env, home)
     parts = [
-        _repository(probe),
+        _repository(probe, env),
         _accounts(probe, registry, account, home, env),
         _atc_itself(probe, dirs, install_dir, python_dir),
         _instructions_and_skills(probe, account, home),
@@ -238,7 +251,7 @@ def run_checks(
     )
 
 
-def _repository(probe: Probe) -> Report:
+def _repository(probe: Probe, env: Mapping[str, str]) -> Report:
     try:
         git_dir = probe.common_dir()
     except GitError as exc:
@@ -248,10 +261,12 @@ def _repository(probe: Probe) -> Report:
         return Report(
             (), ("not in a git repository, so the repository checks are skipped",)
         )
-    results = [_read_only(probe, git_dir / "objects" / "pack")]
+    guarded, note = _guard(env, git_dir)
+    names = ("packed-refs", "hooks", "config") if guarded else ("hooks", "config")
+    results = [_read_only(probe, git_dir / "objects" / "pack")] if guarded else []
     results += [
         _read_only(probe, git_dir / name)
-        for name in ("packed-refs", "hooks", "config")
+        for name in names
         if probe.exists(git_dir / name)
     ]
     results += _config_worktree(probe, git_dir)
@@ -261,9 +276,29 @@ def _repository(probe: Probe) -> Report:
             "new objects can be written, so commits work",
         )
     )
-    results.append(_gc_is_off(probe))
+    if guarded:
+        results.append(_gc_is_off(probe))
     results.append(_worktree_parent_is_read_only(probe))
-    return Report(tuple(results))
+    return Report(tuple(results), () if note is None else (note,))
+
+
+def _guard(env: Mapping[str, str], git_dir: Path) -> tuple[bool, str | None]:
+    """
+    Say whether to check the guard of ``git_dir``, and the note to give, if any.
+
+    The guard is what ``atc run`` sets up to protect the packed history:
+    ``objects/pack`` and ``packed-refs`` read-only, and automatic gc off. It is
+    checked when ``atc run`` guarded the session, and for this repository even
+    when the guard is another one's, since this is the history at stake.
+    """
+    guarded = env.get(GUARD_VARIABLE, "")
+    if guarded:
+        if Path(guarded) == git_dir:
+            return True, None
+        return True, f"atc run guarded {guarded}, not this repository"
+    if env.get(ACCOUNT_VARIABLE, ""):
+        return False, _UNGUARDED
+    return False, _NOT_STARTED
 
 
 def _config_worktree(probe: Probe, git_dir: Path) -> list[CheckResult]:

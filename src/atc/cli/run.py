@@ -111,9 +111,10 @@ def run(
     account is ACCOUNT if given, otherwise the project's, otherwise the
     registry's default. atc then replaces itself with the account's agent,
     started with that account's configuration directory and with ATC_ACCOUNT,
-    ATC_PROJECT and ATC_STATE_DIR set. Any other ATC_ variable it was started
-    with is dropped. It prints one line on standard error naming the project,
-    the account and whether the session is guarded.
+    ATC_PROJECT and ATC_STATE_DIR set, and ATC_GUARD when the session is
+    guarded. Any other ATC_ variable it was started with is dropped. It prints
+    one line on standard error naming the project, the account and whether the
+    session is guarded.
 
     With -a auto, a project that lists accounts gets the one with the lowest
     five-hour usage, as "atc usage" shows it. An account with no usable record,

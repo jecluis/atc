@@ -473,6 +473,7 @@ the one atc passes. Give `--settings` to `atc`, before `--`.
 | `ATC_ACCOUNT`       | The account's name.                                                                                                  |
 | `ATC_PROJECT`       | The project's name. Removed outside a registered project.                                                            |
 | `ATC_STATE_DIR`     | atc's state directory.                                                                                               |
+| `ATC_GUARD`         | In a guarded session: the git common directory of the repository it guards, which `atc check` reads.                 |
 | `CLAUDE_CONFIG_DIR` | The account's directory. Removed for `~/.claude`, the directory Claude Code uses when the variable is not set.       |
 | `GIT_CONFIG_*`      | In a guarded session: `gc.auto=0` and `maintenance.auto=false`, added after any entries already set (see The guard). |
 
@@ -1345,7 +1346,12 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   shared one and the current worktree's own, and neither can be written; when it
   is off, they are not checked. If git cannot inspect the repository, for
   example because it refuses one that someone else owns, that is a `FAIL`, not a
-  skip.
+  skip. `objects/pack`, `packed-refs` and gc are the guard's checks (see The
+  guard), so they are made only when `atc run` guarded the session, which it
+  says in `ATC_GUARD`. Otherwise a plain line says that `atc run` did not start
+  the session, or started it unguarded, and those three are skipped. When
+  `ATC_GUARD` names another repository, they are still made for the one
+  `atc check` runs in, and a plain line names the guarded one.
 - **The accounts:** the session's own account's credentials (`.credentials.json`
   and the state file), and every other account's directory and files, cannot be
   read. The session's account is `ATC_ACCOUNT`, otherwise the account whose
@@ -1372,8 +1378,9 @@ link that is the nearest directory above a missing path, and a loop of links, or
 more than 40 of them, is a `FAIL`.
 
 A check that does not apply is not a `PASS`: a plain line says so instead. That
-is the case for the repository checks outside a repository, and for the
-instructions and skills checks when no account matches the session.
+is the case for the repository checks outside a repository, for the guard's
+checks in a session `atc run` did not guard, and for the instructions and skills
+checks when no account matches the session.
 
 The status is `0` when every check passes, and `3` when any fails. If the home
 directory can be written this is not a sandbox: `atc check` says so on standard

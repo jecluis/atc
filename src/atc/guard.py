@@ -20,6 +20,8 @@ REPOS_FILE = "repos"
 """The list of guarded repositories, in the state directory."""
 
 COUNT_VARIABLE = "GIT_CONFIG_COUNT"
+GUARD_VARIABLE = "ATC_GUARD"
+"""The variable that holds the git directory a session's guard covers, when guarded."""
 GC_SETTINGS = (("gc.auto", "0"), ("maintenance.auto", "false"))
 """The git settings that keep git from packing the repository by itself."""
 

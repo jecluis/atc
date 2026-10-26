@@ -1099,6 +1099,7 @@ def test_a_guarded_plan_turns_gc_off_after_the_environments_own_settings(
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "user.name",
         "GIT_CONFIG_VALUE_0": "x",
+        "ATC_GUARD": "/outer/.git",
     }
 
     result = plan(ctx, repo, env=env)
@@ -1108,6 +1109,7 @@ def test_a_guarded_plan_turns_gc_off_after_the_environments_own_settings(
     assert result.env_changes["GIT_CONFIG_KEY_1"] == "gc.auto"
     assert result.env_changes["GIT_CONFIG_KEY_2"] == "maintenance.auto"
     assert "GIT_CONFIG_KEY_0" not in result.env_changes
+    assert result.env_changes["ATC_GUARD"] == str(result.common_dir)
 
 
 def test_a_count_git_would_refuse_stops_a_guarded_plan_only(
@@ -1129,12 +1131,13 @@ def test_no_guard_leaves_out_entries_gc_and_lock_and_warns(
 ) -> None:
     ctx = build_context(FILES, registry_text(repo, snapshot="bravo"))
 
-    result = plan(ctx, repo, no_guard=True)
+    result = plan(ctx, repo, env={"ATC_GUARD": "/outer/.git"}, no_guard=True)
 
     assert not result.guarded
     assert result.fragment == {}
     assert result.argv == [CLAUDE]
     assert not any(name.startswith("GIT_CONFIG") for name in result.env)
+    assert "ATC_GUARD" not in result.env
     assert len(result.warnings) == 1
     assert result.warnings[0].startswith("--no-guard: ")
     assert "packed history" in result.warnings[0]
@@ -1198,6 +1201,7 @@ def test_outside_a_repository_is_unguarded_without_a_warning(
         assert result.fragment == {}
         assert result.warnings == ()
         assert not any(name.startswith("GIT_CONFIG") for name in result.env)
+        assert "ATC_GUARD" not in result.env
         with pytest.raises(StopError):
             execute(result, dirs, run_snapshot=refuse_to_run)
     assert not dirs.state_dir.exists()
