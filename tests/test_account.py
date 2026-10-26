@@ -9,6 +9,7 @@ import pytest
 
 from atc.cli import main
 from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
+from atc.jsonval import JsonObject
 from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
 from atc.ui import PickChoice, Ui
@@ -947,3 +948,263 @@ def test_add_does_not_offer_an_instructions_file_several_sources_have(
         capsys.readouterr().err
     )
     assert len(answers.asked) == 1
+
+
+SCRATCH_FILES = {
+    "conf/accounts/new.json": unit({"model": "opus"}, imports=["common/base.json"]),
+    "conf/common/base.json": unit(
+        {
+            "env": {
+                "SCRATCH": "{{account.vars.scratch}}",
+                "ROOT": "{{vars.root}}/{{account.name}}",
+            }
+        }
+    ),
+    "assets/status.in.sh": "echo {{account.vars.notes}}\n",
+    "conf/projects/bar.json": unit({"env": {"CACHE": "{{account.vars.cache}}"}}),
+    "conf/projects/baz.json": unit({"env": {"X": "{{account.vars.other}}"}}),
+    "conf/accounts/personal.json": unit(),
+}
+PROJECTS = (project("bar"), project("baz", "accounts: [personal]"))
+
+
+def personal_vars(*lines: str) -> str:
+    """Write a registry whose `personal` account defines what it needs here."""
+    defined = "\n".join(f"          {line}" for line in lines)
+    head = (
+        "    version: 1\n    default-account: personal\n    accounts:\n"
+        "      personal:\n        agent: claude\n        dir: ~/.claude\n"
+        f"        vars:\n{defined}\n"
+    )
+    return head + "    projects:\n" + "".join(PROJECTS)
+
+
+def test_add_asks_for_each_variable_the_account_needs_in_order_of_first_use(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answers = answering(monkeypatch)
+    configure(
+        SCRATCH_FILES, personal_vars("scratch: s", "notes: n", "cache: c", "other: o")
+    )
+    assert main(["src", "check"]) == OK
+
+    assert main(["account", "add", "new"]) == OK
+
+    assert answers.asked[1:] == [
+        "The account variable scratch, used by common/base.json: default=",
+        "The machine-wide variable root, used by common/base.json: default=",
+        "The account variable notes, used by status.in.sh: default=",
+        "The account variable cache, used by projects/bar.json: default=",
+    ]
+    registry = load_registry(dirs.config_dir / REGISTRY_FILE, home)
+    typed = f"{home}/.config/new"
+    assert registry.accounts["new"].vars == {
+        "scratch": typed,
+        "notes": typed,
+        "cache": typed,
+    }
+    assert registry.vars == {"root": typed}
+    # Nothing the account, or a project it may work on, uses is left undefined.
+    assert main(["src", "check"]) == OK
+
+
+def test_add_does_not_ask_for_a_machine_wide_variable_that_is_defined(
+    configure: ConfigWriter, dirs: Dirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = answering(monkeypatch)
+    configure(
+        SCRATCH_FILES,
+        personal_vars("scratch: s", "notes: n", "cache: c").replace(
+            "    accounts:\n", "    vars:\n      root: /r  # the root\n    accounts:\n"
+        ),
+    )
+
+    assert main(["account", "add", "new"]) == OK
+
+    assert [q.split(",")[0] for q in answers.asked[1:]] == [
+        "The account variable scratch",
+        "The account variable notes",
+        "The account variable cache",
+    ]
+    assert "vars:\n  root: /r  # the root\naccounts:\n" in text_of(dirs)
+
+
+def test_add_writes_the_values_and_a_new_registrys_variables(
+    configure: ConfigWriter, dirs: Dirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = answering(monkeypatch)
+    answers.path = " /s "
+    files = {k: v for k, v in SCRATCH_FILES.items() if "projects" not in k}
+    configure(files)
+    (dirs.config_dir / REGISTRY_FILE).unlink()
+
+    assert main(["account", "add", "new"]) == OK
+
+    assert text_of(dirs) == (
+        "version: 1\ndefault-account: new\nvars:\n  root: /s\naccounts:\n"
+        "  new:\n    agent: claude\n    dir: /s\n    vars:\n"
+        "      scratch: /s\n      notes: /s\n"
+    )
+
+
+def test_add_checks_each_value(
+    configure: ConfigWriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = answering(monkeypatch)
+    configure({"conf/accounts/new.json": unit({"env": {"A": "{{account.vars.a}}"}})})
+
+    assert main(["account", "add", "new"]) == OK
+
+    check = answers.check
+    assert check is not None
+    assert check("value") is None
+    assert check("  ") == "a value is needed"
+    assert check("a {{b}}") == "the value must not contain '{{'"
+    assert not answers.directories
+
+
+@pytest.mark.parametrize(
+    ("settings", "imports", "message"),
+    [
+        ({"env": {"A": "{{acount.dir}}"}}, [], "unknown reference {{acount.dir}}"),
+        ({"env": {"A": "{{project.name}}"}}, [], "unknown reference {{project.name}}"),
+        ({"env": {"A": "{{account.vars.a.b}}"}}, [], "{{account.vars.a.b}}"),
+        ({}, ["common/missing.json"], "common/missing.json"),
+    ],
+)
+def test_add_refuses_what_no_value_can_fix_before_asking(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    settings: JsonObject,
+    imports: list[str],
+    message: str,
+) -> None:
+    answers = answering(monkeypatch)
+    configure({**FILES, "conf/accounts/new.json": unit(settings, imports=imports)})
+    before = text_of(dirs)
+
+    assert main(["account", "add", "new"]) == CONFIG
+
+    assert message in capsys.readouterr().err
+    assert answers.asked == []
+    assert text_of(dirs) == before
+
+
+def test_add_cancelled_at_a_variable_writes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers = answering(monkeypatch)
+    configure(
+        {**FILES, "conf/accounts/new.json": unit({"env": {"A": "{{account.vars.a}}"}})},
+        registry_text(),
+    )
+    before = text_of(dirs)
+    paths = iter(["~/.config/new", None])
+
+    def ask_path(_self: Ui, question: str, **_options: object) -> str | None:
+        answers.asked.append(question)
+        return next(paths)
+
+    monkeypatch.setattr(Ui, "ask_path", ask_path)
+
+    assert main(["account", "add", "new"]) == INTERRUPTED
+
+    assert len(answers.asked) == 2
+    assert "cancelled; nothing changed" in capsys.readouterr().err
+    assert text_of(dirs) == before
+
+
+def test_add_sets_up_the_example_account(
+    configure: ConfigWriter, dirs: Dirs, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    examples = Path(__file__).parents[1] / "examples"
+    files = {
+        path.relative_to(examples).as_posix(): path.read_text(encoding="utf-8")
+        for top in ("conf", "assets")
+        for path in sorted((examples / top).rglob("*"))
+        if path.is_file()
+    }
+    answers = answering(monkeypatch)
+    configure(files)
+    (dirs.config_dir / REGISTRY_FILE).unlink()
+
+    assert main(["account", "add", "example"]) == OK
+
+    assert [q.split(",")[0] for q in answers.asked[1:]] == [
+        "The account variable scratch"
+    ]
+    registry = load_registry(dirs.config_dir / REGISTRY_FILE, home)
+    assert registry.accounts["example"].vars == {"scratch": f"{home}/.config/new"}
+
+
+@pytest.mark.parametrize(
+    ("typed", "written"),
+    [("~", "{home}"), ("~/s ", "{home}/s"), ("~s", "~s"), ("a~/b", "a~/b")],
+)
+def test_add_expands_a_leading_tilde_in_a_value(
+    configure: ConfigWriter,
+    home: Path,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    typed: str,
+    written: str,
+) -> None:
+    answers = answering(monkeypatch)
+    configure({"conf/accounts/new.json": unit({"env": {"A": "{{account.vars.a}}"}})})
+    paths = iter(["~/.config/new", typed])
+
+    def ask_path(_self: Ui, question: str, **_options: object) -> str | None:
+        answers.asked.append(question)
+        return next(paths)
+
+    monkeypatch.setattr(Ui, "ask_path", ask_path)
+    (dirs.config_dir / REGISTRY_FILE).unlink()
+
+    assert main(["account", "add", "new"]) == OK
+
+    account = load_registry(dirs.config_dir / REGISTRY_FILE, home).accounts["new"]
+    assert account.vars == {"a": written.format(home=home)}
+    assert account.dir == home / ".config" / "new"
+
+
+@pytest.mark.parametrize(
+    ("files", "registry", "message"),
+    [
+        (
+            {"assets/notes.in.md": "{{acount.name}}\n"},
+            registry_text(),
+            "unknown reference {{acount.name}}",
+        ),
+        (
+            {"conf/projects/bar.json": unit({"env": {"A": "{{project.vars.p}}"}})},
+            registry_text(project("bar")),
+            "unknown reference {{project.vars.p}}",
+        ),
+    ],
+)
+def test_add_refuses_a_template_or_project_no_value_can_fix_before_asking(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    files: dict[str, str | JsonObject],
+    registry: str,
+    message: str,
+) -> None:
+    answers = answering(monkeypatch)
+    configure({**FILES, **NEW, **files}, registry)
+    before = text_of(dirs)
+
+    assert main(["account", "add", "new"]) == CONFIG
+
+    assert message in capsys.readouterr().err
+    assert answers.asked == []
+    assert text_of(dirs) == before

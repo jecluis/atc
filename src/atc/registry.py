@@ -302,15 +302,22 @@ def add_project(path: Path, home: Path, name: str, fields: JsonObject) -> Regist
     return _write_checked(path, home, edited)
 
 
-def add_account(path: Path, home: Path, name: str, fields: JsonObject) -> Registry:
+def add_account(
+    path: Path,
+    home: Path,
+    name: str,
+    fields: JsonObject,
+    machine_vars: Mapping[str, str] | None = None,
+) -> Registry:
     """
     Add the account ``name``, set up by ``fields``, to the registry file ``path``.
 
     ``fields`` are the keys of the account as the file spells them, such as
-    ``dir`` and ``use-default-agents-md``. When there is no file, it is
-    created, with the account as its default account. Otherwise the file is
-    edited and replaced as :func:`set_skills` does, and the new entry goes after
-    the others. Returns the registry as it now reads.
+    ``dir`` and ``use-default-agents-md``. ``machine_vars`` are added to the
+    machine-wide ``vars``. When there is no file, it is created, with the
+    account as its default account. Otherwise the file is edited and replaced
+    as :func:`set_skills` does, and the new entry goes after the others.
+    Returns the registry as it now reads.
 
     Raises:
         RegistryError: the file cannot be read, or is not a valid registry,
@@ -329,6 +336,8 @@ def add_account(path: Path, home: Path, name: str, fields: JsonObject) -> Regist
     else:
         text = set_in_text("", ["version"], REGISTRY_VERSION)
         text = set_in_text(text, ["default-account"], name)
+    for variable, value in (machine_vars or {}).items():
+        text = set_in_text(text, ["vars", variable], value)
     edited = set_in_text(text, ["accounts", name], fields)
     return _write_checked(path, home, edited)
 

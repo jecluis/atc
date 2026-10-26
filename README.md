@@ -110,9 +110,11 @@ Its one asset, `assets/statusline.sh`, is a status line that also records the
 account's rate limits, where `atc usage` and `atc run -a auto` read them.
 
 To try them, copy `examples/conf/` and `examples/assets/` into
-`~/.config/atc/conf.d/`, and `examples/machine.yaml` into `~/.config/atc/`. Set
-the account's `scratch` there, run `chmod -R go-w ~/.config/atc/conf.d` if your
-umask left the copies group-writable, then run `atc src check`.
+`~/.config/atc/conf.d/`, and run `chmod -R go-w ~/.config/atc/conf.d` if your
+umask left the copies group-writable. Then run `atc account add example`, which
+writes the registry, asking for the account's directory and its `scratch`; or
+copy `examples/machine.yaml` into `~/.config/atc/` and set `scratch` there. Then
+run `atc src check`.
 
 ## The machine registry
 
@@ -889,8 +891,20 @@ usage error, exit `2`. It checks that `NAME` is a valid account name that no
 account has yet, and that exactly one config source has the account's unit:
 `UNIT`, a unit reference (see Units), or `accounts/NAME.json`. When no source
 has it, the error lists the account units the sources do have, the files under
-their `conf/accounts/`. When several do, it asks for an `@name/` prefix. A
-failed check is an error that exits `1`.
+their `conf/accounts/`. When several do, it asks for an `@name/` prefix.
+
+It also finds the variables the account needs that nothing defines yet (see
+Templates): every reference to one of its own variables, `{{account.vars.X}}`,
+and to a machine-wide one the registry lacks, `{{vars.X}}`. It looks in the
+account's unit and the units it imports, in every templated asset, since those
+are rendered for every account, and in the units of the projects that allow
+every account, since those are built for it too. Then it builds the account and
+those projects, with a stand-in for each of those variables, so that what else
+would stop them is reported now, such as a missing or circular import, a
+misspelled reference, or a `{{project.*}}` in an account's unit. A settings key
+that Claude Code does not define is not among them: `atc src check` reports it.
+
+A failed check is an error that exits `1`.
 
 Then it asks, in this order:
 
@@ -906,13 +920,19 @@ Then it asks, in this order:
 3. Whether to pick skills now, no being the default, and if so which, from the
    checklist of `atc skills pick`. It is asked only when the sources have
    skills.
+4. A value for each variable it found, in the order they are first used. Each
+   question names the units or assets that use the variable. The value has path
+   completion, since most variables hold paths, and must be neither empty nor
+   contain `{{`. A variable is used as written, so a leading `~` or `~/` is
+   written as your home directory.
 
 The entry goes after the other accounts, as `agent` and `dir`, then `unit`,
-`use-default-agents-md` and `skills` where they are not the defaults. `dir` is
-written as typed, without a trailing `/`. The rest of the file stays as it was,
-comments included, and the new file is checked as the registry always is before
-it replaces the old one. A new `machine.yaml` holds `version: 1`,
-`default-account: NAME` and the account.
+`use-default-agents-md`, `skills` and `vars` where they are not the defaults.
+`dir` is written as typed, without a trailing `/`. Machine-wide variables go in
+the registry's `vars`. The rest of the file stays as it was, comments included,
+and the new file is checked as the registry always is before it replaces the old
+one. A new `machine.yaml` holds `version: 1`, `default-account: NAME`, any
+`vars` and the account.
 
 Nothing else is done: the directory is not created, and nothing is synced. It
 says what comes next: `atc sync`, for every account, since each account's

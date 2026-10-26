@@ -1,6 +1,7 @@
 """``atc account``: see and change the accounts of the machine registry."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import NoReturn
 
@@ -13,13 +14,16 @@ from rich.text import Text
 from atc import exitcodes
 from atc.cli.options import current_dirs, load_machine_registry, load_sources
 from atc.cli.skills import skill_choices
+from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
 from atc.jsonval import JsonObject, JsonValue
+from atc.needed import Needed, needed_variables
 from atc.refs import resolve_registry
 from atc.registry import (
     AGENTS,
     DEFAULT_AGENTS_MD,
     REGISTRY_FILE,
+    Account,
     AccountRemoval,
     AccountUses,
     Registry,
@@ -101,7 +105,13 @@ def add(name: str, unit: str | None, agent: str) -> None:
     for the account's directory, with path completion, which no other account
     may have and which need not exist yet. When the sources have the default
     instructions file it asks whether to link it, and when they have skills,
-    whether to pick some now, from the checklist of "atc skills pick".
+    whether to pick some now, from the checklist of "atc skills pick". Last, it
+    asks for each variable that nothing defines yet and that the account's
+    units, the templated assets or the units of the projects it may work on use:
+    the account's own, or machine-wide ones; a leading ~ in a value is written
+    as your home directory. What else would stop the account from being built
+    is reported before anything is asked, but for settings keys Claude Code
+    does not define, which "atc src check" reports.
 
     The entry goes after the others in machine.yaml, and the rest of the file
     stays as it was, comments included. When there is no machine.yaml, it is
@@ -126,6 +136,9 @@ def add(name: str, unit: str | None, agent: str) -> None:
     reference = f"accounts/{name}.json" if unit is None else unit
     _find_unit(sources, reference)
     instructions = _instructions(sources, registry, ui)
+    needed = _needed(
+        path, registry, sources, Account(name, agent, Path(), reference, {})
+    )
     # Everything that can refuse the account has; what is left is to ask.
     taken = (
         {} if registry is None else {a.dir: a.name for a in registry.accounts.values()}
@@ -159,7 +172,19 @@ def add(name: str, unit: str | None, agent: str) -> None:
                 _cancelled(ui)
             if picked:
                 fields["skills"] = list[JsonValue](picked)
-    updated = add_account(path, Path.home(), name, fields)
+    own: JsonObject = {}
+    machine: dict[str, str] = {}
+    for need in needed:
+        value = ui.ask_path(_variable_question(need), check=_value_fault)
+        if value is None:
+            _cancelled(ui)
+        if need.machine_wide:
+            machine[need.name] = _as_value(value)
+        else:
+            own[need.name] = _as_value(value)
+    if own:
+        fields["vars"] = own
+    updated = add_account(path, Path.home(), name, fields, machine)
     added = f"{name}: added to {updated.path}"
     ui.line(added if registry is not None else f"{added}, as the default account")
     for step in _next_steps(updated, name):
@@ -288,6 +313,68 @@ def _find_unit(sources: Sources, reference: str) -> None:
         raise PathError(f"{exc}; {there}") from exc
     if found is None:
         raise PathError(f"'{reference}': no config source has it; {there}")
+
+
+def _needed(
+    path: Path, registry: Registry | None, sources: Sources, account: Account
+) -> list[Needed]:
+    """
+    Find the variables that the new ``account`` needs, with it in the registry.
+
+    ``registry`` is ``None`` when there is no file at ``path`` yet. The account's
+    directory is not known yet, and nothing found here depends on it.
+
+    Raises:
+        ConfigError: as :func:`atc.needed.needed_variables`.
+
+    """
+    if registry is None:
+        holding = Registry(path, {}, account.name, {account.name: account}, {}, ())
+    else:
+        holding = replace(
+            registry, accounts={**registry.accounts, account.name: account}
+        )
+    ctx = BuildContext(
+        registry=holding,
+        sources=sources,
+        dirs=current_dirs(),
+        home=Path.home(),
+        install_dir=current_install_dir(),
+        python_dir=current_python_dir(),
+    )
+    return needed_variables(ctx, account)
+
+
+def _variable_question(need: Needed) -> str:
+    """Ask for the value of the variable ``need``, naming what uses it."""
+    kind = "machine-wide variable" if need.machine_wide else "account variable"
+    users = ", ".join(need.users[:3])
+    if len(need.users) > 3:
+        users += f" and {len(need.users) - 3} more"
+    return f"The {kind} {need.name}, used by {users}:"
+
+
+def _value_fault(text: str) -> str | None:
+    """Say what is wrong with ``text`` as a variable's value, if anything."""
+    value = text.strip()
+    if not value:
+        return "a value is needed"
+    if "{{" in value:
+        return "the value must not contain '{{'"
+    return None
+
+
+def _as_value(text: str) -> str:
+    """
+    Write ``text`` as a variable's value, with a leading ``~`` expanded.
+
+    A variable is used as written, so a ``~`` left in it would not be your home
+    directory wherever the value goes.
+    """
+    value = text.strip()
+    if value == "~" or value.startswith("~/"):
+        return str(Path.home()) + value[1:]
+    return value
 
 
 def _next_steps(registry: Registry, name: str) -> list[str]:
