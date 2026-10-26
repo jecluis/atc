@@ -1068,9 +1068,16 @@ comments inside it included, and the comment lines directly above it, at the
 same indentation as its key and with no blank line between, which describe it.
 Everything else in the file stays as it was: other comments, a comment indented
 deeper that follows the entry before, and blank lines. Nothing else is touched:
-not the repository, not its worktrees, and not `projects/NAME.json` in the
-config sources. An unknown `NAME` is an error that lists the projects there are,
-and the file is left alone.
+not the repository, not its worktrees, and not its unit in the config sources,
+`projects/NAME.json` unless it names another. An unknown `NAME` is an error that
+lists the projects there are, and the file is left alone.
+
+Before anything is removed, it says what goes, the entry with its repository and
+its `vars`, and what stays, then asks `Remove project NAME? [y/N]`. No is the
+default, and it changes nothing, with exit status `0`. Ctrl-C changes nothing
+too, with exit status `130`. Without a terminal it is a usage error, exit status
+`2`, since nothing can be confirmed. If `machine.yaml` changes while it waits
+for the answer, nothing is written and the error exits `1`.
 
 ### `atc wt new BRANCH [--from REF] [--run]`
 

@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import NoReturn
 
 import click
 import rich_click
@@ -11,8 +10,12 @@ from rich import box
 from rich.table import Table
 from rich.text import Text
 
-from atc import exitcodes
-from atc.cli.options import current_dirs, load_machine_registry, load_sources
+from atc.cli.options import (
+    cancelled,
+    current_dirs,
+    load_machine_registry,
+    load_sources,
+)
 from atc.cli.skills import skill_choices
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
@@ -150,7 +153,7 @@ def add(name: str, unit: str | None, agent: str) -> None:
         directories=True,
     )
     if directory is None:
-        _cancelled(ui)
+        cancelled(ui)
     fields: JsonObject = {"agent": agent, "dir": _as_written(directory)}
     if reference != f"accounts/{name}.json":
         fields["unit"] = reference
@@ -159,17 +162,17 @@ def add(name: str, unit: str | None, agent: str) -> None:
             f"Link {instructions} as the account's instructions file?", default=True
         )
         if link is None:
-            _cancelled(ui)
+            cancelled(ui)
         if link:
             fields["use-default-agents-md"] = True
     if catalog.skills:
         now = ui.confirm("Pick skills for the account now?", default=False)
         if now is None:
-            _cancelled(ui)
+            cancelled(ui)
         if now:
             picked = ui.pick(f"Skills for {name}", skill_choices(catalog, ()))
             if picked is None:
-                _cancelled(ui)
+                cancelled(ui)
             if picked:
                 fields["skills"] = list[JsonValue](picked)
     own: JsonObject = {}
@@ -177,7 +180,7 @@ def add(name: str, unit: str | None, agent: str) -> None:
     for need in needed:
         value = ui.ask_path(_variable_question(need), check=_value_fault)
         if value is None:
-            _cancelled(ui)
+            cancelled(ui)
         if need.machine_wide:
             machine[need.name] = _as_value(value)
         else:
@@ -241,13 +244,13 @@ def rm(name: str, force: bool) -> None:
     if candidates:
         default = ui.choose(f"The default account in place of {name}:", candidates)
         if default is None:
-            _cancelled(ui)
+            cancelled(ui)
     edited, after = removal.edited(default)
     for change in _changes(uses, after.default_account):
         ui.info(change)
     answer = ui.confirm(f"Remove account {name}?", default=False)
     if answer is None:
-        _cancelled(ui)
+        cancelled(ui)
     if not answer:
         ui.info("nothing changed")
         return
@@ -453,8 +456,3 @@ def _dir_fault(text: str, taken: Mapping[Path, str]) -> str | None:
 def _as_written(text: str) -> str:
     """Write a directory as typed, but with no trailing ``/``."""
     return text.strip().rstrip("/") or "/"
-
-
-def _cancelled(ui: Ui) -> NoReturn:
-    ui.info("cancelled; nothing changed")
-    raise click.exceptions.Exit(exitcodes.INTERRUPTED)

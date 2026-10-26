@@ -870,7 +870,8 @@ here and in `sync` and `run`.
     of `REPO` is stored.
   - The repository and branch are checked first.
   - If no source contains `projects/<NAME>.json`, atc warns.
-- `atc prj rm NAME`: removes the registry entry. Nothing else is touched.
+- `atc prj rm NAME`: removes the registry entry, once the user confirms it
+  (yes/No, no by default). Nothing else is touched.
 
 ### 10.6 `atc wt`
 

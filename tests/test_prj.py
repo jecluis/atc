@@ -1,19 +1,20 @@
 """``atc prj``: list, show, add and remove the projects of the registry."""
 
 import re
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
 
 from atc.cli import main
-from atc.exitcodes import CONFIG, OK, USAGE
+from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
 from atc.git import run_git
 from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
 from atc.worktree import Worktree, list_worktrees
 from tests.conftest import ConfigWriter
-from tests.helpers import git_repo, make_source, unit
+from tests.helpers import answering, git_repo, make_source, unit
 
 PERSONAL = "conf/accounts/personal.json"
 WORK = "conf/accounts/work.json"
@@ -342,16 +343,22 @@ def test_rm_removes_only_the_entry(
     dirs: Dirs,
     home: Path,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     bar, other = tmp_path / "bar", tmp_path / "other"
     configure(FILES, registry_text(project("bar", bar), project("other", other)))
     before = registry_file(dirs).read_text(encoding="utf-8")
+    given = answering(monkeypatch)
 
     status = main(["prj", "rm", "bar"])
 
     assert status == OK
-    assert "bar" in capsys.readouterr().out
+    assert given.asked == ["Remove project bar? default=False"]
+    captured = capsys.readouterr()
+    assert captured.out == f"bar: removed from {registry_file(dirs)}\n"
+    assert f"this removes project 'bar' ({bar}) from" in captured.err
+    assert "its worktrees and its unit projects/bar.json stay" in captured.err
     assert registry_file(dirs).read_text(encoding="utf-8") == before.replace(
         textwrap.indent(textwrap.dedent(project("bar", bar)), "  "), ""
     )
@@ -360,7 +367,12 @@ def test_rm_removes_only_the_entry(
 
 @pytest.mark.parametrize(("gap", "comment"), [("", ""), ("\n", "  # about other\n")])
 def test_rm_drops_the_comment_directly_above_the_entry_only(
-    configure: ConfigWriter, dirs: Dirs, tmp_path: Path, gap: str, comment: str
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gap: str,
+    comment: str,
 ) -> None:
     bar = tmp_path / "bar"
     entries = [
@@ -369,6 +381,7 @@ def test_rm_drops_the_comment_directly_above_the_entry_only(
         project("other", tmp_path / "other"),
     ]
     configure(FILES, registry_text(*entries))
+    _ = answering(monkeypatch)
 
     assert main(["prj", "rm", "other"]) == OK
 
@@ -391,8 +404,92 @@ def test_rm_refuses_an_unknown_project(
     status = main(["prj", "rm", "ghost"])
 
     assert status == CONFIG
-    assert "no project named 'ghost'; the projects are bar" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no project named 'ghost'; the projects are bar" in err
+    assert "needs a terminal" not in err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_rm_names_the_vars_that_go_with_the_project(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bar = tmp_path / "bar"
+    configure(FILES, registry_text(project("bar", bar, "vars: {x: '1', y: '2'}")))
+    _ = answering(monkeypatch)
+
+    assert main(["prj", "rm", "bar"]) == OK
+
+    err = capsys.readouterr().err
+    assert f"project 'bar' ({bar}) from " in err
+    assert ", with its vars x, y\n" in err
+
+
+@pytest.mark.parametrize(("answer", "status"), [(False, OK), (None, INTERRUPTED)])
+def test_rm_answered_no_or_cancelled_changes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answer: bool | None,
+    status: int,
+) -> None:
+    configure(FILES, registry_text(project("bar", tmp_path / "bar")))
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    given = answering(monkeypatch)
+    given.confirm = answer
+
+    assert main(["prj", "rm", "bar"]) == status
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert ("cancelled; " if answer is None else "") + "nothing changed" in (
+        captured.err
+    )
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_rm_without_a_terminal_is_a_usage_error(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(FILES, registry_text(project("bar", tmp_path / "bar")))
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    assert main(["prj", "rm", "bar"]) == USAGE
+
+    assert "atc prj rm needs a terminal" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_rm_writes_nothing_when_the_file_changed_while_it_asked(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(FILES, registry_text(project("bar", tmp_path / "bar")))
+    path = registry_file(dirs)
+    changed = path.read_text(encoding="utf-8") + "# edited meanwhile\n"
+    given = answering(monkeypatch)
+
+    def edit() -> None:
+        _ = path.write_text(changed, encoding="utf-8")
+
+    given.meanwhile = edit
+
+    assert main(["prj", "rm", "bar"]) == CONFIG
+
+    assert "changed since it was read; nothing was removed" in capsys.readouterr().err
+    assert path.read_text(encoding="utf-8") == changed
 
 
 def test_show_defaults_to_the_current_project_and_lists_worktrees(

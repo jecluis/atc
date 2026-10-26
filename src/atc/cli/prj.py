@@ -10,6 +10,8 @@ from rich.text import Text
 
 from atc import git
 from atc.cli.options import (
+    cancelled,
+    current_dirs,
     current_project,
     load_machine_registry,
     load_sources,
@@ -21,12 +23,13 @@ from atc.jsonval import JsonObject, JsonValue
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
+    REGISTRY_FILE,
     Project,
+    ProjectRemoval,
     Registry,
     add_project,
-    remove_project,
 )
-from atc.ui import Ui, shown
+from atc.ui import Ui, need_terminal, shown
 from atc.worktree import list_worktrees
 
 LABEL_WIDTH = 13
@@ -201,16 +204,37 @@ def rm(name: str) -> None:
     """
     Remove a project from the machine registry.
 
-    Deletes the entry of the project NAME from machine.yaml, and the comment
-    lines directly above it at its indentation, with no blank line between. The
-    rest of the file stays as it was, other comments and blank lines included.
-    Nothing else is touched: not the repository, not its worktrees and not
-    projects/NAME.json in the config sources. An unknown NAME is an error that
-    lists the projects there are.
+    Deletes the entry of the project NAME from machine.yaml, its vars included,
+    and the comment lines directly above it at its indentation, with no blank
+    line between. The rest of the file stays as it was, other comments and blank
+    lines included. Nothing else is touched: not the repository, not its
+    worktrees and not its unit in the config sources. An unknown NAME is an
+    error that lists the projects there are.
+
+    It says what goes and what stays, and asks first, no being the answer that
+    enter alone gives. Needs a terminal, to ask. Ctrl-C cancels: nothing is
+    changed, and the status is 130. If machine.yaml changes while it waits for
+    the answer, nothing is written.
     """
     ui = Ui.default()
-    registry = load_machine_registry(ui)
-    updated = remove_project(registry.path, Path.home(), name)
+    path = current_dirs().config_dir / REGISTRY_FILE
+    removal = ProjectRemoval.plan(path, Path.home(), name)
+    for warning in removal.registry.warnings:
+        ui.warning(warning)
+    need_terminal("atc prj rm")
+    project = removal.project
+    variables = f", with its vars {', '.join(project.vars)}" if project.vars else ""
+    ui.info(f"this removes project '{name}' ({project.repo}) from {path}{variables}")
+    ui.info(
+        f"the repository, its worktrees and its unit {project.unit} stay as they are"
+    )
+    answer = ui.confirm(f"Remove project {name}?", default=False)
+    if answer is None:
+        cancelled(ui)
+    if not answer:
+        ui.info("nothing changed")
+        return
+    updated = removal.write()
     ui.line(f"{name}: removed from {updated.path}")
 
 

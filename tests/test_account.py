@@ -1,8 +1,6 @@
 """``atc account``: list, add and remove the accounts of the registry."""
 
 import sys
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -12,9 +10,9 @@ from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
 from atc.jsonval import JsonObject
 from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
-from atc.ui import PickChoice, Ui
+from atc.ui import Ui
 from tests.conftest import ConfigWriter
-from tests.helpers import skill_files, unit
+from tests.helpers import answering, skill_files, unit
 
 FILES = {
     "conf/accounts/personal.json": unit(),
@@ -43,70 +41,6 @@ TAIL = """
 @pytest.fixture(autouse=True)
 def wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COLUMNS", "400")
-
-
-@dataclass
-class Answers:
-    """What the questions answer, and what they were asked, in order."""
-
-    confirm: bool | None = True
-    confirms: dict[str, bool | None] = field(default_factory=dict[str, bool | None])
-    """Answers to the yes or no questions that start with each key, else ``confirm``."""
-    choose: str | None = None
-    path: str | None = "~/.config/new"
-    pick: list[str] | None = None
-    asked: list[str] = field(default_factory=list[str])
-    meanwhile: Callable[[], None] | None = None
-    """What happens while a yes or no question is asked."""
-    check: Callable[[str], str | None] | None = None
-    """What the path question checked its answers with."""
-    directories: bool = False
-    """Whether the path question completed only directories."""
-
-
-def answering(monkeypatch: pytest.MonkeyPatch) -> Answers:
-    """
-    Make stdin and stdout terminals, and answer the questions from the result.
-
-    Call it in the test itself: pytest swaps the streams in for the test's call.
-    """
-    given = Answers()
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-
-    def confirm(_self: Ui, question: str, *, default: bool = False) -> bool | None:
-        given.asked.append(f"{question} default={default}")
-        if given.meanwhile is not None:
-            given.meanwhile()
-        found = (a for start, a in given.confirms.items() if question.startswith(start))
-        return next(found, given.confirm)
-
-    def choose(_self: Ui, question: str, choices: Sequence[str]) -> str | None:
-        given.asked.append(f"{question} {list(choices)}")
-        return given.choose
-
-    def ask_path(
-        _self: Ui,
-        question: str,
-        *,
-        default: str = "",
-        check: Callable[[str], str | None] | None = None,
-        directories: bool = False,
-    ) -> str | None:
-        given.asked.append(f"{question} default={default}")
-        given.directories = directories
-        given.check = check
-        return given.path
-
-    def pick(_self: Ui, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
-        given.asked.append(f"{title} {[(c.value, c.checked) for c in choices]}")
-        return given.pick
-
-    monkeypatch.setattr(Ui, "confirm", confirm)
-    monkeypatch.setattr(Ui, "choose", choose)
-    monkeypatch.setattr(Ui, "ask_path", ask_path)
-    monkeypatch.setattr(Ui, "pick", pick)
-    return given
 
 
 def registry_text(*projects: str) -> str:

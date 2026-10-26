@@ -3,12 +3,13 @@
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from rich import box
 from rich.table import Table
 
-from atc import git
+from atc import exitcodes, git
 from atc.context import BuildContext, load_context
 from atc.launch import find_project
 from atc.paths import Dirs, dirs_from_env
@@ -78,6 +79,12 @@ def chosen_accounts(ctx: BuildContext, names: tuple[str, ...]) -> list[Account]:
     if not names:
         return list(ctx.registry.accounts.values())
     return [ctx.registry.account(name) for name in dict.fromkeys(names)]
+
+
+def cancelled(ui: Ui) -> NoReturn:
+    """Say that a question was cancelled and nothing changed, and exit with 130."""
+    ui.info("cancelled; nothing changed")
+    raise click.exceptions.Exit(exitcodes.INTERRUPTED)
 
 
 def load_machine_registry(ui: Ui) -> Registry:

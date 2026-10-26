@@ -342,24 +342,62 @@ def add_account(
     return _write_checked(path, home, edited)
 
 
-def remove_project(path: Path, home: Path, name: str) -> Registry:
+@dataclass(frozen=True, slots=True)
+class ProjectRemoval:
     """
-    Remove the project ``name`` from the registry file ``path``.
+    The removal of the project ``name`` from the registry file ``path``.
 
-    The file is edited and replaced as :func:`set_skills` does. Returns the
-    registry as it now reads.
-
-    Raises:
-        RegistryError: the file cannot be read, or is not a valid registry,
-            before or after the edit, or has no such project. The file is as it
-            was.
-        WriteError: the file cannot be written.
-
+    It is planned on ``text``, the file as it was read, which reads as
+    ``registry``. The project's entry goes, comments inside it included, with
+    the comment lines directly above it at its indentation.
     """
-    text = _read_text(path)
-    _ = parse_registry(text, path, home).project(name)
-    edited = delete_in_text(text, ["projects", name])
-    return _write_checked(path, home, edited)
+
+    path: Path
+    home: Path
+    text: str
+    registry: Registry
+    name: str
+
+    @classmethod
+    def plan(cls, path: Path, home: Path, name: str) -> Self:
+        """
+        Read the registry file ``path``, to remove the project ``name`` from it.
+
+        ``home`` is what a leading ``~`` in a path stands for.
+
+        Raises:
+            RegistryError: the file is missing, cannot be read or is not a valid
+                registry, or has no such project.
+
+        """
+        if not path.exists():
+            raise RegistryError(_not_found(path))
+        text = _read_text(path)
+        registry = parse_registry(text, path, home)
+        _ = registry.project(name)
+        return cls(path, home, text, registry, name)
+
+    @property
+    def project(self) -> Project:
+        """The project to remove, as the file read when it was planned."""
+        return self.registry.projects[self.name]
+
+    def write(self) -> Registry:
+        """
+        Remove the project, and replace the file as :func:`set_skills` does.
+
+        Returns the registry as it now reads.
+
+        Raises:
+            RegistryError: the file no longer holds the text the removal was
+                planned on, or cannot be read, or would not be a valid registry
+                without the project. It is left as it is.
+            WriteError: the file cannot be written.
+
+        """
+        _refuse_changed(self.path, self.text)
+        edited = delete_in_text(self.text, ["projects", self.name])
+        return _write_checked(self.path, self.home, edited)
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,7 +465,7 @@ class AccountRemoval:
 
     It is planned on ``text``, the file as it was read, which reads as
     ``registry``; ``uses`` is where that names the account. The account's entry
-    goes as :func:`remove_project` removes a project's. A project whose
+    goes as :class:`ProjectRemoval` removes a project's. A project whose
     ``account`` it is loses that key, and so falls back to the default account,
     and every project's ``accounts`` lose it, each item edited out in place.
     """
@@ -528,10 +566,21 @@ class AccountRemoval:
             WriteError: the file cannot be written.
 
         """
-        if _read_text(self.path) != self.text:
-            message = f"{self.path}: changed since it was read; nothing was removed"
-            raise RegistryError(message)
+        _refuse_changed(self.path, self.text)
         return _write_checked(self.path, self.home, edited)
+
+
+def _refuse_changed(path: Path, text: str) -> None:
+    """
+    Refuse to go on when the registry file ``path`` no longer holds ``text``.
+
+    Raises:
+        RegistryError: it holds something else, or cannot be read.
+
+    """
+    if _read_text(path) != text:
+        message = f"{path}: changed since it was read; nothing was removed"
+        raise RegistryError(message)
 
 
 def _read_text(path: Path) -> str:

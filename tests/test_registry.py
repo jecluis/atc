@@ -9,13 +9,13 @@ import pytest
 from atc.errors import PathError, RegistryError
 from atc.registry import (
     REGISTRY_FILE,
+    ProjectRemoval,
     account_unit,
     add_project,
     choose_account,
     load_registry,
     normalize_path,
     parse_registry,
-    remove_project,
     set_skills,
 )
 from atc.sources import discover
@@ -1017,12 +1017,12 @@ def test_add_project_creates_the_projects_mapping(
     )
 
 
-def test_remove_project_removes_only_the_entry(
+def test_project_removal_removes_only_the_entry(
     write_registry: RegistryWriter, home: Path
 ) -> None:
     path = write_registry(PROJECT_FILE)
 
-    registry = remove_project(path, home, "bar")
+    registry = ProjectRemoval.plan(path, home, "bar").write()
 
     assert list(registry.projects) == ["other"]
     assert load_registry(path, home) == registry
@@ -1031,15 +1031,36 @@ def test_remove_project_removes_only_the_entry(
     )
 
 
-def test_remove_project_refuses_an_unknown_name_and_leaves_the_file(
+def test_project_removal_refuses_an_unknown_name_and_leaves_the_file(
     write_registry: RegistryWriter, home: Path
 ) -> None:
     path = write_registry(PROJECT_FILE)
 
     with pytest.raises(RegistryError, match=r"no project named 'ghost'; .*bar, other"):
-        _ = remove_project(path, home, "ghost")
+        _ = ProjectRemoval.plan(path, home, "ghost")
 
     assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_FILE)
+
+
+def test_project_removal_refuses_a_file_that_changed_since_the_plan(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_FILE)
+    removal = ProjectRemoval.plan(path, home, "bar")
+    changed = path.read_text(encoding="utf-8") + "# edited\n"
+    _ = path.write_text(changed, encoding="utf-8")
+
+    with pytest.raises(RegistryError, match="changed since it was read"):
+        _ = removal.write()
+
+    assert path.read_text(encoding="utf-8") == changed
+
+
+def test_project_removal_of_a_missing_file_says_how_to_make_one(
+    tmp_path: Path, home: Path
+) -> None:
+    with pytest.raises(RegistryError, match="not found; atc account add creates it"):
+        _ = ProjectRemoval.plan(tmp_path / "machine.yaml", home, "bar")
 
 
 def test_an_agent_can_name_its_binary(
