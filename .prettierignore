@@ -1,0 +1,11 @@
+# Prettier also skips what .gitignore lists. It is run on markdown only, by
+# scripts/normalize-markdown.sh. These keep it off files other tools own, for
+# editors that run it on save, and off the directories markdownlint-cli2's
+# config ignores too.
+*.py
+*.toml
+*.json
+.markdownlint-cli2.jsonc
+.claude/
+_local/
+_tmp/

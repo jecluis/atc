@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[1]
-SCRIPTS = [ROOT / "check-and-fix.sh", *sorted((ROOT / "examples").rglob("*.sh"))]
+SCRIPTS = [
+    ROOT / "check-and-fix.sh",
+    *sorted((ROOT / "scripts").glob("*.sh")),
+    *sorted((ROOT / "examples").rglob("*.sh")),
+]
 """atc's own scripts, and its examples'."""
 
 SHFMT = ("shfmt", "-i", "2", "-ci", "-bn")

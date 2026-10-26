@@ -1,0 +1,73 @@
+// Deliberately no "fix" key: markdownlint-cli2's actual default (confirmed
+// empirically) is check-only when "fix" is absent from config AND no --fix
+// CLI flag is passed. Setting "fix": false here explicitly would instead
+// override and disable the --fix CLI flag too — markdownlint-cli2 lets a
+// config value win over --fix, so an explicit false would silently make
+// `scripts/normalize-markdown.sh --markdownlint --fix` a no-op. Leaving the
+// key out keeps both behaviors: safe by default, fixable when asked.
+//
+// Deliberately no "globs" key either: it would be appended to (not replaced
+// by) any CLI file arguments, so pointing this config at specific files
+// would still additionally scan the globs — dropping it keeps invocations
+// scoped to exactly what's passed on the CLI.
+{
+  "config": {
+    "default": true,
+    "MD013": {
+      "stern": true,
+      "tables": false,
+      // Headings can't be wrapped without shortening them (a content edit),
+      // and single-line shell/URL content in code fences must stay copy-
+      // pasteable — neither is a formatting violation.
+      "headings": false,
+      "code_blocks": false
+    },
+    // The docs quote permission-rule suffixes such as ` *` and ` pull`, whose
+    // leading space is the point: `Bash(git *)` and `Bash(git*)` differ.
+    "MD038": false,
+    // The pinned prettier always normalizes single emphasis markers to
+    // "_underscore_" with no config knob to change that; matching it here
+    // avoids every fix cycle flip-flopping the two tools' output.
+    "MD049": {
+      "style": "underscore"
+    },
+    "MD050": {
+      "style": "asterisk"
+    },
+    // The README repeats subsection headings (e.g. "Skills") under different
+    // parent sections; only flag duplicates within the same parent.
+    "MD024": {
+      "siblings_only": true
+    }
+  },
+  // Prettier skips what .gitignore lists; markdownlint-cli2's "gitignore"
+  // option would walk the whole tree, .venv included, before pruning it. The
+  // ignored directories are listed instead, with those .prettierignore adds.
+  "gitignore": false,
+  "ignores": [
+    "**/.git",
+    "**/.venv",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/node_modules",
+    // Tool-managed, not hand-authored docs; .prettierignore skips it too.
+    "**/.claude",
+    "**/_local",
+    "**/_tmp"
+  ],
+  // The numbered docs (concept, design, plan) quote code verbatim as their
+  // content: signatures, error strings, commands, often as a whole bullet
+  // line. prettier can't wrap inside a code span, and splitting one would
+  // corrupt the token. The README and CLAUDE.md are read continuously and keep
+  // the strict wrap.
+  "overrides": [
+    {
+      "filter": ["docs/[0-9][0-9][0-9]-*.md"],
+      "config": {
+        "MD013": false
+      },
+      "combine": "merge"
+    }
+  ]
+}
