@@ -14,7 +14,7 @@ from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
 from atc.worktree import Worktree, list_worktrees
 from tests.conftest import ConfigWriter
-from tests.helpers import answering, git_repo, make_source, unit
+from tests.helpers import Answers, answering, git_repo, make_source, unit
 
 PERSONAL = "conf/accounts/personal.json"
 WORK = "conf/accounts/work.json"
@@ -92,18 +92,43 @@ def rows_of(out: str, first: str) -> list[list[str]]:
     return body
 
 
+REPOSITORY = "The project's repository:"
+BRANCH = "The branch new branches start from:"
+WORKTREES = "The directory the project's worktrees are made in (empty for none):"
+ACCOUNTS = "The accounts allowed to work on the project (none for every account):"
+
+
+def asking(monkeypatch: pytest.MonkeyPatch, repo: Path | None = None) -> Answers:
+    """
+    Answer the questions of `prj add`, in a terminal.
+
+    The answers are `repo` for the repository, then `main`, no worktrees
+    directory and no accounts.
+    """
+    given = answering(monkeypatch)
+    given.text = "main"
+    given.path = ""
+    given.pick = []
+    if repo is not None:
+        given.paths = {REPOSITORY: str(repo)}
+    return given
+
+
 def test_add_writes_the_project_and_keeps_comments(
     configure: ConfigWriter,
     dirs: Dirs,
     home: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     other = make_repo(tmp_path / "other")
     configure(FILES, registry_text(project("other", other)))
     before = registry_file(dirs).read_text(encoding="utf-8")
     worktrees = tmp_path / "wt" / "bar"
+
+    given = asking(monkeypatch)
 
     status = main(
         [
@@ -123,38 +148,152 @@ def test_add_writes_the_project_and_keeps_comments(
     assert registry_file(dirs).read_text(encoding="utf-8") == before.replace(
         "\n# the end\n", f"{entry}\n# the end\n"
     )
+    assert given.asked == []
     added = load_registry(registry_file(dirs), home).projects["bar"]
     assert (added.repo, added.worktrees) == (repo, worktrees)
     assert (added.branch_from, added.account) == ("main", "work")
     assert added.accounts == ("work", "personal")
 
 
-def test_add_writes_one_account_as_a_list(
-    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+def test_add_asks_for_the_branch_and_worktrees_and_writes_no_branch_for_main(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text())
+    given = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(repo), "-a", "work"])
 
     assert status == OK
+    assert given.asked == [f"{BRANCH} ['main'] default=main", f"{WORKTREES} default="]
+    assert given.directories
     text = registry_file(dirs).read_text(encoding="utf-8")
-    assert "    account: work\n    accounts: [work]\n" in text
+    assert (
+        f"  bar:\n    repo: {repo}\n    account: work\n    accounts: [work]\n" in text
+    )
     added = load_registry(registry_file(dirs), home).projects["bar"]
     assert (added.account, added.accounts) == ("work", ("work",))
+    assert (added.branch_from, added.worktrees) == ("main", None)
 
 
-def test_add_without_accounts_allows_every_account(
-    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+def test_add_with_no_account_ticked_allows_every_account(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text())
+    given = asking(monkeypatch)
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == OK
+    assert given.asked[-1] == f"{ACCOUNTS} [('personal', False), ('work', False)]"
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == (None, None)
+
+
+def test_add_with_several_accounts_ticked_asks_for_the_default(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    given = asking(monkeypatch)
+    given.pick = ["personal", "work"]
+    given.choose = "work"
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == OK
+    expected = "The account the project uses by default: ['personal', 'work']"
+    assert given.asked[-1] == expected
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == ("work", ("work", "personal"))
+
+
+def test_add_makes_the_worktrees_answer_absolute(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    given = asking(monkeypatch)
+    given.paths = {WORKTREES: "~/wt/"}
+    _ = (home / "file").write_text("x", encoding="utf-8")
 
     status = main(["prj", "add", "bar", str(repo)])
 
     assert status == OK
     added = load_registry(registry_file(dirs), home).projects["bar"]
-    assert (added.account, added.accounts) == (None, None)
+    assert added.worktrees == home / "wt"
+    check = given.checks[WORKTREES]
+    assert check("") is None
+    assert check(str(home / "nowhere")) is None
+    assert check("~/file") == f"{home / 'file'} is not a directory"
+
+
+def test_add_without_a_terminal_is_a_usage_error(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == USAGE
+    assert "atc prj add needs a terminal" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_add_cancelled_at_a_question_writes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    given = asking(monkeypatch)
+    given.pick = None
+
+    assert main(["prj", "add", "bar", str(repo)]) == INTERRUPTED
+
+    assert "cancelled; nothing changed" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_add_refuses_an_invalid_name_before_asking(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(FILES, registry_text())
+    given = asking(monkeypatch)
+
+    assert main(["prj", "add", "Bar", str(make_repo(tmp_path / "bar"))]) == CONFIG
+
+    assert "'Bar' is not a valid project name" in capsys.readouterr().err
+    assert given.asked == []
 
 
 def test_add_refuses_an_account_given_twice_before_reading_anything(
@@ -183,16 +322,20 @@ def test_add_refuses_an_unknown_second_account_and_leaves_the_file(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text())
     before = registry_file(dirs).read_text(encoding="utf-8")
 
+    given = asking(monkeypatch)
+
     status = main(["prj", "add", "bar", str(repo), "-a", "work", "-a", "ghost"])
 
     assert status == CONFIG
     err = capsys.readouterr().err
-    assert "/projects/bar/accounts: no account named 'ghost'" in err
+    assert "no account named 'ghost'; the accounts are personal, work" in err
+    assert given.asked == []
     assert registry_file(dirs).read_text(encoding="utf-8") == before
 
 
@@ -201,11 +344,14 @@ def test_add_refuses_an_existing_name(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     second = make_repo(tmp_path / "second")
     configure(FILES, registry_text(project("bar", repo)))
     before = registry_file(dirs).read_text(encoding="utf-8")
+
+    given = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(second)])
 
@@ -214,6 +360,7 @@ def test_add_refuses_an_existing_name(
         capsys.readouterr().err
     )
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
 def test_add_refuses_an_unknown_account_and_leaves_the_file(
@@ -221,17 +368,21 @@ def test_add_refuses_an_unknown_account_and_leaves_the_file(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text())
     before = registry_file(dirs).read_text(encoding="utf-8")
 
+    given = asking(monkeypatch)
+
     status = main(["prj", "add", "bar", str(repo), "-a", "ghost"])
 
     assert status == CONFIG
     err = capsys.readouterr().err
-    assert "/projects/bar/account: no account named 'ghost'" in err
+    assert "no account named 'ghost'; the accounts are personal, work" in err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
 def test_add_refuses_a_missing_branch(
@@ -239,33 +390,41 @@ def test_add_refuses_a_missing_branch(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text())
     before = registry_file(dirs).read_text(encoding="utf-8")
+
+    given = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(repo), "--from", "nope"])
 
     assert status == CONFIG
     assert "no branch named 'nope'" in capsys.readouterr().err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
-def test_add_checks_the_default_base_branch_too(
+def test_add_asks_for_a_branch_when_main_is_missing(
     configure: ConfigWriter,
     dirs: Dirs,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     _ = run_git(["branch", "-m", "main", "trunk"], cwd=repo)
     configure(FILES, registry_text())
+    given = asking(monkeypatch)
+    given.text = "trunk"
 
-    status = main(["prj", "add", "bar", str(repo)])
+    assert main(["prj", "add", "bar", str(repo)]) == OK
 
-    assert status == CONFIG
-    assert "no branch named 'main'" in capsys.readouterr().err
-    assert main(["prj", "add", "bar", str(repo), "--from", "trunk"]) == OK
+    assert given.asked[0] == f"{BRANCH} ['trunk'] default="
+    check = given.checks[BRANCH]
+    assert check("") == "a branch is needed"
+    assert check("main") == "no branch named 'main'"
+    assert check(" trunk ") is None
     assert "branch-from: trunk" in registry_file(dirs).read_text(encoding="utf-8")
 
 
@@ -274,19 +433,23 @@ def test_add_refuses_a_directory_that_is_not_a_repository(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plain = make_source(tmp_path / "plain", {"a": "b"})
     configure(FILES, registry_text())
     before = registry_file(dirs).read_text(encoding="utf-8")
+
+    given = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(plain)])
 
     assert status == CONFIG
     assert f"{plain}: not a git repository" in capsys.readouterr().err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
-def test_add_defaults_repo_to_the_current_repository(
+def test_add_asks_for_the_repository_from_the_current_directory(
     configure: ConfigWriter,
     dirs: Dirs,
     home: Path,
@@ -297,26 +460,65 @@ def test_add_defaults_repo_to_the_current_repository(
     (repo / "src").mkdir()
     configure(FILES, registry_text())
     monkeypatch.chdir(repo / "src")
+    given = asking(monkeypatch, repo / "src")
 
     status = main(["prj", "add", "bar"])
 
     assert status == OK
+    assert given.asked[0] == f"{REPOSITORY} default={repo / 'src'}"
     assert load_registry(registry_file(dirs), home).projects["bar"].repo == repo
 
 
-def test_add_without_a_repo_outside_a_repository_is_refused(
+def test_add_outside_a_repository_asks_for_one_with_no_default(
     configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    repo = make_repo(tmp_path / "bar")
+    other = make_repo(tmp_path / "other")
+    plain = make_source(tmp_path / "plain", {"a": "b"})
+    configure(FILES, registry_text(project("other", other)))
+    monkeypatch.chdir(plain)
+    given = asking(monkeypatch, repo)
+
+    assert main(["prj", "add", "bar"]) == OK
+
+    assert given.asked[0] == f"{REPOSITORY} default="
+    check = given.checks[REPOSITORY]
+    assert check("") == "a repository is needed"
+    assert check(str(plain)) == f"{plain}: not a git repository"
+    assert check(str(other)) == f"{other}: already registered as project 'other'"
+    assert check(str(repo)) is None
+    assert load_registry(registry_file(dirs), home).projects["bar"].repo == repo
+
+
+def test_add_checks_the_given_branch_in_the_repository_it_asks_for(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    _ = run_git(["branch", "trunk"], cwd=repo)
+    plain = make_source(tmp_path / "plain", {"a": "b"})
     configure(FILES, registry_text())
-    monkeypatch.chdir(make_source(tmp_path / "plain", {"a": "b"}))
+    monkeypatch.chdir(plain)
+    given = asking(monkeypatch, repo)
 
-    status = main(["prj", "add", "bar"])
+    assert main(["prj", "add", "bar", "--from", "trunk"]) == OK
 
-    assert status == CONFIG
-    assert "is not in a git repository; name the REPO" in capsys.readouterr().err
+    lacking = make_repo(tmp_path / "lacking")
+    check = given.checks[REPOSITORY]
+    assert check(str(lacking)) == (
+        f"{lacking}: no branch named 'trunk'; name the one new branches start "
+        "from with --from"
+    )
+    assert not [q for q in given.asked if q.startswith(BRANCH)]
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert added.branch_from == "trunk"
 
 
 def test_add_warns_without_a_project_unit(
@@ -325,9 +527,12 @@ def test_add_warns_without_a_project_unit(
     home: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure({PERSONAL: unit(), WORK: unit()}, registry_text())
+
+    _ = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(repo)])
 
@@ -336,6 +541,153 @@ def test_add_warns_without_a_project_unit(
         capsys.readouterr().err
     )
     assert "bar" in load_registry(registry_file(dirs), home).projects
+
+
+THREE = """\
+    version: 1
+    default-account: work
+    accounts:
+      personal: {agent: claude, dir: ~/.claude}
+      spare: {agent: claude, dir: ~/.config/spare}
+      work: {agent: claude, dir: ~/.config/work}
+"""
+
+
+@pytest.mark.parametrize(
+    ("picked", "offered", "chosen", "accounts"),
+    [
+        (["personal", "work"], ["work", "personal"], "work", ("work", "personal")),
+        (["personal", "spare"], ["personal", "spare"], "spare", ("spare", "personal")),
+        (
+            ["personal", "spare", "work"],
+            ["work", "personal", "spare"],
+            "spare",
+            ("spare", "personal", "work"),
+        ),
+    ],
+    ids=["default-ticked", "default-not-ticked", "others-in-file-order"],
+)
+def test_add_offers_the_default_account_first_and_writes_it_first(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    picked: list[str],
+    offered: list[str],
+    chosen: str,
+    accounts: tuple[str, ...],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    spare = {"conf/accounts/spare.json": unit()}
+    configure({**FILES, **spare}, THREE)
+    given = asking(monkeypatch)
+    given.pick = picked
+    given.choose = chosen
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == OK
+    assert given.asked[-1] == f"The account the project uses by default: {offered}"
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == (chosen, accounts)
+
+
+def test_add_with_one_account_ticked_writes_it_as_the_default_and_a_list(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    given = asking(monkeypatch)
+    given.pick = ["work"]
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == OK
+    assert given.asked[-1].startswith(ACCOUNTS)
+    text = registry_file(dirs).read_text(encoding="utf-8")
+    assert "    account: work\n    accounts: [work]\n" in text
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == ("work", ("work",))
+
+
+def test_add_asks_for_the_repository_among_directories_only(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    monkeypatch.chdir(tmp_path)
+    given = asking(monkeypatch, repo)
+
+    args = ["--from", "main", "--worktrees", str(tmp_path), "-a", "work"]
+    assert main(["prj", "add", "bar", *args]) == OK
+
+    assert given.asked == [f"{REPOSITORY} default="]
+    assert given.directories
+
+
+def test_add_warns_of_a_missing_unit_before_any_question(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure({PERSONAL: unit(), WORK: unit()}, registry_text())
+    monkeypatch.chdir(tmp_path)
+    given = asking(monkeypatch)
+    given.paths = {REPOSITORY: None}
+
+    assert main(["prj", "add", "bar"]) == INTERRUPTED
+
+    assert given.asked == [f"{REPOSITORY} default="]
+    err = capsys.readouterr().err
+    assert "warning: no config source has projects/bar.json" in err
+    assert "cancelled; nothing changed" in err
+
+
+def test_add_refuses_a_repository_without_a_branch_yet(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    empty = tmp_path / "empty"
+    _ = run_git(["init", "-q", "-b", "main", str(empty)])
+    configure(FILES, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    given = asking(monkeypatch)
+
+    assert main(["prj", "add", "bar", str(empty)]) == CONFIG
+
+    assert "has no branch yet, for new branches to start from" in (
+        capsys.readouterr().err
+    )
+    assert given.asked == []
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_add_refuses_config_sources_that_do_not_load_before_asking(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(FILES, registry_text())
+    _ = (dirs.conf_d / "conf").rename(dirs.conf_d / "elsewhere")
+    given = asking(monkeypatch)
+
+    assert main(["prj", "add", "bar", str(make_repo(tmp_path / "bar"))]) == CONFIG
+
+    assert "no config sources found" in capsys.readouterr().err
+    assert given.asked == []
 
 
 def test_rm_removes_only_the_entry(
@@ -639,6 +991,7 @@ def test_add_refuses_a_repository_that_is_registered_already(
     dirs: Dirs,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     wt = tmp_path / "wt" / "feature"
@@ -646,11 +999,14 @@ def test_add_refuses_a_repository_that_is_registered_already(
     configure(FILES, registry_text(project("bar", repo)))
     before = registry_file(dirs).read_text(encoding="utf-8")
 
+    given = asking(monkeypatch)
+
     status = main(["prj", "add", "again", str(wt)])
 
     assert status == CONFIG
     assert f"{repo}: already registered as project 'bar'" in capsys.readouterr().err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
 @pytest.mark.parametrize("base", ["main~1", "main^", "main@{0}", "HEAD"])
@@ -660,25 +1016,35 @@ def test_add_refuses_a_base_that_is_not_a_branch(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     base: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     _ = run_git(["commit", "-q", "--allow-empty", "-m", "second"], cwd=repo)
     configure(FILES, registry_text())
     before = registry_file(dirs).read_text(encoding="utf-8")
 
+    given = asking(monkeypatch)
+
     status = main(["prj", "add", "bar", str(repo), "--from", base])
 
     assert status == CONFIG
     assert f"no branch named '{base}'" in capsys.readouterr().err
     assert registry_file(dirs).read_text(encoding="utf-8") == before
+    assert given.asked == []
 
 
 def test_add_stores_the_top_level_of_an_explicit_repo(
-    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     (repo / "src").mkdir()
     configure(FILES, registry_text())
+
+    _ = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(repo / "src")])
 
@@ -687,11 +1053,17 @@ def test_add_stores_the_top_level_of_an_explicit_repo(
 
 
 def test_add_keeps_a_bare_repository_as_it_is(
-    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bare = tmp_path / "bar.git"
     _ = run_git(["clone", "-q", "--bare", str(make_repo(tmp_path / "src")), str(bare)])
     configure(FILES, registry_text())
+
+    _ = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(bare)])
 
@@ -714,6 +1086,8 @@ def test_add_from_a_linked_worktree_stores_the_main_worktree(
     configure(FILES, registry_text())
     monkeypatch.chdir(wt)
 
+    _ = asking(monkeypatch, wt)
+
     status = main(["prj", "add", "bar", *([str(wt)] if given else [])])
 
     assert status == OK
@@ -732,6 +1106,8 @@ def test_add_inside_a_bare_repository_without_a_repo_stores_it(
     configure(FILES, registry_text())
     monkeypatch.chdir(bare / "refs")
 
+    _ = asking(monkeypatch, bare / "refs")
+
     status = main(["prj", "add", "bar"])
 
     assert status == OK
@@ -739,7 +1115,11 @@ def test_add_inside_a_bare_repository_without_a_repo_stores_it(
 
 
 def test_add_keeps_the_top_level_when_the_git_directory_is_elsewhere(
-    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # As a submodule's checkout is: its git directory is not next to it, so the
     # one above the git directory is no checkout of it.
@@ -751,6 +1131,8 @@ def test_add_keeps_the_top_level_when_the_git_directory_is_elsewhere(
     )
     _ = run_git(["commit", "-q", "--allow-empty", "-m", "init"], cwd=checkout)
     configure(FILES, registry_text())
+
+    _ = asking(monkeypatch)
 
     status = main(["prj", "add", "bar", str(checkout)])
 

@@ -417,6 +417,43 @@ def test_ask_path_gives_the_answer_and_checks_it_with_check(
     assert validate("y") == "start with ~"
 
 
+def test_ask_text_completes_from_the_choices_and_checks_with_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[tuple[str, list[str], str, Callable[[str], bool | str]]] = []
+
+    def autocomplete(
+        question: str,
+        choices: list[str],
+        default: str,
+        validate: Callable[[str], bool | str],
+    ) -> FakeQuestion:
+        asked.append((question, choices, default, validate))
+        return FakeQuestion("dev")
+
+    monkeypatch.setattr(questionary, "autocomplete", autocomplete)
+
+    def check(text: str) -> str | None:
+        return None if text in {"main", "dev"} else "no such branch"
+
+    ui = Ui.default()
+    answer = ui.ask_text("Branch?", ["main", "dev"], default="main", check=check)
+    assert answer == "dev"
+    ((question, choices, default, validate),) = asked
+    assert (question, choices, default) == ("Branch?", ["main", "dev"], "main")
+    assert validate("dev") is True
+    assert validate("x") == "no such branch"
+
+
+@pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
+def test_ask_text_gives_none_when_it_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer
+) -> None:
+    monkeypatch.setattr(questionary, "autocomplete", answering(answer))
+
+    assert Ui.default().ask_text("Branch?", ["main"]) is None
+
+
 @pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
 def test_ask_path_gives_none_when_it_is_cancelled(
     monkeypatch: pytest.MonkeyPatch, answer: Answer

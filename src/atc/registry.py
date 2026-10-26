@@ -1006,6 +1006,11 @@ def variable_name_problem(name: str) -> str | None:
     )
 
 
+def project_name_problem(name: str) -> str | None:
+    """Say what is wrong with ``name`` as a project's name; ``None`` if nothing is."""
+    return None if _NAME.fullmatch(name) else _invalid_name("project", name)
+
+
 def account_name_problem(name: str) -> str | None:
     """Say what is wrong with ``name`` as an account's name; ``None`` if nothing is."""
     if not _NAME.fullmatch(name):

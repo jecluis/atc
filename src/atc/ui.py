@@ -202,6 +202,33 @@ class Ui:
         answer = _answer(prompt)
         return answer if isinstance(answer, str) else None
 
+    def ask_text(
+        self,
+        question: str,
+        choices: Sequence[str],
+        *,
+        default: str = "",
+        check: Callable[[str], str | None] | None = None,
+    ) -> str | None:
+        """
+        Ask ``question``, to be answered with text that ``choices`` complete.
+
+        ``default`` and ``check`` are as :meth:`ask_path` takes them; an answer
+        need not be one of ``choices`` unless ``check`` says so. ``None`` means
+        the user cancelled with Ctrl-C. Check for a terminal first, with
+        :func:`need_terminal`.
+        """
+
+        def validate(text: str) -> bool | str:
+            fault = None if check is None else check(text)
+            return True if fault is None else fault
+
+        prompt = questionary.autocomplete(
+            question, choices=list(choices), default=default, validate=validate
+        )
+        answer = _answer(prompt)
+        return answer if isinstance(answer, str) else None
+
     def choose(self, question: str, choices: Sequence[str]) -> str | None:
         """
         Let the user choose one of ``choices``, and return it.

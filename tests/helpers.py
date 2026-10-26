@@ -257,7 +257,14 @@ class Answers:
     meanwhile: Callable[[], None] | None = None
     """What happens while a yes or no question is asked."""
     check: Callable[[str], str | None] | None = None
-    """What the path question checked its answers with."""
+    """What the last path question checked its answers with."""
+    checks: dict[str, Callable[[str], str | None]] = field(
+        default_factory=dict[str, Callable[[str], str | None]]
+    )
+    """What each path or text question checked its answers with, by question."""
+    text: str | None = None
+    texts: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    """Answers to the text questions that start with each key, else ``text``."""
     directories: bool = False
     """Whether the path question completed only directories."""
 
@@ -294,8 +301,24 @@ def answering(monkeypatch: pytest.MonkeyPatch) -> Answers:
         given.asked.append(f"{question} default={default}")
         given.directories = directories
         given.check = check
+        if check is not None:
+            given.checks[question] = check
         found = (a for start, a in given.paths.items() if question.startswith(start))
         return next(found, given.path)
+
+    def ask_text(
+        _self: Ui,
+        question: str,
+        choices: Sequence[str],
+        *,
+        default: str = "",
+        check: Callable[[str], str | None] | None = None,
+    ) -> str | None:
+        given.asked.append(f"{question} {list(choices)} default={default}")
+        if check is not None:
+            given.checks[question] = check
+        found = (a for start, a in given.texts.items() if question.startswith(start))
+        return next(found, given.text)
 
     def pick(_self: Ui, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
         given.asked.append(f"{title} {[(c.value, c.checked) for c in choices]}")
@@ -304,6 +327,7 @@ def answering(monkeypatch: pytest.MonkeyPatch) -> Answers:
     monkeypatch.setattr(Ui, "confirm", confirm)
     monkeypatch.setattr(Ui, "choose", choose)
     monkeypatch.setattr(Ui, "ask_path", ask_path)
+    monkeypatch.setattr(Ui, "ask_text", ask_text)
     monkeypatch.setattr(Ui, "pick", pick)
     return given
 

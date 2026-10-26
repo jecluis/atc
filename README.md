@@ -1020,24 +1020,48 @@ current directory is in, whether in the main checkout or in a worktree, as for
 
 ### `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]...`
 
-Adds the project `NAME` to the machine registry. `REPO` is a checkout of the
-project's repository, the main one, a worktree or a bare repository, and
-defaults to the current directory. What is written as `repo` is the repository's
+Adds the project `NAME` to the machine registry, asking for what the arguments
+leave out. `REPO` is a checkout of the project's repository, the main one, a
+worktree or a bare repository. What is written as `repo` is the repository's
 main worktree, whichever of its worktrees `REPO` is in, or the repository itself
 when it is bare, so that `atc wt rm` of a worktree never leaves the project
 without its repository. When the git directory is kept apart from the checkout,
-as a submodule's is, it is the top level of `REPO`. Before anything is written
-it checks that `REPO` is a git repository that no project has yet, and that the
-branch `BRANCH` exists in it, as `refs/heads/BRANCH`, so `main~1` or a tag is
-refused. `BRANCH` is `--from`, or `main` when that is not given. A failed check
-is an error that exits `1`.
+as a submodule's is, it is the top level of `REPO`. It needs a terminal, since
+it may have questions to ask; without one it is a usage error, exit status `2`.
+
+Before anything is asked, it checks what was given: that `NAME` is a valid
+project name that is not registered yet, that `REPO` is a git repository that no
+project has yet, that each `ACCOUNT` exists, that the branch `--from` names
+exists in `REPO`, as `refs/heads/BRANCH`, so `main~1` or a tag is refused, and
+that the config sources load. A failed check is an error that exits `1`. If no
+config source has `projects/NAME.json`, a warning says so then too: the project
+has no settings of its own until one exists, and it can still be added.
+
+Then it asks, in this order, for each that was not given:
+
+1. **The repository**, with path completion. The default is the current
+   directory, when that is in a git repository no project has yet. An answer is
+   needed, and it is checked as `REPO` is, including for the `--from` branch,
+   and asked again when it fails.
+2. **The branch new branches start from**, completing from the repository's
+   branches. The default is `main` when it exists. The answer must be a branch,
+   and when it is `main`, `branch-from` is not written, since `main` is the
+   default. A repository with no commit yet has no branch to start from, which
+   is an error that exits `1`.
+3. **The worktrees directory**, with path completion. It need not exist, and an
+   empty answer means none, so `worktrees` is not written.
+4. **The accounts allowed to work on the project**, as a checklist with nothing
+   ticked. Nothing ticked means every account may work on it, and neither
+   `account` nor `accounts` is written. When more than one is ticked, a second
+   question picks the one it uses by default; the registry's default account is
+   offered first when it is ticked.
+
+Ctrl-C at any question changes nothing, with exit status `130`.
 
 The entry goes after the others in `machine.yaml`, as `repo`, then `worktrees`,
-`branch-from`, `account` and `accounts` for the options that were given. Paths
-are written as absolute paths. The rest of the file stays as it was, comments
-included. The new file is checked as the registry always is, and when it is not
-valid, because `NAME` is not a valid name, `NAME` is registered already or an
-`ACCOUNT` is not an account, the file is left alone and the error exits `1`.
+`branch-from`, `account` and `accounts`. Paths are written as absolute paths.
+The rest of the file stays as it was, comments included, and the new file is
+checked as the registry always is before it replaces the old one.
 
 `-a` can be given more than once. Every `ACCOUNT` goes into `accounts`, in the
 order given, and the first is also written as `account`. So
@@ -1049,12 +1073,9 @@ accounts: [work, personal]
 ```
 
 `accounts` is written as a list even for a single `-a`, so more accounts can be
-added to it by hand. An `ACCOUNT` given twice is a usage error, exit status `2`,
-before anything else is checked. Without `-a`, neither key is written: every
-account may work on the project, and it uses the registry's default account.
-
-If no config source has `projects/NAME.json`, a warning says so: the project
-then has no settings of its own until one exists. It is still added.
+added to it by hand. Ticked accounts are written the same way, the default
+first. An `ACCOUNT` given twice is a usage error, exit status `2`, before
+anything else is checked.
 
 | Option                    | Effect                                                                                  |
 | ------------------------- | --------------------------------------------------------------------------------------- |

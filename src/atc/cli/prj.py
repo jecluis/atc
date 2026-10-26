@@ -1,5 +1,6 @@
 """``atc prj``: see and change the projects of the machine registry."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -15,11 +16,11 @@ from atc.cli.options import (
     current_project,
     load_machine_registry,
     load_sources,
-    registered_project,
     worktrees_table,
 )
-from atc.errors import ConfigError, GitError
+from atc.errors import ConfigError, GitError, RegistryError
 from atc.jsonval import JsonObject, JsonValue
+from atc.launch import find_project
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
@@ -28,8 +29,9 @@ from atc.registry import (
     ProjectRemoval,
     Registry,
     add_project,
+    project_name_problem,
 )
-from atc.ui import Ui, need_terminal, shown
+from atc.ui import PickChoice, Ui, need_terminal, shown
 from atc.worktree import list_worktrees
 
 LABEL_WIDTH = 13
@@ -121,7 +123,7 @@ def show(name: str | None) -> None:
     metavar="BRANCH",
     help=(
         "The branch new branches start from, which must exist in REPO. Without "
-        f"it, {DEFAULT_BRANCH_FROM} applies, and must exist."
+        "it, a question asks for one."
     ),
 )
 @click.option(
@@ -133,8 +135,7 @@ def show(name: str | None) -> None:
     help=(
         "An account allowed to work on the project, which must exist; give it "
         "once for each. The first is the one the project uses by default. "
-        "Without it, every account is allowed, and the registry's default "
-        "account applies."
+        "Without it, a question asks which accounts are allowed."
     ),
 )
 def add(
@@ -145,18 +146,27 @@ def add(
     account_names: tuple[str, ...],
 ) -> None:
     """
-    Add a project to the machine registry.
+    Add a project to the machine registry, asking for what is not given.
 
     NAME is the project's name, the one its settings go by: projects/NAME.json
     in a config source. REPO is a checkout of its repository, whether the main
-    one, a worktree or a bare repository, and defaults to the current directory.
-    What is registered is the repository's main worktree, whichever of its
-    worktrees REPO is, or for a bare repository the repository itself, so that
-    removing a worktree never leaves the project without its repository. When
-    the git directory is kept apart from the checkout, as a submodule's is, the
-    top level of REPO is registered instead. REPO must be a git repository that
-    no project has yet, and the branch that new branches start from must exist
-    in it.
+    one, a worktree or a bare repository. What is registered is the
+    repository's main worktree, whichever of its worktrees REPO is, or for a
+    bare repository the repository itself, so that removing a worktree never
+    leaves the project without its repository. When the git directory is kept
+    apart from the checkout, as a submodule's is, the top level of REPO is
+    registered instead. REPO must be a git repository that no project has yet,
+    and the branch that new branches start from must exist in it.
+
+    What the arguments leave out is asked for, in this order: the repository,
+    the branch new branches start from, the worktrees directory and the
+    accounts. The repository is needed, and the current directory is the
+    default when it is in a git repository. The branch completes from the
+    repository's branches, with main as the default, which is then not
+    written. An empty worktrees directory means none. Ticking no account
+    allows every account; when more than one is ticked, a second question picks
+    the one the project uses by default. Needs a terminal, to ask. Ctrl-C
+    cancels: nothing is changed, and the status is 130.
 
     Each ACCOUNT is written to the project's accounts, the list of those
     allowed to work on it, and the first as its account, the one it uses by
@@ -167,24 +177,52 @@ def add(
     Nothing is written if the result would not be a valid registry, for example
     because NAME is registered already or an ACCOUNT does not exist.
 
-    If no config source has projects/NAME.json, a warning says that the project
-    has no settings of its own until one does.
+    The name, the repository, the accounts and the branch given are checked
+    before anything is asked. If no config source has projects/NAME.json, a
+    warning says, before anything is asked too, that the project has no
+    settings of its own until one does.
     """
     repeated = sorted({a for a in account_names if account_names.count(a) > 1})
     if repeated:
         message = f"given more than once: {', '.join(repeated)}"
         raise click.BadParameter(message, param_hint="'-a' / '--account'")
+    need_terminal("atc prj add")
     ui = Ui.default()
     registry = load_machine_registry(ui)
-    checkout = _checkout(repo)
-    existing = registered_project(registry, checkout, ui)
-    if existing is not None:
-        raise ConfigError(
-            f"{checkout}: already registered as project '{existing.name}'"
+    problem = project_name_problem(name)
+    if problem is not None:
+        raise RegistryError(f"{registry.path}: /projects/{name}: {problem}")
+    if name in registry.projects:
+        message = (
+            f"{registry.path}: /projects/{name}: a project of that name exists already"
         )
-    _check_branch(checkout, DEFAULT_BRANCH_FROM if branch_from is None else branch_from)
+        raise RegistryError(message)
+    for account_name in account_names:
+        _ = registry.account(account_name)
+    checkout = None if repo is None else _registrable(registry, repo, ui.warning)
+    if checkout is not None and branch_from is not None:
+        _check_branch(checkout, branch_from)
+    sources = load_sources(None)
+    for warning in sources.warnings:
+        ui.warning(warning)
+    if resolve_registry(sources, f"projects/{name}.json") is None:
+        message = (
+            f"no config source has projects/{name}.json, so project '{name}' has "
+            "no project layer"
+        )
+        ui.warning(message)
+
+    if checkout is None:
+        checkout = _ask_repository(ui, registry, branch_from)
+    if branch_from is None:
+        branch_from = _ask_branch(ui, checkout)
+    if worktrees is None:
+        worktrees = _ask_worktrees(ui)
+    if not account_names:
+        account_names = _ask_accounts(ui, registry)
+
     fields: JsonObject = {"repo": str(checkout)}
-    if worktrees is not None:
+    if worktrees:
         fields["worktrees"] = str(Path(worktrees).expanduser().resolve())
     if branch_from is not None:
         fields["branch-from"] = branch_from
@@ -193,9 +231,6 @@ def add(
         fields["accounts"] = list[JsonValue](account_names)
     updated = add_project(registry.path, Path.home(), name, fields)
     ui.line(f"{name}: added to {updated.path}")
-    warning = _unit_warning(name)
-    if warning is not None:
-        ui.warning(warning)
 
 
 @prj.command(cls=rich_click.RichCommand, name="rm")
@@ -263,35 +298,27 @@ def _dash() -> Text:
     return shown("-", style="dim")
 
 
-def _checkout(repo: str | None) -> Path:
+def _checkout(repo: str) -> Path:
     """
     Find what to register: the main worktree of the repository of ``repo``.
 
-    That is the repository ``repo``, else the current directory, is in, from
-    whichever of its worktrees. Its main worktree is the directory that holds
-    its git directory, or for a bare repository the git directory itself. When
-    the git directory is kept apart from the checkout, as a submodule's is, the
-    directory above it is no checkout, and the top level of ``repo`` is taken.
+    That is the repository ``repo`` is in, from whichever of its worktrees. Its
+    main worktree is the directory that holds its git directory, or for a bare
+    repository the git directory itself. When the git directory is kept apart
+    from the checkout, as a submodule's is, the directory above it is no
+    checkout, and the top level of ``repo`` is taken.
 
     Raises:
         ConfigError: it is not a git repository.
         GitError: git cannot inspect it.
 
     """
-    if repo is None:
-        start = Path.cwd()
-        common = git.common_dir(start)
-        if common is None:
-            raise ConfigError(
-                "the current directory is not in a git repository; name the REPO"
-            )
-    else:
-        start = Path(repo).expanduser().resolve()
-        if not start.is_dir():
-            raise ConfigError(f"{start}: not a directory")
-        common = git.common_dir(start)
-        if common is None:
-            raise ConfigError(f"{start}: not a git repository")
+    start = Path(repo).expanduser().resolve()
+    if not start.is_dir():
+        raise ConfigError(f"{start}: not a directory")
+    common = git.common_dir(start)
+    if common is None:
+        raise ConfigError(f"{start}: not a git repository")
     bare = git.run_git(
         ["rev-parse", "--is-bare-repository"], cwd=common, env={"GIT_DIR": str(common)}
     )
@@ -300,6 +327,153 @@ def _checkout(repo: str | None) -> Path:
     if git.common_dir(common.parent) == common:
         return common.parent
     return Path(git.run_git(["rev-parse", "--show-toplevel"], cwd=start))
+
+
+def _registrable(registry: Registry, repo: str, warn: Callable[[str], None]) -> Path:
+    """
+    Find what to register for ``repo``, as :func:`_checkout` does.
+
+    ``warn`` takes what is suspect about the projects already registered.
+
+    Raises:
+        ConfigError: it is not a git repository, or a project has it already.
+        GitError: git cannot inspect it.
+
+    """
+    checkout = _checkout(repo)
+    existing = find_project(
+        registry, git.common_dir(checkout), git_common_dir=git.common_dir, warn=warn
+    )
+    if existing is not None:
+        raise ConfigError(
+            f"{checkout}: already registered as project '{existing.name}'"
+        )
+    return checkout
+
+
+def _repository_fault(registry: Registry, text: str, branch: str | None) -> str | None:
+    """
+    Say what is wrong with ``text`` as a new project's repository, if anything.
+
+    ``branch``, when given, is the branch new branches start from, which the
+    repository must have. It runs as the answer is typed, so it warns of
+    nothing.
+    """
+    if not text.strip():
+        return "a repository is needed"
+    try:
+        checkout = _registrable(registry, text.strip(), _quiet)
+        if branch is not None:
+            _check_branch(checkout, branch)
+    except ConfigError as exc:
+        return str(exc)
+    return None
+
+
+def _ask_repository(ui: Ui, registry: Registry, branch: str | None) -> Path:
+    """
+    Ask for the repository; the current directory is the default when it fits.
+
+    ``branch`` is as :func:`_repository_fault` takes it.
+    """
+
+    def fault(text: str) -> str | None:
+        return _repository_fault(registry, text, branch)
+
+    here = str(Path.cwd())
+    default = "" if fault(here) else here
+    answer = ui.ask_path(
+        "The project's repository:", default=default, check=fault, directories=True
+    )
+    if answer is None:
+        cancelled(ui)
+    return _registrable(registry, answer.strip(), ui.warning)
+
+
+def _quiet(_message: str) -> None:
+    """Take a warning and say nothing, where saying it would repeat it."""
+
+
+def _ask_branch(ui: Ui, checkout: Path) -> str | None:
+    """
+    Ask for the branch new branches start from; ``None`` for the default.
+
+    Raises:
+        ConfigError: the repository has no branch yet, to start from.
+
+    """
+    branches = _branches(checkout)
+    if not branches:
+        message = (
+            f"{checkout}: has no branch yet, for new branches to start from; "
+            "commit to it first"
+        )
+        raise ConfigError(message)
+
+    def fault(text: str) -> str | None:
+        branch = text.strip()
+        if not branch:
+            return "a branch is needed"
+        return None if branch in branches else f"no branch named '{branch}'"
+
+    default = DEFAULT_BRANCH_FROM if DEFAULT_BRANCH_FROM in branches else ""
+    answer = ui.ask_text(
+        "The branch new branches start from:", branches, default=default, check=fault
+    )
+    if answer is None:
+        cancelled(ui)
+    branch = answer.strip()
+    return None if branch == DEFAULT_BRANCH_FROM else branch
+
+
+def _ask_worktrees(ui: Ui) -> str:
+    """Ask for the worktrees directory; ``""`` for none."""
+    answer = ui.ask_path(
+        "The directory the project's worktrees are made in (empty for none):",
+        check=_worktrees_fault,
+        directories=True,
+    )
+    if answer is None:
+        cancelled(ui)
+    return answer.strip()
+
+
+def _worktrees_fault(text: str) -> str | None:
+    """Say what is wrong with ``text`` as a worktrees directory, if anything."""
+    path = Path(text.strip()).expanduser()
+    if text.strip() and path.exists() and not path.is_dir():
+        return f"{path} is not a directory"
+    return None
+
+
+def _ask_accounts(ui: Ui, registry: Registry) -> tuple[str, ...]:
+    """
+    Ask for the accounts allowed to work on the project, the default first.
+
+    None means every account. When several are ticked, a second question picks
+    the default, and the others follow in the order of the file.
+    """
+    choices = [PickChoice(name, name, False) for name in registry.accounts]
+    title = "The accounts allowed to work on the project (none for every account):"
+    picked = ui.pick(title, choices)
+    if picked is None:
+        cancelled(ui)
+    if len(picked) < 2:
+        return tuple(picked)
+    first = registry.default_account if registry.default_account in picked else None
+    ordered = [first] if first is not None else []
+    ordered += [name for name in picked if name != first]
+    default = ui.choose("The account the project uses by default:", ordered)
+    if default is None:
+        cancelled(ui)
+    return (default, *(name for name in picked if name != default))
+
+
+def _branches(checkout: Path) -> list[str]:
+    """Give the names of the branches of the repository of ``checkout``."""
+    heads = "refs/heads/"
+    listed = git.run_git(["for-each-ref", "--format=%(refname)", heads], cwd=checkout)
+    return [line.removeprefix(heads) for line in listed.splitlines() if line]
 
 
 def _check_branch(checkout: Path, branch: str) -> None:
@@ -321,15 +495,3 @@ def _check_branch(checkout: Path, branch: str) -> None:
             "start from with --from"
         )
         raise ConfigError(message)
-
-
-def _unit_warning(name: str) -> str | None:
-    """Say what is wrong with the project ``name`` having no unit, if it has none."""
-    reference = f"projects/{name}.json"
-    try:
-        found = resolve_registry(load_sources(None), reference)
-    except ConfigError as exc:
-        return f"cannot look for {reference} in the config sources: {exc}"
-    if found is not None:
-        return None
-    return f"no config source has {reference}, so project '{name}' has no project layer"

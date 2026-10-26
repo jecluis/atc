@@ -861,16 +861,22 @@ here and in `sync` and `run`.
 - `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]...`:
   adds a project to `machine.yaml`.
   - Each `-a ACCOUNT` goes into `accounts`, always written as a list, and the
-    first also into `account`. Without `-a`, every account is allowed.
-  - `REPO` defaults to the current directory. What is stored is the repository's
-    main worktree, found from `git rev-parse --git-common-dir`, whichever
-    worktree `REPO` is in: the common directory's parent, or the common
-    directory itself for a bare repository. Removing a linked worktree then
-    never leaves the project without its repository. When the common directory's
-    parent isn't a checkout of the repository, as for a submodule, the top level
-    of `REPO` is stored.
-  - The repository and branch are checked first.
-  - If no source contains `projects/<NAME>.json`, atc warns.
+    first also into `account`. Without `-a`, a checklist asks which accounts are
+    allowed; ticking none allows every account.
+  - Without `REPO`, a question asks for it, with the current directory as the
+    default. What is stored is the repository's main worktree, found from
+    `git rev-parse --git-common-dir`, whichever worktree `REPO` is in: the
+    common directory's parent, or the common directory itself for a bare
+    repository. Removing a linked worktree then never leaves the project without
+    its repository. When the common directory's parent isn't a checkout of the
+    repository, as for a submodule, the top level of `REPO` is stored.
+  - The name, the repository, the accounts and the branch given are checked
+    first, and the config sources must load.
+  - If no source contains `projects/<NAME>.json`, atc warns, before asking
+    anything.
+  - It asks for the repository, branch, worktrees directory and accounts that
+    the arguments leave out, so it needs a terminal (see
+    [004-project-and-variable-commands-design.md](004-project-and-variable-commands-design.md)).
 - `atc prj rm NAME`: removes the registry entry, once the user confirms it
   (yes/No, no by default). Nothing else is touched.
 

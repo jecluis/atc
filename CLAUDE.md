@@ -38,12 +38,13 @@ as a design constraint, not a lint setting.
   (`set_in_text`) reads the nodes ruamel built through the small protocols
   there, after `isinstance` has said what they are. `_answer` in `ui.py` takes
   the untyped answer of questionary's `unsafe_ask()` as `object`, and the `Ui`
-  method that asked (`pick`, `confirm`, `choose`, `ask_path`) narrows it on the
-  spot to what it returns, so nothing untyped leaves `Ui`; `unsafe_ask` and not
-  `ask`, because `ask` prints its cancel message on standard output. Do not add
-  another such boundary without a comparable justification. click passes typed
-  values to command functions, so the command line needs none; the one typed
-  view of click's `Any`-returning `main` is in `cli/__init__.py`.
+  method that asked (`pick`, `confirm`, `choose`, `ask_path`, `ask_text`)
+  narrows it on the spot to what it returns, so nothing untyped leaves `Ui`;
+  `unsafe_ask` and not `ask`, because `ask` prints its cancel message on
+  standard output. Do not add another such boundary without a comparable
+  justification. click passes typed values to command functions, so the command
+  line needs none; the one typed view of click's `Any`-returning `main` is in
+  `cli/__init__.py`.
 - Prefer `match` over a closed union to dispatch on JSON values, so the type
   checker can prove the dispatch is exhaustive.
 - A private class needs `@final` or per-attribute annotations to satisfy
