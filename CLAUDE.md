@@ -71,10 +71,12 @@ as a design constraint, not a lint setting.
 
 prettier formats the markdown files and markdownlint-cli2 lints them, always
 through `scripts/normalize-markdown.sh`, which pins both versions; never run
-either tool directly. After editing a markdown file, run
-`scripts/normalize-markdown.sh --fix <file>` and fix whatever markdownlint-cli2
-still reports. The tools come from the npm registry until they are cached; if
-the script cannot fetch them, report that rather than skipping it.
+either tool directly. A hook in `.claude/settings.json` runs
+`scripts/normalize-markdown.sh --fix <file>` whenever Claude Code edits or
+writes a markdown file, and hands back what markdownlint-cli2 still reports; fix
+that. A markdown file changed any other way, such as from a shell, needs the
+command run by hand. The tools come from the npm registry until they are cached;
+if the script cannot fetch them, report that rather than skipping it.
 
 ## Before committing
 
