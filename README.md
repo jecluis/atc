@@ -1699,8 +1699,11 @@ a repository `atc maint` could not maintain and a file `atc sync` could not
 write, `2` for a problem with the command line or for `atc check` outside a
 sandbox, `3` when `atc sync` left an account alone or, with `--check`, has
 something to write, or when a check of `atc check` fails, and `130` when the
-command is interrupted with Ctrl-C, after a short `aborted` on standard error
-(`cancelled; nothing changed` for `atc skills pick`).
+command is interrupted with Ctrl-C, after a short `aborted` on standard error.
+Ctrl-C at a question, which `atc skills pick`, `atc account add` and `rm`,
+`atc prj add` and `rm`, and `atc vars set` and `rm` ask, says
+`cancelled; nothing changed` instead, since nothing is written until the last
+answer.
 
 ## Development
 

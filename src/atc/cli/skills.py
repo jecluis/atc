@@ -14,7 +14,12 @@ from rich.table import Table
 
 from atc import exitcodes
 from atc.backends import backend_for
-from atc.cli.options import chosen_accounts, conf_d_option, load_build_context
+from atc.cli.options import (
+    cancelled,
+    chosen_accounts,
+    conf_d_option,
+    load_build_context,
+)
 from atc.cli.sync import link_status
 from atc.context import BuildContext
 from atc.errors import ConfigError, PathError
@@ -127,8 +132,7 @@ def pick(account: str, take_over: bool) -> None:
         f"Skills for {target.account.name}", skill_choices(target.catalog, ticked)
     )
     if answer is None:
-        target.ui.info("cancelled; nothing changed")
-        raise click.exceptions.Exit(exitcodes.INTERRUPTED)
+        cancelled(target.ui)
     wanted = {skill.path: skill for skill in target.resolve_all(answer)}
     entries: list[str] = []
     for ref in target.account.skills:
