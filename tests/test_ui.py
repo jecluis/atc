@@ -388,3 +388,39 @@ def test_need_terminal_needs_both_stdin_and_stdout(
         need_terminal("atc thing")
     with pytest.raises(click.UsageError, match=r"needs a terminal; do it later$"):
         need_terminal("atc thing", "do it later")
+
+
+def test_ask_path_gives_the_answer_and_checks_it_with_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[tuple[str, str, Callable[[str], bool | str], bool]] = []
+
+    def path(
+        question: str,
+        default: str,
+        validate: Callable[[str], bool | str],
+        only_directories: bool,
+    ) -> FakeQuestion:
+        asked.append((question, default, validate, only_directories))
+        return FakeQuestion("~/x")
+
+    monkeypatch.setattr(questionary, "path", path)
+
+    def check(text: str) -> str | None:
+        return None if text.startswith("~") else "start with ~"
+
+    ui = Ui.default()
+    assert ui.ask_path("Where?", default="~/d", check=check, directories=True) == "~/x"
+    ((question, default, validate, directories),) = asked
+    assert (question, default, directories) == ("Where?", "~/d", True)
+    assert validate("~/y") is True
+    assert validate("y") == "start with ~"
+
+
+@pytest.mark.parametrize("answer", [None, KeyboardInterrupt()])
+def test_ask_path_gives_none_when_it_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, answer: Answer
+) -> None:
+    monkeypatch.setattr(questionary, "path", answering(answer))
+
+    assert Ui.default().ask_path("Where?") is None

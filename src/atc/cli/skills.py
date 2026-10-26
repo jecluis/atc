@@ -1,7 +1,7 @@
 """``atc skills``: look at the skills the config sources offer, and choose them."""
 
 import stat
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,16 +122,9 @@ def pick(account: str, take_over: bool) -> None:
     target = _Target.open(account)
     if not target.catalog.skills:
         raise ConfigError("the config sources have no skills to pick from")
-    ordered = sorted(
-        target.catalog.skills, key=lambda found: (found.name, found.source.name)
-    )
     ticked = {found.path for found in target.named(target.account.skills)}
     answer = target.ui.pick(
-        f"Skills for {target.account.name}",
-        [
-            PickChoice(target.entry(skill), label, skill.path in ticked)
-            for skill, label in zip(ordered, _labels(ordered), strict=True)
-        ],
+        f"Skills for {target.account.name}", skill_choices(target.catalog, ticked)
     )
     if answer is None:
         target.ui.info("cancelled; nothing changed")
@@ -256,8 +249,7 @@ class _Target:
 
     def entry(self, skill: Skill) -> str:
         """Write ``skill`` as an entry: its name, with its source if ambiguous."""
-        homonyms = sum(1 for other in self.catalog.skills if other.name == skill.name)
-        return skill.reference if homonyms > 1 else skill.name
+        return _skill_entry(self.catalog, skill)
 
     def write(self, entries: Sequence[str], *, take_over: bool) -> None:
         """
@@ -296,6 +288,26 @@ class _Target:
             self.ui.line(f"{name}: skills unchanged")
         if plan.blocked:
             raise click.exceptions.Exit(exitcodes.CHECK)
+
+
+def _skill_entry(catalog: Catalog, skill: Skill) -> str:
+    """Write ``skill`` as a registry entry: its name, with its source if ambiguous."""
+    homonyms = sum(1 for other in catalog.skills if other.name == skill.name)
+    return skill.reference if homonyms > 1 else skill.name
+
+
+def skill_choices(catalog: Catalog, ticked: Collection[Path]) -> list[PickChoice]:
+    """
+    Make the picker's lines for the skills of ``catalog``, sorted by name.
+
+    Each gives back the skill's registry entry, and starts ticked when its path
+    is one of ``ticked``.
+    """
+    ordered = sorted(catalog.skills, key=lambda found: (found.name, found.source.name))
+    return [
+        PickChoice(_skill_entry(catalog, skill), label, skill.path in ticked)
+        for skill, label in zip(ordered, _labels(ordered), strict=True)
+    ]
 
 
 def _labels(ordered: Sequence[Skill]) -> list[str]:

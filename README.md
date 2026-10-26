@@ -8,10 +8,11 @@ configuration that lives in your own repositories, apart from the tool. Claude
 Code is the first agent it supports.
 
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
-`atc show account`, `atc show project`, `atc account ls`, `atc account rm`,
-`atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`, `atc wt new`,
-`atc wt ls`, `atc wt rm`, `atc skills ls`, `atc skills pick`, `atc skills add`,
-`atc skills rm`, `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
+`atc show account`, `atc show project`, `atc account ls`, `atc account add`,
+`atc account rm`, `atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`,
+`atc wt new`, `atc wt ls`, `atc wt rm`, `atc skills ls`, `atc skills pick`,
+`atc skills add`, `atc skills rm`, `atc src ls`, `atc src check`, `atc src pull`
+and `atc usage`.
 
 ## Install
 
@@ -116,13 +117,17 @@ umask left the copies group-writable, then run `atc src check`.
 ## The machine registry
 
 `machine.yaml`, in atc's configuration directory next to `conf.d/`, holds what
-is specific to this machine: which accounts exist and where each one lives. It
-belongs to no config source, so it never lands in a git repository by accident.
-It may be a symbolic link, into a dotfiles repository for example: the commands
-that edit it write the file the link leads to, and the link stays. That file
-must then be as far out of sessions' reach as atc's configuration directory,
-since a session that could edit the registry could change the agent's command or
-widen the sandbox; `atc check` verifies that a session cannot write it.
+is specific to this machine: which accounts exist and where each one lives.
+`atc account add` creates it along with the first account, asking for what
+belongs to this machine and working out the rest from the config sources, and
+`atc account` and `atc prj` add and remove accounts and projects from then on
+(see Usage). It belongs to no config source, so it never lands in a git
+repository by accident. It may be a symbolic link, into a dotfiles repository
+for example: the commands that edit it write the file the link leads to, and the
+link stays. That file must then be as far out of sessions' reach as atc's
+configuration directory, since a session that could edit the registry could
+change the agent's command or widen the sandbox; `atc check` verifies that a
+session cannot write it.
 
 ```yaml
 version: 1
@@ -871,6 +876,60 @@ it prints no table, and says so on standard error.
 
 `atc acc` is the same command as `atc account`, here and for every `atc account`
 command.
+
+### `atc account add NAME [-u UNIT] [--agent AGENT]`
+
+Adds the account `NAME` to the machine registry, asking for what belongs to this
+machine and working out the rest from the config sources. When there is no
+`machine.yaml` yet, it creates it, with `NAME` as the default account, which
+makes it the way to set up a machine.
+
+Before it asks anything, it checks that it has a terminal, without which it is a
+usage error, exit `2`. It checks that `NAME` is a valid account name that no
+account has yet, and that exactly one config source has the account's unit:
+`UNIT`, a unit reference (see Units), or `accounts/NAME.json`. When no source
+has it, the error lists the account units the sources do have, the files under
+their `conf/accounts/`. When several do, it asks for an `@name/` prefix. A
+failed check is an error that exits `1`.
+
+Then it asks, in this order:
+
+1. The account's directory, with path completion. It suggests `~/.claude` while
+   no account has it, and `~/.config/NAME/claude` after that. An answer is
+   checked as the registry checks a `dir`, and asked again when it fails: a
+   leading `~` is expanded, the path must then be absolute, and no other account
+   may have it. The directory need not exist yet.
+2. Whether to link the default instructions file as the account's (see
+   `atc sync`): the asset that `default-agents-md` names, `AGENTS.in.md` unless
+   the registry says otherwise. Yes is the default. It is asked only when a
+   source has that asset.
+3. Whether to pick skills now, no being the default, and if so which, from the
+   checklist of `atc skills pick`. It is asked only when the sources have
+   skills.
+
+The entry goes after the other accounts, as `agent` and `dir`, then `unit`,
+`use-default-agents-md` and `skills` where they are not the defaults. `dir` is
+written as typed, without a trailing `/`. The rest of the file stays as it was,
+comments included, and the new file is checked as the registry always is before
+it replaces the old one. A new `machine.yaml` holds `version: 1`,
+`default-account: NAME` and the account.
+
+Nothing else is done: the directory is not created, and nothing is synced. It
+says what comes next: `atc sync`, for every account, since each account's
+settings keep its sessions out of the other accounts' directories. When the
+directory does not exist yet, `atc sync` would stop on it, so it says to log in
+to the account first, which makes the agent create it.
+
+When `machine.yaml` is a symbolic link that leads nowhere yet, the file is
+created where it leads, and the directory it would go in must exist; that is
+checked before anything is asked.
+
+Ctrl-C at any question cancels: nothing is changed, and the status is `130`.
+
+| Option              | Effect                                                                            |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `-u`, `--unit UNIT` | The unit the account's settings are built from. Defaults to `accounts/NAME.json`. |
+| `--agent AGENT`     | The agent the account is for. Only `claude` exists, and it is the default.        |
 
 ### `atc account rm NAME [--force]`
 

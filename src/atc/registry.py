@@ -37,6 +37,8 @@ DEFAULT_BRANCH_FROM = "main"
 """The branch new branches start from when a project says nothing."""
 AUTO_ACCOUNT = "auto"
 """What ``-a`` takes to mean the least used account, so no account has this name."""
+AGENTS = ("claude",)
+"""The agents an account can be for, as the registry's models spell them."""
 
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _VARIABLE_NAME = re.compile(r"[a-z][a-z0-9_]*")
@@ -239,7 +241,7 @@ def load_registry(path: Path, home: Path) -> Registry:
 
 def _not_found(path: Path) -> str:
     """Say that there is no registry file at ``path``."""
-    return f"{path}: not found; create it, with a version and the accounts"
+    return f"{path}: not found; atc account add creates it with its first account"
 
 
 def parse_registry(text: str, origin: Path, home: Path) -> Registry:
@@ -297,6 +299,37 @@ def add_project(path: Path, home: Path, name: str, fields: JsonObject) -> Regist
         message = f"{path}: /projects/{name}: a project of that name exists already"
         raise RegistryError(message)
     edited = set_in_text(text, ["projects", name], fields)
+    return _write_checked(path, home, edited)
+
+
+def add_account(path: Path, home: Path, name: str, fields: JsonObject) -> Registry:
+    """
+    Add the account ``name``, set up by ``fields``, to the registry file ``path``.
+
+    ``fields`` are the keys of the account as the file spells them, such as
+    ``dir`` and ``use-default-agents-md``. When there is no file, it is
+    created, with the account as its default account. Otherwise the file is
+    edited and replaced as :func:`set_skills` does, and the new entry goes after
+    the others. Returns the registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or already has an account of that name.
+            The file is as it was.
+        WriteError: the file cannot be written.
+
+    """
+    if path.exists():
+        text = _read_text(path)
+        if name in parse_registry(text, path, home).accounts:
+            message = (
+                f"{path}: /accounts/{name}: an account of that name exists already"
+            )
+            raise RegistryError(message)
+    else:
+        text = set_in_text("", ["version"], REGISTRY_VERSION)
+        text = set_in_text(text, ["default-account"], name)
+    edited = set_in_text(text, ["accounts", name], fields)
     return _write_checked(path, home, edited)
 
 
@@ -624,14 +657,9 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
     warnings: list[str] = []
     owners: dict[Path, str] = {}
     for name, entry in model.accounts.items():
-        _check_name("account", name, f"/accounts/{name}", origin)
-        if name == AUTO_ACCOUNT:
-            message = (
-                f"{origin}: /accounts/{name}: '{name}' is reserved for -a {name}, "
-                "which picks the project's least used account; name the account "
-                "something else"
-            )
-            raise RegistryError(message)
+        problem = account_name_problem(name)
+        if problem is not None:
+            raise RegistryError(f"{origin}: /accounts/{name}: {problem}")
         try:
             directory = normalize_path(entry.dir, home)
         except RegistryError as exc:
@@ -787,15 +815,29 @@ def _check_allowed(
     raise RegistryError(message)
 
 
+def account_name_problem(name: str) -> str | None:
+    """Say what is wrong with ``name`` as an account's name; ``None`` if nothing is."""
+    if not _NAME.fullmatch(name):
+        return _invalid_name("account", name)
+    if name == AUTO_ACCOUNT:
+        return (
+            f"'{name}' is reserved for -a {name}, which picks the project's least "
+            "used account; name the account something else"
+        )
+    return None
+
+
 def _check_name(kind: str, name: str, pointer: str, origin: Path) -> None:
     """Refuse an account or project name that the name rule does not allow."""
     if not _NAME.fullmatch(name):
-        message = (
-            f"{origin}: {pointer}: '{name}' is not a valid {kind} name; names "
-            "are lowercase letters, digits, '_' and '-', and start with a "
-            "letter or a digit"
-        )
-        raise RegistryError(message)
+        raise RegistryError(f"{origin}: {pointer}: {_invalid_name(kind, name)}")
+
+
+def _invalid_name(kind: str, name: str) -> str:
+    return (
+        f"'{name}' is not a valid {kind} name; names are lowercase letters, "
+        "digits, '_' and '-', and start with a letter or a digit"
+    )
 
 
 def _check_account(

@@ -1,7 +1,7 @@
 """Terminal output: data on standard output, diagnostics on standard error."""
 
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Self, cast
 
@@ -172,6 +172,35 @@ class Ui:
         """
         answer = _answer(questionary.confirm(question, default=default))
         return answer if isinstance(answer, bool) else None
+
+    def ask_path(
+        self,
+        question: str,
+        *,
+        default: str = "",
+        check: Callable[[str], str | None] | None = None,
+        directories: bool = False,
+    ) -> str | None:
+        """
+        Ask ``question``, to be answered with a path, typed with completion.
+
+        ``default`` is what the answer starts as. ``check`` says what is wrong
+        with an answer, or ``None`` when nothing is, and an answer it finds
+        fault with is not taken: the fault is shown, to be corrected. With
+        ``directories``, only directories are offered to complete. ``None``
+        means the user cancelled with Ctrl-C. Check for a terminal first, with
+        :func:`need_terminal`.
+        """
+
+        def validate(text: str) -> bool | str:
+            fault = None if check is None else check(text)
+            return True if fault is None else fault
+
+        prompt = questionary.path(
+            question, default=default, validate=validate, only_directories=directories
+        )
+        answer = _answer(prompt)
+        return answer if isinstance(answer, str) else None
 
     def choose(self, question: str, choices: Sequence[str]) -> str | None:
         """
