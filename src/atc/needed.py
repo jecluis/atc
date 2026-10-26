@@ -147,9 +147,7 @@ def project_variables(ctx: BuildContext, project: Project) -> list[Variable]:
 
     """
     registry = ctx.registry
-    allowed = (
-        project.accounts if project.accounts is not None else tuple(registry.accounts)
-    )
+    allowed = registry.allowed_accounts(project)
     root = project_unit(ctx.sources, registry, project)
     references = [] if root is None else unit_references(ctx, [root])
     found: dict[Owner, dict[str, list[str]]] = {}

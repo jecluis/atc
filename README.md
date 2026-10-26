@@ -1190,10 +1190,12 @@ defined there is an error that lists the ones that are. One that a unit or a
 templated asset uses is refused with exit status `1`, naming what uses it,
 unless `--force` is given; then what uses it will find it undefined, which a
 line says. When what uses it cannot all be known, because the config sources do
-not load or the units of an account or project cannot be read, which warnings
-say, it is refused the same way, since it may be in use. A `vars` left empty
-goes with it, with the comment lines directly above it, as `atc prj rm` removes
-an entry, and the rest of the file stays as it was.
+not load or the units of an account or project that could use it cannot be read,
+which warnings say, it is refused the same way, since it may be in use. A
+project's variables could be used only by its own units, an account's by its own
+units and those of the projects that allow it, and a machine-wide one by any. A
+`vars` left empty goes with it, with the comment lines directly above it, as
+`atc prj rm` removes an entry, and the rest of the file stays as it was.
 
 Before anything is removed it asks `Remove NAME from OWNER? [y/N]`. No is the
 default, and it changes nothing, with exit status `0`. Ctrl-C changes nothing

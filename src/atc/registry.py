@@ -210,6 +210,12 @@ class Registry:
             return found
         raise RegistryError(f"{self.path}: {_no_account(name, self.accounts)}")
 
+    def allowed_accounts(self, project: Project) -> tuple[str, ...]:
+        """Give the accounts allowed on ``project``: its own, or every account."""
+        if project.accounts is not None:
+            return project.accounts
+        return tuple(self.accounts)
+
     def project(self, name: str) -> Project:
         """
         Find the project called ``name``.

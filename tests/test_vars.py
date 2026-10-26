@@ -683,3 +683,123 @@ def test_set_says_both_notes_when_some_units_cannot_be_read(
     assert "account 'work': the variables of its units are left out" in err
     assert SYNC_NOTE in err
     assert RUN_NOTE in err
+
+
+def test_rm_is_not_stopped_by_units_that_could_not_use_the_variable(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = """\
+        version: 1
+        default-account: personal
+        accounts:
+          personal: {agent: claude, dir: ~/.claude, vars: {x: '1'}}
+          broken: {agent: claude, dir: ~/.config/b, unit: accounts/gone.json}
+        projects:
+          other: {repo: /src/other, account: broken, accounts: [broken]}
+    """
+    configure({"conf/accounts/personal.json": unit()}, registry)
+    _ = answering(monkeypatch)
+
+    assert main(["vars", "rm", "x", "-a", "personal"]) == OK
+
+    assert "account 'broken': the variables of its units are left out" in (
+        capsys.readouterr().err
+    )
+    assert load_registry(registry_path(dirs), home).accounts["personal"].vars == {}
+
+
+def test_rm_is_stopped_by_a_project_allowing_the_account_whose_unit_is_unreadable(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = """\
+        version: 1
+        default-account: personal
+        accounts:
+          personal: {agent: claude, dir: ~/.claude, vars: {x: '1'}}
+        projects:
+          other: {repo: /src/other, unit: projects/gone.json}
+    """
+    configure({"conf/accounts/personal.json": unit()}, registry)
+    before = registry_path(dirs).read_text(encoding="utf-8")
+    _ = answering(monkeypatch)
+
+    assert main(["vars", "rm", "x", "-a", "personal"]) == CONFIG
+
+    assert "what uses account.vars.x for account personal cannot all be known" in (
+        capsys.readouterr().err
+    )
+    assert registry_path(dirs).read_text(encoding="utf-8") == before
+
+
+OTHER_ONLY_FOR_WORK = (
+    "other: {repo: /src/other, unit: projects/gone.json, account: work, "
+    "accounts: [work], "
+)
+"""A project whose unit is unread, which allows only the account `work`."""
+
+
+@pytest.mark.parametrize(
+    ("owner", "unread", "status"),
+    [
+        (["-p", "bar"], "bar: {repo: /src/bar, unit: projects/gone.json, ", CONFIG),
+        (["-p", "bar"], "other: {repo: /src/other, unit: projects/gone.json, ", OK),
+        (
+            ["-a", "personal"],
+            "personal: {agent: claude, dir: ~/.claude, unit: x, ",
+            CONFIG,
+        ),
+        (
+            ["-a", "personal"],
+            OTHER_ONLY_FOR_WORK,
+            OK,
+        ),
+    ],
+    ids=[
+        "project-own-unit",
+        "other-project",
+        "account-own-unit",
+        "project-not-allowing-it",
+    ],
+)
+def test_rm_refuses_only_when_a_unit_that_could_use_the_variable_is_unread(
+    configure: ConfigWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    owner: list[str],
+    unread: str,
+    status: int,
+) -> None:
+    entries = {
+        "personal": "personal: {agent: claude, dir: ~/.claude, ",
+        "bar": "bar: {repo: /src/bar, ",
+        "other": "other: {repo: /src/other, ",
+    }
+    name = unread.split(":")[0]
+    entries[name] = unread
+    registry = f"""\
+        version: 1
+        default-account: personal
+        accounts:
+          {entries["personal"]}vars: {{x: '1'}}}}
+          work: {{agent: claude, dir: ~/.config/work}}
+        projects:
+          {entries["bar"]}vars: {{x: '1'}}}}
+          {entries["other"]}vars: {{}}}}
+    """
+    configure(
+        {"conf/accounts/personal.json": unit(), "conf/accounts/work.json": unit()},
+        registry,
+    )
+    _ = answering(monkeypatch)
+
+    assert main(["vars", "rm", "x", *owner]) == status
+
+    err = capsys.readouterr().err
+    assert ("cannot all be known, as the units of" in err) == (status == CONFIG)

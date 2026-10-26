@@ -119,12 +119,7 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
             exposed = unprotected(ctx, account.name, layer.settings)
             warnings.update(dict.fromkeys(exposed))
     for project in ctx.registry.projects.values():
-        names = (
-            project.accounts
-            if project.accounts is not None
-            else tuple(ctx.registry.accounts)
-        )
-        for name in names:
+        for name in ctx.registry.allowed_accounts(project):
             try:
                 built = build_project_layer(
                     ctx, project, ctx.registry.accounts[name], lax=lax

@@ -122,6 +122,8 @@ class Inventory:
     warnings: tuple[str, ...]
     effects: Mapping[tuple[Owner, str], frozenset[Effect]]
     """Where a change to each used variable takes effect, by owner and name."""
+    unreadable: tuple[Owner, ...]
+    """The accounts and projects whose units could not be read."""
 
     def undefined(self) -> list[Variable]:
         """Give the variables that something uses and the registry does not define."""
@@ -165,6 +167,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     found: dict[Owner, dict[str, list[str]]] = {}
     effects: dict[tuple[Owner, str], frozenset[Effect]] = {}
     warnings: list[str] = []
+    unreadable: list[Owner] = []
 
     def record(
         user: str, reference: str, accounts: Sequence[str], project: str
@@ -184,20 +187,18 @@ def take_inventory(ctx: BuildContext) -> Inventory:
             references = unit_references(ctx, roots)
         except ConfigError as exc:
             warnings.append(_unreadable(f"account '{account.name}'", exc))
+            unreadable.append(Owner("account", account.name))
             references = []
         for user, reference in [*references, *templates]:
             record(user, reference, [account.name], "")
     for project in registry.projects.values():
-        allowed = (
-            project.accounts
-            if project.accounts is not None
-            else tuple(registry.accounts)
-        )
+        allowed = registry.allowed_accounts(project)
         try:
             root = project_unit(ctx.sources, registry, project)
             references = [] if root is None else unit_references(ctx, [root])
         except ConfigError as exc:
             warnings.append(_unreadable(f"project '{project.name}'", exc))
+            unreadable.append(Owner("project", project.name))
             references = []
         for user, reference in references:
             record(user, reference, allowed, project.name)
@@ -216,7 +217,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
             Variable(name, owner, defined.get(name), tuple(used.get(name, ())))
             for name in names
         )
-    return Inventory(tuple(variables), tuple(warnings), effects)
+    return Inventory(tuple(variables), tuple(warnings), effects, tuple(unreadable))
 
 
 def owners_of(

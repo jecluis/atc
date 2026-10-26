@@ -25,6 +25,7 @@ from atc.inventory import (
 )
 from atc.registry import (
     REGISTRY_FILE,
+    Registry,
     VariableRemoval,
     set_variables,
     variable_name_problem,
@@ -215,7 +216,8 @@ def rm(
     that lists the ones that are. One that a unit or a templated asset uses is
     refused unless --force is given, since it would then be undefined, and so
     is any variable when what uses it cannot all be known: when the config
-    sources do not load, or the units of an account or project cannot be read.
+    sources do not load, or the units of an account or project that could use
+    it cannot be read.
     A vars left empty goes with it, with the comment lines directly above it,
     and the rest of the file stays as it was.
 
@@ -232,17 +234,22 @@ def rm(
     reference = owner.reference(name)
     inventory = _inventory(ui)
     users = _users(inventory, owner, name)
-    unknown = inventory is None or bool(inventory.warnings)
+    unread = _unread_users(inventory, removal.registry, owner)
     if users and not force:
         message = (
             f"{path}: {reference} for {owner} is used by {users_text(users)}; "
             "give --force to remove it anyway"
         )
         raise RegistryError(message)
-    if unknown and not force:
+    if (unread is None or unread) and not force:
+        why = (
+            "the config sources do not load"
+            if unread is None
+            else f"the units of {', '.join(map(str, unread))} cannot be read"
+        )
         message = (
             f"{path}: what uses {reference} for {owner} cannot all be known, as "
-            "the warnings say; give --force to remove it anyway"
+            f"{why}; give --force to remove it anyway"
         )
         raise RegistryError(message)
     need_terminal("atc vars rm")
@@ -336,6 +343,33 @@ def _inventory(ui: Ui) -> Inventory | None:
     for warning in inventory.warnings:
         ui.warning(warning)
     return inventory
+
+
+def _unread_users(
+    inventory: Inventory | None, registry: Registry, owner: Owner
+) -> list[Owner] | None:
+    """
+    Give the owners whose units could use a variable of ``owner``, but were unread.
+
+    Any owner could use a machine-wide variable, only the project its own, and
+    an account's only the account and the projects that allow it. ``None``
+    means the inventory could not be taken, so that no unit was read.
+    """
+    if inventory is None:
+        return None
+    could: list[Owner] | None
+    match owner.level:
+        case "machine":
+            could = None
+        case "project":
+            could = [owner]
+        case "account":
+            could = [owner] + [
+                Owner("project", project.name)
+                for project in registry.projects.values()
+                if owner.name in registry.allowed_accounts(project)
+            ]
+    return [o for o in inventory.unreadable if could is None or o in could]
 
 
 def _effects(
