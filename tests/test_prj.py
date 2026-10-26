@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from atc.cli import main
+from atc.cli.values import SYNC_NOTE
 from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
 from atc.git import run_git
 from atc.paths import Dirs
@@ -743,10 +744,26 @@ def test_add_asks_for_the_variables_the_project_needs_and_writes_them_at_once(
     assert registry.vars == {"host": "h"}
     text = registry_file(dirs).read_text(encoding="utf-8")
     assert "default-account: personal\nvars:\n  host: h\n" in text
-    assert "account and machine-wide variables take effect once atc sync runs" in (
-        capsys.readouterr().err
-    )
+    # Only the project's unit uses them, which gets them at its first run.
+    assert "atc sync" not in capsys.readouterr().err
     assert main(["src", "check"]) == OK
+
+
+def test_add_says_atc_sync_is_needed_when_an_account_uses_a_variable_too(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    files = {**NEEDY, "conf/accounts/work.json": unit({"env": {"H": "{{vars.host}}"}})}
+    configure(files, registry_text())
+    given = asking(monkeypatch)
+    given.path = "v"
+
+    assert main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)]) == OK
+
+    assert SYNC_NOTE in capsys.readouterr().err
 
 
 def test_add_asks_only_for_the_accounts_the_project_allows(

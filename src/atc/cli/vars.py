@@ -1,6 +1,5 @@
 """``atc vars``: see and define the variables of the machine registry."""
 
-from collections.abc import Iterable
 from pathlib import Path
 
 import click
@@ -14,9 +13,16 @@ from atc.cli.options import (
     load_build_context,
     load_machine_registry,
 )
-from atc.cli.values import as_value, users_text, value_fault
+from atc.cli.values import as_value, say_when, users_text, value_fault
 from atc.errors import ConfigError, RegistryError
-from atc.inventory import MACHINE, Inventory, Owner, Variable, take_inventory
+from atc.inventory import (
+    MACHINE,
+    Effect,
+    Inventory,
+    Owner,
+    Variable,
+    take_inventory,
+)
 from atc.registry import (
     REGISTRY_FILE,
     VariableRemoval,
@@ -136,8 +142,9 @@ def set_(
     Asking needs a terminal. Ctrl-C cancels: nothing is changed, and the status
     is 130.
 
-    It ends by saying when the change takes effect: a project's variables at
-    its next atc run, the others once atc sync runs.
+    It ends by saying when the change reaches what uses the variable, by where
+    that is built: an account's units and the templated assets once atc sync
+    runs, and a project's units at the project's next atc run.
     """
     ui = Ui.default()
     owner = _owner(account_name, project_name)
@@ -167,8 +174,10 @@ def set_(
     updated = set_variables(registry.path, Path.home(), [(owner.keys, name, written)])
     was = "" if old is None else f", was {old}"
     ui.line(f"{reference}: set to {written} for {owner} in {updated.path}{was}")
-    _warn_if_unused(ui, owner, name)
-    _say_when(ui, [owner])
+    inventory = _inventory(ui)
+    if inventory is not None and not _users(inventory, owner, name):
+        ui.warning(f"nothing uses {reference} for {owner}; is the name right?")
+    say_when(ui, _effects(inventory, [(owner, name)]))
 
 
 @vars_.command(cls=rich_click.RichCommand, name="rm")
@@ -247,7 +256,7 @@ def rm(
         return
     updated = removal.write()
     ui.line(f"{reference}: removed from {owner} in {updated.path}")
-    _say_when(ui, [owner])
+    say_when(ui, _effects(inventory, [(owner, name)]))
 
 
 def _owner(account: str | None, project: str | None) -> Owner:
@@ -294,7 +303,7 @@ def _set_undefined(ui: Ui, only: Owner | None) -> None:
         what = "variable is" if left == 1 else "variables are"
         ui.info(f"{left} {what} still undefined")
     if answers:
-        _say_when(ui, [v.owner for v, _ in answers])
+        say_when(ui, inventory.effects_of((v.owner, v.name) for v, _ in answers))
     else:
         ui.info("nothing changed")
 
@@ -329,26 +338,16 @@ def _inventory(ui: Ui) -> Inventory | None:
     return inventory
 
 
+def _effects(
+    inventory: Inventory | None, changed: list[tuple[Owner, str]]
+) -> frozenset[Effect] | None:
+    """Give where changes to ``changed`` take effect, ``None`` if not all known."""
+    return None if inventory is None else inventory.effects_of(changed)
+
+
 def _users(inventory: Inventory | None, owner: Owner, name: str) -> tuple[str, ...]:
     """Give what uses the variable ``name`` of ``owner``, as far as is known."""
     if inventory is None:
         return ()
     found = (v for v in inventory.variables if v.owner == owner and v.name == name)
     return next((v.users for v in found), ())
-
-
-def _warn_if_unused(ui: Ui, owner: Owner, name: str) -> None:
-    """Warn when nothing uses the variable ``name`` of ``owner``, as if misspelt."""
-    inventory = _inventory(ui)
-    if inventory is not None and not _users(inventory, owner, name):
-        reference = owner.reference(name)
-        ui.warning(f"nothing uses {reference} for {owner}; is the name right?")
-
-
-def _say_when(ui: Ui, owners: Iterable[Owner]) -> None:
-    """Say when changes to the variables of ``owners`` take effect."""
-    levels = {owner.level for owner in owners}
-    if "project" in levels:
-        ui.info("a project's variables take effect at its next atc run")
-    if levels - {"project"}:
-        ui.info("account and machine-wide variables take effect once atc sync runs")

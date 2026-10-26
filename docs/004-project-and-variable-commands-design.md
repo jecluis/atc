@@ -167,9 +167,12 @@ says so, as `atc account ls` does.
 - A machine-wide `vars:` that does not exist yet goes before `accounts:`, not at
   the end of the file. An account's or project's `vars` goes at the end of its
   entry. `atc account add` places a new machine-wide `vars:` the same way.
-- It ends by saying when the change takes effect: a project's variables at its
-  next `atc run`, and the others once `atc sync` runs. It never syncs, as
-  `atc account add` does not.
+- It ends by saying when the change takes effect: once `atc sync` runs, for an
+  account's units and the templated assets that use the variable, and at the
+  next `atc run`, for a project's units that do, since that is where each is
+  built. It never syncs, as `atc account add` does not. (Amended while
+  implementing: the first draft tied the note to the variable's level, which is
+  wrong for an account's or the machine's variable that a project's unit uses.)
 
 ## 6. `atc vars rm NAME [-a ACCOUNT | -p PROJECT] [--force]`
 
@@ -239,8 +242,10 @@ says so, as `atc account ls` does.
 - The entry's keys come in this order: `repo`, `worktrees`, `branch-from`,
   `account`, `accounts`, `vars`.
 - Ctrl-C at any question writes nothing and exits `130`.
-- When it wrote variables for accounts or the machine, it ends by asking for
-  `atc sync`, as `atc account add` does.
+- When it wrote a variable for an account or the machine that an account's units
+  or a templated asset also use, it ends by saying that `atc sync` must run for
+  them to get it. The project's own unit gets every answer at its first
+  `atc run`. (Amended while implementing, as for `vars set`.)
 
 ## Constraints
 

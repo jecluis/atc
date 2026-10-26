@@ -1072,10 +1072,11 @@ Ctrl-C at any question changes nothing, with exit status `130`.
 The entry goes after the others in `machine.yaml`, as `repo`, then `worktrees`,
 `branch-from`, `account`, `accounts` and `vars`. Paths are written as absolute
 paths. The accounts' and machine-wide variables are written in the same edit, a
-new machine-wide `vars` before `accounts`, and it then says that they take
-effect once `atc sync` runs. The rest of the file stays as it was, comments
-included, and the new file is checked as the registry always is before it
-replaces the old one.
+new machine-wide `vars` before `accounts`. The project's unit gets them at its
+first `atc run`; when an account's units or a templated asset use one of them
+too, it says that `atc sync` must run for those to get it. The rest of the file
+stays as it was, comments included, and the new file is checked as the registry
+always is before it replaces the old one.
 
 `-a` can be given more than once. Every `ACCOUNT` goes into `accounts`, in the
 order given, and the first is also written as `account`. So
@@ -1176,8 +1177,11 @@ it undefined. What is answered is written at the end, in one edit. Asking needs
 a terminal, and without one it is a usage error, exit status `2`. Ctrl-C at any
 question changes nothing, with exit status `130`.
 
-It ends by saying when the change takes effect: a project's variables at its
-next `atc run`, the others once `atc sync` runs. It does not run `atc sync`.
+It ends by saying when the change reaches what uses the variable, by where that
+is built: an account's units and the templated assets once `atc sync` runs, and
+a project's units at the project's next `atc run`. When what uses it cannot all
+be known, because the config sources do not load or some units cannot be read,
+it says both, and when nothing uses it, neither. It does not run `atc sync`.
 
 ### `atc vars rm NAME [-a ACCOUNT | -p PROJECT] [--force]`
 

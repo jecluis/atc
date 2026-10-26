@@ -159,3 +159,40 @@ def test_an_owner_prints_as_its_level_and_name() -> None:
     assert MACHINE.reference("x") == "vars.x"
     assert PERSONAL.reference("x") == "account.vars.x"
     assert BAR.reference("x") == "project.vars.x"
+
+
+def test_effects_say_whether_atc_sync_or_atc_run_builds_what_uses_each(
+    build_context: ContextBuilder,
+) -> None:
+    files = {
+        **VARIABLE_FILES,
+        "conf/projects/baz.json": unit({"env": {"R": "{{vars.root}}"}}),
+    }
+    inventory = take_inventory(build_context(files, VARIABLE_REGISTRY))
+
+    effects = inventory.effects
+    assert effects[MACHINE, "root"] == {"sync", "run"}
+    assert effects[MACHINE, "host"] == {"run"}
+    assert effects[PERSONAL, "scratch"] == {"sync"}
+    assert effects[PERSONAL, "notes"] == {"sync"}
+    # An account's variable that a project's unit uses is built at atc run.
+    assert effects[PERSONAL, "cache"] == {"run"}
+    assert effects[BAR, "port"] == {"run"}
+    assert (MACHINE, "zeta") not in effects
+    assert inventory.effects_of([(PERSONAL, "scratch"), (BAR, "port")]) == {
+        "sync",
+        "run",
+    }
+    assert inventory.effects_of([(MACHINE, "zeta")]) == frozenset()
+
+
+def test_effects_are_unknown_when_some_units_cannot_be_read(
+    build_context: ContextBuilder,
+) -> None:
+    registry = VARIABLE_REGISTRY.replace(
+        "unit: accounts/work.json", "unit: accounts/gone.json"
+    )
+    inventory = take_inventory(build_context(VARIABLE_FILES, registry))
+
+    assert inventory.warnings
+    assert inventory.effects_of([(MACHINE, "host")]) is None

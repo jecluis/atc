@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from atc.cli import main
+from atc.cli.values import RUN_NOTE, SYNC_NOTE
 from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
 from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
@@ -169,9 +170,9 @@ def test_set_writes_a_machine_wide_variable_before_the_accounts(
     path = registry_path(dirs)
     assert captured.out == f"vars.host: set to example.org for machine in {path}\n"
     assert "warning: nothing uses" not in captured.err
-    assert "account and machine-wide variables take effect once atc sync runs" in (
-        captured.err
-    )
+    # Only a project's unit uses it, so the next run is what it takes.
+    assert RUN_NOTE in captured.err
+    assert SYNC_NOTE not in captured.err
     text = path.read_text(encoding="utf-8")
     assert "default-account: personal\nvars:\n  host: example.org\naccounts:\n" in (
         text
@@ -208,7 +209,7 @@ def test_set_for_a_project_says_it_takes_effect_at_the_next_run(
     assert main(["vars", "set", "port", "8080", "-p", "bar"]) == OK
 
     err = capsys.readouterr().err
-    assert "a project's variables take effect at its next atc run" in err
+    assert RUN_NOTE in err
     assert "atc sync" not in err
     assert load_registry(registry_path(dirs), home).projects["bar"].vars == {
         "port": "8080"
@@ -229,6 +230,8 @@ def test_set_warns_about_a_variable_nothing_uses_and_writes_it(
     assert "nothing uses account.vars.scrach for account work; is the name right?" in (
         err
     )
+    assert SYNC_NOTE not in err
+    assert RUN_NOTE not in err
     registry = load_registry(registry_path(dirs), home)
     assert registry.accounts["work"].vars == {"scrach": "x"}
 
@@ -339,6 +342,9 @@ def test_set_without_a_name_asks_for_each_undefined_one_and_skips_empty_answers(
         f"vars.host: set to h for machine in {path}\n"
         f"account.vars.notes: set to n for account work in {path}\n"
     )
+    # A project's unit uses the one, a templated asset the other.
+    assert RUN_NOTE in captured.err
+    assert SYNC_NOTE in captured.err
     assert "6 variables are still undefined" in captured.err
     registry = load_registry(registry_path(dirs), home)
     assert registry.vars["host"] == "h"
@@ -448,7 +454,8 @@ def test_rm_with_force_removes_a_variable_in_use_and_says_what_loses_it(
 
     err = capsys.readouterr().err
     assert "common/base.json will find account.vars.scratch undefined" in err
-    assert "take effect once atc sync runs" in err
+    assert SYNC_NOTE in err
+    assert RUN_NOTE not in err
     registry = load_registry(registry_path(dirs), home)
     assert registry.accounts["personal"].vars == {}
 
@@ -617,3 +624,62 @@ def test_rm_refuses_when_what_uses_it_cannot_all_be_known(
     assert main(["vars", "rm", "x", "--force"]) == OK
 
     assert load_registry(registry_path(dirs), home).vars == {}
+
+
+def test_set_of_a_variable_accounts_and_projects_use_names_both_notes(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = {
+        **VARIABLE_FILES,
+        "conf/projects/baz.json": unit({"env": {"R": "{{vars.root}}"}}),
+    }
+    configure(files, VARIABLE_REGISTRY)
+
+    assert main(["vars", "set", "root", "/new"]) == OK
+
+    err = capsys.readouterr().err
+    assert SYNC_NOTE in err
+    assert RUN_NOTE in err
+
+
+def test_set_says_both_notes_when_what_uses_it_is_unknown(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    _ = (dirs.conf_d / "conf").rename(dirs.conf_d / "elsewhere")
+    _ = (dirs.conf_d / "assets").rename(dirs.conf_d / "spare")
+
+    assert main(["vars", "set", "root", "/new"]) == OK
+
+    err = capsys.readouterr().err
+    assert "cannot tell what uses the variable" in err
+    assert SYNC_NOTE in err
+    assert RUN_NOTE in err
+
+
+def test_set_of_a_variable_only_an_accounts_unit_uses_names_atc_sync(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+
+    assert main(["vars", "set", "scratch", "/s", "-a", "work"]) == OK
+
+    err = capsys.readouterr().err
+    assert SYNC_NOTE in err
+    assert RUN_NOTE not in err
+
+
+def test_set_says_both_notes_when_some_units_cannot_be_read(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = VARIABLE_REGISTRY.replace(
+        "unit: accounts/work.json", "unit: accounts/gone.json"
+    )
+    configure(VARIABLE_FILES, registry)
+
+    assert main(["vars", "set", "host", "h"]) == OK
+
+    err = capsys.readouterr().err
+    assert "account 'work': the variables of its units are left out" in err
+    assert SYNC_NOTE in err
+    assert RUN_NOTE in err

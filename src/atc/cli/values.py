@@ -1,10 +1,23 @@
-"""Checking and writing the values typed for the registry's variables."""
+"""Checking and writing the values typed for variables, and when changes apply."""
 
 from collections.abc import Sequence
 from pathlib import Path
 
+from atc.inventory import Effect
+from atc.ui import Ui
+
 USERS_SHOWN = 3
 """How many of a variable's users are named before the rest are counted."""
+SYNC_NOTE = (
+    "account units and templated assets that use these variables get the change "
+    "once atc sync runs"
+)
+"""When a change reaches an account's units and the templated assets."""
+RUN_NOTE = (
+    "project units that use these variables get the change at their project's "
+    "next atc run"
+)
+"""When a change reaches a project's units."""
 
 
 def value_fault(text: str) -> str | None:
@@ -36,3 +49,17 @@ def users_text(users: Sequence[str]) -> str:
     if len(users) > USERS_SHOWN:
         text += f" and {len(users) - USERS_SHOWN} more"
     return text
+
+
+def say_when(ui: Ui, effects: frozenset[Effect] | None) -> None:
+    """
+    Say when a change to variables reaches what uses them.
+
+    ``effects`` are where it takes effect, or ``None`` when what uses them
+    cannot all be known, which says both. Nothing is said when nothing uses
+    them.
+    """
+    if effects is None or "sync" in effects:
+        ui.info(SYNC_NOTE)
+    if effects is None or "run" in effects:
+        ui.info(RUN_NOTE)

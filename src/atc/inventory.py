@@ -1,6 +1,6 @@
 """Every variable of the machine registry: those it defines and those units use."""
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, override
 
@@ -27,6 +27,14 @@ MACHINE_VARS = "vars."
 """How a reference to a machine-wide variable starts."""
 
 type Level = Literal["machine", "account", "project"]
+
+type Effect = Literal["sync", "run"]
+"""
+Where a change to a variable takes effect, by what uses it.
+
+``sync`` is for an account's units and the templated assets, which ``atc sync``
+builds, and ``run`` for a project's units, which each ``atc run`` builds.
+"""
 
 _PREFIXES: dict[Level, str] = {
     "machine": MACHINE_VARS,
@@ -112,10 +120,28 @@ class Inventory:
 
     variables: tuple[Variable, ...]
     warnings: tuple[str, ...]
+    effects: Mapping[tuple[Owner, str], frozenset[Effect]]
+    """Where a change to each used variable takes effect, by owner and name."""
 
     def undefined(self) -> list[Variable]:
         """Give the variables that something uses and the registry does not define."""
         return [v for v in self.variables if v.value is None]
+
+    def effects_of(
+        self, changed: Iterable[tuple[Owner, str]]
+    ) -> frozenset[Effect] | None:
+        """
+        Give where changes to the variables ``changed`` take effect, together.
+
+        ``None`` means that cannot all be known, since some units could not be
+        read, and what they use is missing here.
+        """
+        if self.warnings:
+            return None
+        found: set[Effect] = set()
+        for key in changed:
+            found |= self.effects.get(key, frozenset())
+        return frozenset(found)
 
 
 def take_inventory(ctx: BuildContext) -> Inventory:
@@ -131,19 +157,25 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     since those are the only ones the registry can define.
 
     An account or a project whose units cannot be read gets a warning, and what
-    else uses its variables is still listed.
+    else uses its variables is still listed. For each variable used, it also
+    records where a change to it takes effect: ``sync`` when an account's unit
+    or a templated asset uses it, and ``run`` when a project's unit does.
     """
     registry = ctx.registry
     found: dict[Owner, dict[str, list[str]]] = {}
+    effects: dict[tuple[Owner, str], frozenset[Effect]] = {}
     warnings: list[str] = []
 
     def record(
         user: str, reference: str, accounts: Sequence[str], project: str
     ) -> None:
+        effect: Effect = "run" if project else "sync"
         for owner, name in owners_of(reference, accounts, project):
             users = found.setdefault(owner, {}).setdefault(name, [])
             if user not in users:
                 users.append(user)
+            before = effects.get((owner, name), frozenset[Effect]())
+            effects[owner, name] = before | frozenset[Effect]((effect,))
 
     templates = list(template_references(ctx))
     for account in registry.accounts.values():
@@ -184,7 +216,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
             Variable(name, owner, defined.get(name), tuple(used.get(name, ())))
             for name in names
         )
-    return Inventory(tuple(variables), tuple(warnings))
+    return Inventory(tuple(variables), tuple(warnings), effects)
 
 
 def owners_of(

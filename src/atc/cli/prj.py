@@ -19,10 +19,10 @@ from atc.cli.options import (
     load_sources,
     worktrees_table,
 )
-from atc.cli.values import as_value, users_text, value_fault
+from atc.cli.values import SYNC_NOTE, as_value, users_text, value_fault
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import ConfigError, GitError, RegistryError
-from atc.inventory import Variable
+from atc.inventory import Variable, take_inventory
 from atc.jsonval import JsonObject, JsonValue
 from atc.launch import find_project
 from atc.needed import project_variables
@@ -36,7 +36,6 @@ from atc.registry import (
     add_project,
     project_name_problem,
 )
-from atc.sources import Sources
 from atc.ui import PickChoice, Ui, need_terminal, shown
 from atc.worktree import list_worktrees
 
@@ -235,19 +234,29 @@ def add(
         account_names = _ask_accounts(ui, registry)
     directory = Path(worktrees).expanduser().resolve() if worktrees else None
     project, fields = _new_entry(name, checkout, directory, branch_from, account_names)
-    answers = _ask_variables(ui, registry, sources, project)
+    held = replace(registry, projects={**registry.projects, project.name: project})
+    ctx = BuildContext(
+        registry=held,
+        sources=sources,
+        dirs=current_dirs(),
+        home=Path.home(),
+        install_dir=current_install_dir(),
+        python_dir=current_python_dir(),
+    )
+    answers = _ask_variables(ui, ctx, project)
     own = {v.name: value for v, value in answers if v.owner.level == "project"}
     if own:
         fields["vars"] = dict[str, JsonValue](own)
-    others = [
-        (v.owner.keys, v.name, value)
-        for v, value in answers
-        if v.owner.level != "project"
-    ]
-    updated = add_project(registry.path, Path.home(), name, fields, others)
+    others = [(v, value) for v, value in answers if v.owner.level != "project"]
+    values = [(v.owner.keys, v.name, value) for v, value in others]
+    updated = add_project(registry.path, Path.home(), name, fields, values)
     ui.line(f"{name}: added to {updated.path}")
+    # The project's unit gets every answer at its first atc run; an account's
+    # units or a templated asset that use one too need atc sync for it.
     if others:
-        ui.info("account and machine-wide variables take effect once atc sync runs")
+        effects = take_inventory(ctx).effects_of((v.owner, v.name) for v, _ in others)
+        if effects is None or "sync" in effects:
+            ui.info(SYNC_NOTE)
 
 
 @prj.command(cls=rich_click.RichCommand, name="rm")
@@ -523,25 +532,18 @@ def _new_entry(
 
 
 def _ask_variables(
-    ui: Ui, registry: Registry, sources: Sources, project: Project
+    ui: Ui, ctx: BuildContext, project: Project
 ) -> list[tuple[Variable, str]]:
     """
     Ask for each variable that the new ``project`` needs and nothing defines.
+
+    ``ctx.registry`` holds ``project``.
 
     Raises:
         ConfigError: something other than those variables stops the project from
             being built, as :func:`atc.needed.project_variables` says.
 
     """
-    held = replace(registry, projects={**registry.projects, project.name: project})
-    ctx = BuildContext(
-        registry=held,
-        sources=sources,
-        dirs=current_dirs(),
-        home=Path.home(),
-        install_dir=current_install_dir(),
-        python_dir=current_python_dir(),
-    )
     answers: list[tuple[Variable, str]] = []
     for variable in project_variables(ctx, project):
         question = (
