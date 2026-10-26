@@ -1298,3 +1298,41 @@ def test_add_account_puts_new_machine_wide_vars_before_the_accounts(
         "# the accounts\naccounts:\n"
     )
     assert path.read_text(encoding="utf-8").startswith(head)
+
+
+def test_add_project_writes_variables_for_accounts_and_the_machine_at_once(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    registry = add_project(
+        path,
+        home,
+        "new",
+        {"repo": "/new", "vars": {"p": "1"}},
+        [(("accounts", "b", "vars"), "cache", "/c"), (("vars",), "host", "h")],
+    )
+
+    assert registry.projects["new"].vars == {"p": "1"}
+    assert registry.accounts["b"].vars == {"cache": "/c"}
+    assert registry.vars == {"host": "h"}
+    text = path.read_text(encoding="utf-8")
+    assert "default-account: a\nvars:\n  host: h\n\n# the accounts\n" in text
+    assert text.endswith("  new:\n    repo: /new\n    vars:\n      p: '1'\n")
+
+
+def test_add_project_refuses_a_variable_for_an_unknown_account(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    with pytest.raises(RegistryError, match="no account named 'ghost'"):
+        _ = add_project(
+            path,
+            home,
+            "new",
+            {"repo": "/new"},
+            [(("accounts", "ghost", "vars"), "x", "1")],
+        )
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(VARS_FILE)

@@ -1,6 +1,7 @@
 """``atc prj``: see and change the projects of the machine registry."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -18,9 +19,13 @@ from atc.cli.options import (
     load_sources,
     worktrees_table,
 )
+from atc.cli.values import as_value, users_text, value_fault
+from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import ConfigError, GitError, RegistryError
+from atc.inventory import Variable
 from atc.jsonval import JsonObject, JsonValue
 from atc.launch import find_project
+from atc.needed import project_variables
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
@@ -31,6 +36,7 @@ from atc.registry import (
     add_project,
     project_name_problem,
 )
+from atc.sources import Sources
 from atc.ui import PickChoice, Ui, need_terminal, shown
 from atc.worktree import list_worktrees
 
@@ -165,8 +171,15 @@ def add(
     repository's branches, with main as the default, which is then not
     written. An empty worktrees directory means none. Ticking no account
     allows every account; when more than one is ticked, a second question picks
-    the one the project uses by default. Needs a terminal, to ask. Ctrl-C
-    cancels: nothing is changed, and the status is 130.
+    the one the project uses by default.
+
+    Then it asks for each variable that the project's unit, or what it imports,
+    uses and nothing defines: the project's own, those of each account it
+    allows, and the machine-wide ones. They are written in the same edit, the
+    project's in its entry, and a value cannot be empty. Before asking, the
+    project is built for each account it allows, so that what no answer could
+    fix is reported first. Needs a terminal, to ask. Ctrl-C cancels: nothing is
+    changed, and the status is 130.
 
     Each ACCOUNT is written to the project's accounts, the list of those
     allowed to work on it, and the first as its account, the one it uses by
@@ -220,17 +233,21 @@ def add(
         worktrees = _ask_worktrees(ui)
     if not account_names:
         account_names = _ask_accounts(ui, registry)
-
-    fields: JsonObject = {"repo": str(checkout)}
-    if worktrees:
-        fields["worktrees"] = str(Path(worktrees).expanduser().resolve())
-    if branch_from is not None:
-        fields["branch-from"] = branch_from
-    if account_names:
-        fields["account"] = account_names[0]
-        fields["accounts"] = list[JsonValue](account_names)
-    updated = add_project(registry.path, Path.home(), name, fields)
+    directory = Path(worktrees).expanduser().resolve() if worktrees else None
+    project, fields = _new_entry(name, checkout, directory, branch_from, account_names)
+    answers = _ask_variables(ui, registry, sources, project)
+    own = {v.name: value for v, value in answers if v.owner.level == "project"}
+    if own:
+        fields["vars"] = dict[str, JsonValue](own)
+    others = [
+        (v.owner.keys, v.name, value)
+        for v, value in answers
+        if v.owner.level != "project"
+    ]
+    updated = add_project(registry.path, Path.home(), name, fields, others)
     ui.line(f"{name}: added to {updated.path}")
+    if others:
+        ui.info("account and machine-wide variables take effect once atc sync runs")
 
 
 @prj.command(cls=rich_click.RichCommand, name="rm")
@@ -467,6 +484,75 @@ def _ask_accounts(ui: Ui, registry: Registry) -> tuple[str, ...]:
     if default is None:
         cancelled(ui)
     return (default, *(name for name in picked if name != default))
+
+
+def _new_entry(
+    name: str,
+    checkout: Path,
+    worktrees: Path | None,
+    branch_from: str | None,
+    accounts: tuple[str, ...],
+) -> tuple[Project, JsonObject]:
+    """
+    Describe the new project, as the registry will read it and as it is written.
+
+    ``branch_from`` is ``None`` for the default, which is not written, and
+    ``accounts`` are written with the first as the default, none meaning every
+    account. Its own variables are not known yet, so it has none.
+    """
+    project = Project(
+        name=name,
+        repo=checkout,
+        account=accounts[0] if accounts else None,
+        accounts=accounts or None,
+        unit=f"projects/{name}.json",
+        unit_is_default=True,
+        vars={},
+        worktrees=worktrees,
+        branch_from=branch_from or DEFAULT_BRANCH_FROM,
+    )
+    fields: JsonObject = {"repo": str(checkout)}
+    if worktrees is not None:
+        fields["worktrees"] = str(worktrees)
+    if branch_from is not None:
+        fields["branch-from"] = branch_from
+    if accounts:
+        fields["account"] = accounts[0]
+        fields["accounts"] = list[JsonValue](accounts)
+    return project, fields
+
+
+def _ask_variables(
+    ui: Ui, registry: Registry, sources: Sources, project: Project
+) -> list[tuple[Variable, str]]:
+    """
+    Ask for each variable that the new ``project`` needs and nothing defines.
+
+    Raises:
+        ConfigError: something other than those variables stops the project from
+            being built, as :func:`atc.needed.project_variables` says.
+
+    """
+    held = replace(registry, projects={**registry.projects, project.name: project})
+    ctx = BuildContext(
+        registry=held,
+        sources=sources,
+        dirs=current_dirs(),
+        home=Path.home(),
+        install_dir=current_install_dir(),
+        python_dir=current_python_dir(),
+    )
+    answers: list[tuple[Variable, str]] = []
+    for variable in project_variables(ctx, project):
+        question = (
+            f"{variable.reference} for {variable.owner}, used by "
+            f"{users_text(variable.users)}:"
+        )
+        answer = ui.ask_path(question, check=value_fault)
+        if answer is None:
+            cancelled(ui)
+        answers.append((variable, as_value(answer)))
+    return answers
 
 
 def _branches(checkout: Path) -> list[str]:

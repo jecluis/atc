@@ -1037,7 +1037,8 @@ that the config sources load. A failed check is an error that exits `1`. If no
 config source has `projects/NAME.json`, a warning says so then too: the project
 has no settings of its own until one exists, and it can still be added.
 
-Then it asks, in this order, for each that was not given:
+Then it asks, in this order, for each option that was not given, and then for
+the variables:
 
 1. **The repository**, with path completion. The default is the current
    directory, when that is in a git repository no project has yet. An answer is
@@ -1055,13 +1056,26 @@ Then it asks, in this order, for each that was not given:
    `account` nor `accounts` is written. When more than one is ticked, a second
    question picks the one it uses by default; the registry's default account is
    offered first when it is ticked.
+5. **The variables the project needs** that nothing defines: every
+   `{{project.vars.X}}`, `{{account.vars.X}}` and `{{vars.X}}` in the project's
+   unit and the units it imports, which is what is built for the project. An
+   account's variable is asked for each account the project allows that lacks
+   it. Before asking, the project is built for each account it allows, with a
+   stand-in for each such variable, so that what else would stop it is reported
+   now, such as a missing import or a misspelled reference, with exit status
+   `1`. Values follow the rules of `atc vars set`, except that an answer is
+   needed. A variable that an allowed account's own units need is not asked for
+   here: `atc vars ls` lists it, and `atc vars set` asks for it.
 
 Ctrl-C at any question changes nothing, with exit status `130`.
 
 The entry goes after the others in `machine.yaml`, as `repo`, then `worktrees`,
-`branch-from`, `account` and `accounts`. Paths are written as absolute paths.
-The rest of the file stays as it was, comments included, and the new file is
-checked as the registry always is before it replaces the old one.
+`branch-from`, `account`, `accounts` and `vars`. Paths are written as absolute
+paths. The accounts' and machine-wide variables are written in the same edit, a
+new machine-wide `vars` before `accounts`, and it then says that they take
+effect once `atc sync` runs. The rest of the file stays as it was, comments
+included, and the new file is checked as the registry always is before it
+replaces the old one.
 
 `-a` can be given more than once. Every `ACCOUNT` goes into `accounts`, in the
 order given, and the first is also written as `account`. So

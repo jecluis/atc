@@ -1,4 +1,4 @@
-"""The variables that a new account needs and nothing defines yet."""
+"""The variables that a new account or project needs and nothing defines yet."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -6,7 +6,11 @@ from dataclasses import dataclass, replace
 from atc.context import BuildContext
 from atc.inventory import (
     ACCOUNT_VARS,
+    MACHINE,
     MACHINE_VARS,
+    Owner,
+    Variable,
+    owners_of,
     template_references,
     unit_references,
 )
@@ -118,3 +122,88 @@ def _build_with_stand_ins(
     _ = render_templates(trial, trial_account)
     for project in projects:
         _ = build_project_layer(trial, project, trial_account, lax=True)
+
+
+def project_variables(ctx: BuildContext, project: Project) -> list[Variable]:
+    """
+    Find the variables that the new ``project`` needs and nothing defines yet.
+
+    ``ctx.registry`` holds ``project``. What it needs is every reference to a
+    variable in its unit and what that imports, which is what is built for the
+    project: its own variables, those of each account it allows, and the
+    machine-wide ones. They come by owner, the project's, then each account's
+    in the order of the file, then the machine's, each in the order they are
+    first used.
+
+    With a stand-in for each of them, the project is then built for each
+    account it allows, so that whatever else would stop it is found now,
+    before the values are asked for.
+
+    Raises:
+        ConfigError: something other than those variables stops the project from
+            being built for an account it allows: a unit that is missing or
+            malformed, an import cycle, a reference to a variable no value can
+            define, and so on.
+
+    """
+    registry = ctx.registry
+    allowed = (
+        project.accounts if project.accounts is not None else tuple(registry.accounts)
+    )
+    root = project_unit(ctx.sources, registry, project)
+    references = [] if root is None else unit_references(ctx, [root])
+    found: dict[Owner, dict[str, list[str]]] = {}
+    for user, reference in references:
+        for owner, name in owners_of(reference, allowed, project.name):
+            if name in owner.defined(registry):
+                continue
+            users = found.setdefault(owner, {}).setdefault(name, [])
+            if user not in users:
+                users.append(user)
+    owners = [
+        Owner("project", project.name),
+        *(Owner("account", name) for name in registry.accounts),
+        MACHINE,
+    ]
+    needed = [
+        Variable(name, owner, None, tuple(users))
+        for owner in owners
+        for name, users in found.get(owner, {}).items()
+    ]
+    _build_project_with_stand_ins(ctx, project, needed, allowed)
+    return needed
+
+
+def _build_project_with_stand_ins(
+    ctx: BuildContext,
+    project: Project,
+    needed: list[Variable],
+    allowed: tuple[str, ...],
+) -> None:
+    """Build ``project`` for each of ``allowed``, with a stand-in for ``needed``."""
+
+    def stand_ins(owner: Owner) -> dict[str, str]:
+        return {v.name: _STAND_IN for v in needed if v.owner == owner}
+
+    registry = ctx.registry
+    trial_project = replace(
+        project,
+        vars={**project.vars, **stand_ins(Owner("project", project.name))},
+    )
+    accounts = {
+        name: replace(
+            account, vars={**account.vars, **stand_ins(Owner("account", name))}
+        )
+        for name, account in registry.accounts.items()
+    }
+    trial = replace(
+        ctx,
+        registry=replace(
+            registry,
+            vars={**registry.vars, **stand_ins(MACHINE)},
+            accounts=accounts,
+            projects={**registry.projects, project.name: trial_project},
+        ),
+    )
+    for name in allowed:
+        _ = build_project_layer(trial, trial_project, accounts[name], lax=True)

@@ -282,27 +282,37 @@ def set_skills(path: Path, home: Path, account: str, refs: Sequence[str]) -> Reg
     return _write_checked(path, home, edited)
 
 
-def add_project(path: Path, home: Path, name: str, fields: JsonObject) -> Registry:
+def add_project(
+    path: Path,
+    home: Path,
+    name: str,
+    fields: JsonObject,
+    variables: Sequence[tuple[Sequence[str], str, str]] = (),
+) -> Registry:
     """
     Add the project ``name``, set up by ``fields``, to the registry file ``path``.
 
     ``fields`` are the keys of the project as the file spells them, such as
-    ``repo`` and ``branch-from``. The file is edited and replaced as
-    :func:`set_skills` does, and the new entry goes after the others. Returns the
-    registry as it now reads.
+    ``repo`` and ``branch-from``. ``variables`` are set in the same edit, as
+    :func:`set_variables` sets them: those of accounts and the machine that
+    the project needs. The file is edited and replaced as :func:`set_skills`
+    does, and the new entry goes after the others. Returns the registry as it
+    now reads.
 
     Raises:
         RegistryError: the file cannot be read, or is not a valid registry,
-            before or after the edit, or already has a project of that name. The
-            file is as it was.
+            before or after the edit, or already has a project of that name, or
+            has no account a variable is for. The file is as it was.
         WriteError: the file cannot be written.
 
     """
     text = _read_text(path)
-    if name in parse_registry(text, path, home).projects:
+    registry = parse_registry(text, path, home)
+    if name in registry.projects:
         message = f"{path}: /projects/{name}: a project of that name exists already"
         raise RegistryError(message)
     edited = set_in_text(text, ["projects", name], fields)
+    edited = _with_variables(edited, registry, variables)
     return _write_checked(path, home, edited)
 
 
@@ -394,12 +404,25 @@ def set_variables(
     """
     text = _read_text(path)
     registry = parse_registry(text, path, home)
+    return _write_checked(path, home, _with_variables(text, registry, values))
+
+
+def _with_variables(
+    text: str, registry: Registry, values: Sequence[tuple[Sequence[str], str, str]]
+) -> str:
+    """
+    Set ``values`` in ``text``, which reads as ``registry``, as ``set_variables`` does.
+
+    Raises:
+        RegistryError: ``registry`` has no account or project a value is for.
+
+    """
     edited = text
     for keys, name, value in values:
         _ = variables_at(registry, keys)
         before = _MACHINE_VARS_BEFORE if tuple(keys) == MACHINE_VARS_KEYS else None
         edited = set_in_text(edited, [*keys, name], value, before=before)
-    return _write_checked(path, home, edited)
+    return edited
 
 
 @dataclass(frozen=True, slots=True)

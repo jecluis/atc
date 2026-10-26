@@ -690,6 +690,150 @@ def test_add_refuses_config_sources_that_do_not_load_before_asking(
     assert given.asked == []
 
 
+NEEDY = {
+    PERSONAL: unit(),
+    WORK: unit(),
+    BAR_UNIT: unit(
+        {
+            "env": {
+                "CACHE": "{{account.vars.cache}}",
+                "PORT": "{{project.vars.port}}",
+                "HOST": "{{vars.host}}",
+            }
+        }
+    ),
+}
+"""Units where the project uses a variable of each level that nothing defines."""
+
+
+def test_add_asks_for_the_variables_the_project_needs_and_writes_them_at_once(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(NEEDY, registry_text())
+    given = asking(monkeypatch)
+    given.paths = {
+        "project.vars.port": "p80",
+        "account.vars.cache for account personal": "~/c",
+        "account.vars.cache for account work": "/w",
+        "vars.host": "h",
+    }
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == OK
+    users = "used by projects/bar.json: default="
+    assert given.asked[-4:] == [
+        f"project.vars.port for project bar, {users}",
+        f"account.vars.cache for account personal, {users}",
+        f"account.vars.cache for account work, {users}",
+        f"vars.host for machine, {users}",
+    ]
+    assert given.check is not None
+    assert given.check("") == "a value is needed"
+    registry = load_registry(registry_file(dirs), home)
+    assert registry.projects["bar"].vars == {"port": "p80"}
+    assert registry.accounts["personal"].vars == {"cache": f"{home}/c"}
+    assert registry.accounts["work"].vars == {"cache": "/w"}
+    assert registry.vars == {"host": "h"}
+    text = registry_file(dirs).read_text(encoding="utf-8")
+    assert "default-account: personal\nvars:\n  host: h\n" in text
+    assert "account and machine-wide variables take effect once atc sync runs" in (
+        capsys.readouterr().err
+    )
+    assert main(["src", "check"]) == OK
+
+
+def test_add_asks_only_for_the_accounts_the_project_allows(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(NEEDY, registry_text())
+    given = asking(monkeypatch)
+    given.path = "v"
+
+    args = [str(repo), "--worktrees", str(tmp_path), "-a", "work"]
+    assert main(["prj", "add", "bar", *args]) == OK
+
+    asked = [q.split(",")[0] for q in given.asked if "vars." in q]
+    assert asked == [
+        "project.vars.port for project bar",
+        "account.vars.cache for account work",
+        "vars.host for machine",
+    ]
+    registry = load_registry(registry_file(dirs), home)
+    assert registry.accounts["personal"].vars == {}
+
+
+def test_add_with_only_project_variables_does_not_ask_for_a_sync(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    files = {**NEEDY, BAR_UNIT: unit({"env": {"PORT": "{{project.vars.port}}"}})}
+    configure(files, registry_text())
+    given = asking(monkeypatch)
+    given.path = "p"
+
+    assert main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)]) == OK
+
+    assert "atc sync" not in capsys.readouterr().err
+
+
+def test_add_reports_what_no_answer_could_fix_before_asking_for_variables(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    files = {
+        **NEEDY,
+        BAR_UNIT: unit({"env": {"A": "{{project.vars.p}}", "B": "{{projct.name}}"}}),
+    }
+    configure(files, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    given = asking(monkeypatch)
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == CONFIG
+    assert "unknown reference {{projct.name}}" in capsys.readouterr().err
+    assert not [q for q in given.asked if "vars." in q]
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_add_cancelled_at_a_variable_writes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(NEEDY, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+    given = asking(monkeypatch)
+    given.path = "v"
+    given.paths = {"vars.host": None}
+
+    status = main(["prj", "add", "bar", str(repo), "--worktrees", str(tmp_path)])
+
+    assert status == INTERRUPTED
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
 def test_rm_removes_only_the_entry(
     configure: ConfigWriter,
     dirs: Dirs,

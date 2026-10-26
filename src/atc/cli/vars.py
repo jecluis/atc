@@ -1,6 +1,6 @@
 """``atc vars``: see and define the variables of the machine registry."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from pathlib import Path
 
 import click
@@ -14,7 +14,7 @@ from atc.cli.options import (
     load_build_context,
     load_machine_registry,
 )
-from atc.cli.values import as_value, value_fault
+from atc.cli.values import as_value, users_text, value_fault
 from atc.errors import ConfigError, RegistryError
 from atc.inventory import MACHINE, Inventory, Owner, Variable, take_inventory
 from atc.registry import (
@@ -25,9 +25,6 @@ from atc.registry import (
     variables_at,
 )
 from atc.ui import Ui, need_terminal, shown
-
-_USERS_SHOWN = 3
-"""How many of a variable's users are named before the rest are counted."""
 
 
 @click.group(cls=rich_click.RichGroup, name="vars")
@@ -83,7 +80,7 @@ def ls() -> None:
             else shown(variable.value)
         )
         users = (
-            shown(_users_text(variable.users))
+            shown(users_text(variable.users))
             if variable.users
             else shown("-", style="dim")
         )
@@ -229,7 +226,7 @@ def rm(
     unknown = inventory is None or bool(inventory.warnings)
     if users and not force:
         message = (
-            f"{path}: {reference} for {owner} is used by {_users_text(users)}; "
+            f"{path}: {reference} for {owner} is used by {users_text(users)}; "
             "give --force to remove it anyway"
         )
         raise RegistryError(message)
@@ -241,7 +238,7 @@ def rm(
         raise RegistryError(message)
     need_terminal("atc vars rm")
     if users:
-        ui.info(f"{_users_text(users)} will find {reference} undefined")
+        ui.info(f"{users_text(users)} will find {reference} undefined")
     answer = ui.confirm(f"Remove {name} from {owner}?", default=False)
     if answer is None:
         cancelled(ui)
@@ -306,7 +303,7 @@ def _question(variable: Variable) -> str:
     """Ask for the value of ``variable``, naming its owner and what uses it."""
     return (
         f"{variable.reference} for {variable.owner}, used by "
-        f"{_users_text(variable.users)} (empty to skip):"
+        f"{users_text(variable.users)} (empty to skip):"
     )
 
 
@@ -355,11 +352,3 @@ def _say_when(ui: Ui, owners: Iterable[Owner]) -> None:
         ui.info("a project's variables take effect at its next atc run")
     if levels - {"project"}:
         ui.info("account and machine-wide variables take effect once atc sync runs")
-
-
-def _users_text(users: Sequence[str]) -> str:
-    """Name the first of ``users``, and count the rest."""
-    text = ", ".join(users[:_USERS_SHOWN])
-    if len(users) > _USERS_SHOWN:
-        text += f" and {len(users) - _USERS_SHOWN} more"
-    return text

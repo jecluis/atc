@@ -875,7 +875,8 @@ here and in `sync` and `run`.
   - If no source contains `projects/<NAME>.json`, atc warns, before asking
     anything.
   - It asks for the repository, branch, worktrees directory and accounts that
-    the arguments leave out, so it needs a terminal (see
+    the arguments leave out, and for the variables the project's units need that
+    nothing defines, so it needs a terminal (see
     [004-project-and-variable-commands-design.md](004-project-and-variable-commands-design.md)).
 - `atc prj rm NAME`: removes the registry entry, once the user confirms it
   (yes/No, no by default). Nothing else is touched.

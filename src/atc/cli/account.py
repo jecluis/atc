@@ -17,7 +17,7 @@ from atc.cli.options import (
     load_sources,
 )
 from atc.cli.skills import skill_choices
-from atc.cli.values import as_value, value_fault
+from atc.cli.values import as_value, users_text, value_fault
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
 from atc.jsonval import JsonObject, JsonValue
@@ -352,10 +352,7 @@ def _needed(
 def _variable_question(need: Needed) -> str:
     """Ask for the value of the variable ``need``, naming what uses it."""
     kind = "machine-wide variable" if need.machine_wide else "account variable"
-    users = ", ".join(need.users[:3])
-    if len(need.users) > 3:
-        users += f" and {len(need.users) - 3} more"
-    return f"The {kind} {need.name}, used by {users}:"
+    return f"The {kind} {need.name}, used by {users_text(need.users)}:"
 
 
 def _next_steps(registry: Registry, name: str) -> list[str]:
