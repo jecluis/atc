@@ -7,14 +7,14 @@
 ## In one paragraph
 
 `atc` is the one command that starts coding agents on this machine. Run `atc`
-inside a project and it works out which project that is, which agent and
-account should take the session, and which settings and sandbox protections
-apply. Then it hands the terminal over to the agent. It also generates each
-account's settings from shared configuration, which lives in your own
-repositories apart from the tool, and gives each account its instructions
-file and the skills you chose for it. And it creates worktrees, and checks and
-maintains the protections it sets up. Claude Code is the first agent it
-supports. Codex is planned next, to spread load across more accounts.
+inside a project and it works out which project that is, which agent and account
+should take the session, and which settings and sandbox protections apply. Then
+it hands the terminal over to the agent. It also generates each account's
+settings from shared configuration, which lives in your own repositories apart
+from the tool, and gives each account its instructions file and the skills you
+chose for it. And it creates worktrees, and checks and maintains the protections
+it sets up. Claude Code is the first agent it supports. Codex is planned next,
+to spread load across more accounts.
 
 ## Why
 
@@ -25,8 +25,7 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
      (`~/.config/acme/claude`) have separate `settings.json` files that were
      edited by hand.
    - The Acme account has no global `CLAUDE.md`.
-   - Each account's copy of the command-shape hook has a check the other
-     lacks.
+   - Each account's copy of the command-shape hook has a check the other lacks.
    - The git deny rules differ between the two in content and in syntax.
    - A typo (`allowedDomanins`) means the Acme sandbox's network allowlist is
      silently ignored.
@@ -34,14 +33,14 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
    - Hardening the sandbox means each account must deny access to the other
      account's directory.
    - Scratch roots and repository paths depend on the machine.
-   - None of these can be hard-coded in a repository that is checked out on
-     more than one machine.
+   - None of these can be hard-coded in a repository that is checked out on more
+     than one machine.
 3. **Project settings don't keep.**
-   - A repository's `.claude/settings.local.json` collects every "always
-     allow" answer. For example, the `anvil.git` file has piled up one-off
-     entries like `TMPDIR=/tmp/claude-1000 … cargo test …`.
-   - Rules that protect something, such as `denyRead` on vault files, sit
-     mixed in with that pile.
+   - A repository's `.claude/settings.local.json` collects every "always allow"
+     answer. For example, the `anvil.git` file has piled up one-off entries like
+     `TMPDIR=/tmp/claude-1000 … cargo test …`.
+   - Rules that protect something, such as `denyRead` on vault files, sit mixed
+     in with that pile.
    - The file is untracked and belongs to one checkout, so every new worktree
      starts without it.
 4. **The logic for starting a session lives in three places.**
@@ -49,12 +48,12 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
    - `claude-guard` protects packed git history, holds the repository lock and
      runs maintenance.
    - `ccwtctl` keeps the list of projects and their worktrees.
-5. **Choosing an account is becoming a routing decision.** The personal
-   account already takes Acme work when the Acme account is near its limits.
-   Once Codex is added there will be more accounts, and more reason to pick
-   one by available capacity.
-6. **Memory is split by account.** The same repository builds up separate,
-   and in places contradictory, memories depending on which account was used.
+5. **Choosing an account is becoming a routing decision.** The personal account
+   already takes Acme work when the Acme account is near its limits. Once Codex
+   is added there will be more accounts, and more reason to pick one by
+   available capacity.
+6. **Memory is split by account.** The same repository builds up separate, and
+   in places contradictory, memories depending on which account was used.
 
 ## What atc does
 
@@ -94,8 +93,8 @@ Each of these problems was found between 2026-10-20 and 2026-10-23.
 | Session | the session's `--settings`    | every `atc` launch | Write protection for the project's packed git history                                 |
 
 The account layer goes in a file because some settings only behave correctly
-from user settings. It also means a session started without atc still gets
-the account's protections.
+from user settings. It also means a session started without atc still gets the
+account's protections.
 
 The project and session layers are passed on the command line. That way they
 apply to every worktree, and they never mix with what Claude Code writes into
@@ -103,15 +102,15 @@ apply to every worktree, and they never mix with what Claude Code writes into
 
 ### Where things live
 
-| What                           | Where                                             | Shared between machines? | Who changes it                         |
-| :----------------------------- | :------------------------------------------------ | :----------------------- | :------------------------------------- |
-| atc's code                     | this repository                                   | yes                      | you, through git                       |
-| Your units, assets and skills  | your own repositories, as config sources          | yes                      | you, through git                       |
-| Deployed configuration         | `~/.config/atc/conf.d/`, one or more git clones   | yes (the same commits)   | `atc src pull`                         |
-| Machine registry               | `~/.config/atc/machine.yaml`                      | no                       | you, `atc prj add`, or `atc skills`    |
-| Account settings               | `<account dir>/settings.json`                     | no (generated)           | `atc sync`                             |
-| Account `CLAUDE.md` and skills | links in `<account dir>`, into `conf.d/`          | no (generated)           | `atc sync`, `atc skills`               |
-| State and locks                | `~/.local/state/atc/`, `$XDG_RUNTIME_DIR/atc/`    | no                       | atc, and the statusline for usage data |
+| What                           | Where                                           | Shared between machines? | Who changes it                         |
+| :----------------------------- | :---------------------------------------------- | :----------------------- | :------------------------------------- |
+| atc's code                     | this repository                                 | yes                      | you, through git                       |
+| Your units, assets and skills  | your own repositories, as config sources        | yes                      | you, through git                       |
+| Deployed configuration         | `~/.config/atc/conf.d/`, one or more git clones | yes (the same commits)   | `atc src pull`                         |
+| Machine registry               | `~/.config/atc/machine.yaml`                    | no                       | you, `atc prj add`, or `atc skills`    |
+| Account settings               | `<account dir>/settings.json`                   | no (generated)           | `atc sync`                             |
+| Account `CLAUDE.md` and skills | links in `<account dir>`, into `conf.d/`        | no (generated)           | `atc sync`, `atc skills`               |
+| State and locks                | `~/.local/state/atc/`, `$XDG_RUNTIME_DIR/atc/`  | no                       | atc, and the statusline for usage data |
 
 ## Principles
 
@@ -119,17 +118,17 @@ apply to every worktree, and they never mix with what Claude Code writes into
   between machines (paths, account directories, scratch roots) lives in the
   machine registry, and units refer to it through variables such as
   `{{account.dir}}`.
-- **The tool and your configuration are separate.** atc reads units and
-  assets from config sources under `~/.config/atc/conf.d/`. That can be one
-  repository, or several, such as one for personal and one for Acme
-  configuration. atc has its own repository, which holds no configuration.
+- **The tool and your configuration are separate.** atc reads units and assets
+  from config sources under `~/.config/atc/conf.d/`. That can be one repository,
+  or several, such as one for personal and one for Acme configuration. atc has
+  its own repository, which holds no configuration.
 - **A session can't change its own rules.**
-  - atc reads only the deployed clones in `conf.d/`, never the checkout an
-    agent might be editing. A change arrives only as a commit that you pull,
-    and atc checks it first.
+  - atc reads only the deployed clones in `conf.d/`, never the checkout an agent
+    might be editing. A change arrives only as a commit that you pull, and atc
+    checks it first.
   - Its own directories are closed to sessions.
-  - Hooks and the statusline, which run outside the sandbox, run only from
-    those deployed clones.
+  - Hooks and the statusline, which run outside the sandbox, run only from those
+    deployed clones.
 - **Your rules are yours.** atc doesn't decide what is allowed or denied. It
   warns when a rule can never take effect, such as an allow that a deny
   elsewhere always beats, and leaves the fix to you.
@@ -148,8 +147,8 @@ apply to every worktree, and they never mix with what Claude Code writes into
 ### In the first version
 
 - Claude Code as the only agent.
-- Every command in the table above, except automatic account choice, which
-  comes once there's real usage data to base it on.
+- Every command in the table above, except automatic account choice, which comes
+  once there's real usage data to base it on.
 - Each account's `CLAUDE.md`: a shared default, one of its own, or none.
 - Each account's skills, chosen from a checklist.
 - Moving everything listed in [What it replaces](#what-it-replaces) into atc.
@@ -163,20 +162,20 @@ apply to every worktree, and they never mix with what Claude Code writes into
 - Containers or VMs. atc builds on Claude Code's own sandbox.
 - Judging permission rules. atc only warns about rules that can never take
   effect.
-- Setting up snapshots. The snapper setup script stays a separate, one-off
-  root task.
+- Setting up snapshots. The snapper setup script stays a separate, one-off root
+  task.
 
 ## A day with atc
 
-```console
-$ cd /mnt/pci5-dev/acme/wt/anvil/feature-x
-$ atc                        # acme account, anvil settings, history protected
-$ atc -a personal            # the same project, on the personal account
-$ atc wt new fix-y --run     # new worktree for branch fix-y, straight into a session
-$ atc src pull               # deploy the latest committed configuration
-$ atc sync --diff            # what would change in each account's settings and links
-$ atc skills pick acme       # tick the skills the acme account should have
-$ atc usage                  # how close each account is to its limits
+```sh
+cd /mnt/pci5-dev/acme/wt/anvil/feature-x
+atc                        # acme account, anvil settings, history protected
+atc -a personal            # the same project, on the personal account
+atc wt new fix-y --run     # new worktree for branch fix-y, straight into a session
+atc src pull               # deploy the latest committed configuration
+atc sync --diff            # what would change in each account's settings and links
+atc skills pick acme       # tick the skills the acme account should have
+atc usage                  # how close each account is to its limits
 ```
 
 ## What it replaces

@@ -1,28 +1,28 @@
 # atc — Project Rules
 
-`atc` starts coding agents in the right account, with settings built from
-shared configuration. Source lives in `src/atc/`, tests in `tests/`. Units are
-not part of the tool; they live in config sources.
+`atc` starts coding agents in the right account, with settings built from shared
+configuration. Source lives in `src/atc/`, tests in `tests/`. Units are not part
+of the tool; they live in config sources.
 
 ## Code Comments
 
-- Comment only what isn't obvious from the code itself — don't narrate
-  what a reader can already see.
-- Keep comments to the minimum a developer needs to understand what
-  the code does.
+- Comment only what isn't obvious from the code itself — don't narrate what a
+  reader can already see.
+- Keep comments to the minimum a developer needs to understand what the code
+  does.
 
 ## Documentation for Consumers
 
-- Data structures, functions, CLI commands/arguments, and API/OpenAPI
-  surfaces must always be documented — but scoped to what the
-  consumer needs in order to use them. Avoid verbosity on details that
-  don't affect how the consumer uses it.
-- User-facing documentation — API docs, CLI help output, or anything
-  meant to be read or rendered for a user — must never reference
-  internal design, plan, or review documents, or any other internal
-  documentation, unless the user explicitly asks for that reference.
-  Example: a CLI `--help` string must not say "see design 007" — that
-  information is meaningless to the person running the command.
+- Data structures, functions, CLI commands/arguments, and API/OpenAPI surfaces
+  must always be documented — but scoped to what the consumer needs in order to
+  use them. Avoid verbosity on details that don't affect how the consumer uses
+  it.
+- User-facing documentation — API docs, CLI help output, or anything meant to be
+  read or rendered for a user — must never reference internal design, plan, or
+  review documents, or any other internal documentation, unless the user
+  explicitly asks for that reference. Example: a CLI `--help` string must not
+  say "see design 007" — that information is meaningless to the person running
+  the command.
 
 ## Typing
 
@@ -30,8 +30,8 @@ not part of the tool; they live in config sources.
 as a design constraint, not a lint setting.
 
 - No `Any` and no bare `object` in normal code. The sanctioned exceptions are
-  the `json.loads` boundary in `jsonval.py`, the ruamel boundary in
-  `yamlval.py` and the questionary boundary in `ui.py`. Each carries a scoped
+  the `json.loads` boundary in `jsonval.py`, the ruamel boundary in `yamlval.py`
+  and the questionary boundary in `ui.py`. Each carries a scoped
   `# pyright: ignore` and a comment explaining why it is sound: `jsonval` casts
   what `json.loads` returns to `JsonValue`, and `yamlval` rebuilds what ruamel
   returns as a `JsonValue`, refusing any type JSON lacks. Its round-trip edit
@@ -39,10 +39,10 @@ as a design constraint, not a lint setting.
   there, after `isinstance` has said what they are. `Ui.pick` narrows the
   untyped answer of questionary's `unsafe_ask()` to `list[str] | None` on the
   spot, so nothing untyped leaves it; `unsafe_ask` and not `ask`, because `ask`
-  prints its cancel message on standard output. Do not add another such
-  boundary without a comparable justification. click passes typed values to
-  command functions, so the command line needs none; the one typed view of
-  click's `Any`-returning `main` is in `cli/__init__.py`.
+  prints its cancel message on standard output. Do not add another such boundary
+  without a comparable justification. click passes typed values to command
+  functions, so the command line needs none; the one typed view of click's
+  `Any`-returning `main` is in `cli/__init__.py`.
 - Prefer `match` over a closed union to dispatch on JSON values, so the type
   checker can prove the dispatch is exhaustive.
 - A private class needs `@final` or per-attribute annotations to satisfy
@@ -75,15 +75,15 @@ verification.
 
 ## Commit messages
 
-Format is `component: short description`, subject at most 72 characters, body
-at most 80 columns and 2–4 sentences, omitted when the subject says enough.
+Format is `component: short description`, subject at most 72 characters, body at
+most 80 columns and 2–4 sentences, omitted when the subject says enough.
 
 Components used in this project:
 
 - `atc` — the tool itself, its packaging, its tooling and its examples
 - `docs` — documentation
 
-Commits are DCO signed off (`-s`). Every commit must be GPG-signed by the
-user, not by an agent, unless the user says otherwise. Until then an agent
-commits with `--no-gpg-sign`, also when amending or rebasing, and leaves
-signing to the user.
+Commits are DCO signed off (`-s`). Every commit must be GPG-signed by the user,
+not by an agent, unless the user says otherwise. Until then an agent commits
+with `--no-gpg-sign`, also when amending or rebasing, and leaves signing to the
+user.
