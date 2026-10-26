@@ -225,12 +225,13 @@ projects:
     project's effective account: its `account`, or else `default-account`.
   - An account that sets both `agents-md-file` and `use-default-agents-md: true`
     gets a warning, since the flag then has no effect.
-- **Writes:** `atc prj add`, `atc prj rm` and the `atc skills` commands that
-  change a selection edit the file with ruamel's round-trip mode, so comments
-  and key order survive. When `machine.yaml` is a symbolic link, as into a
-  dotfiles repository, the file it leads to is replaced and the link stays. That
-  file must be as far out of sessions' reach as `config_dir`: a session that
-  could edit the registry could point `agents.claude.bin` at a program that runs
+- **Writes:** `atc account add` and `atc account rm`, `atc prj add` and
+  `atc prj rm`, `atc vars set`, and the `atc skills` commands that change a
+  selection edit the file with ruamel's round-trip mode, so comments and key
+  order survive. When `machine.yaml` is a symbolic link, as into a dotfiles
+  repository, the file it leads to is replaced and the link stays. That file
+  must be as far out of sessions' reach as `config_dir`: a session that could
+  edit the registry could point `agents.claude.bin` at a program that runs
   outside the sandbox, or widen the sandbox through `vars`. `atc check` verifies
   it (§10.7).
 
@@ -1036,8 +1037,12 @@ pattern: chosen per account, recorded in the registry, applied by `sync`.
 
 - `atc vars ls`: every variable the registry defines or a unit needs, with its
   owner (the machine, an account or a project), its value or `undefined`, and
-  what uses it. See
-  [004-project-and-variable-commands-design.md](004-project-and-variable-commands-design.md).
+  what uses it.
+- `atc vars set [NAME [VALUE]] [-a ACCOUNT | -p PROJECT]`: defines one at the
+  level its reference names, or asks for each undefined one in turn.
+
+The details are in
+[004-project-and-variable-commands-design.md](004-project-and-variable-commands-design.md).
 
 ## 11. Environment passed to the agent
 

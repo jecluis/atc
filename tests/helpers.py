@@ -250,6 +250,8 @@ class Answers:
     """Answers to the yes or no questions that start with each key, else ``confirm``."""
     choose: str | None = None
     path: str | None = "~/.config/new"
+    paths: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    """Answers to the path questions that start with each key, else ``path``."""
     pick: list[str] | None = None
     asked: list[str] = field(default_factory=list[str])
     meanwhile: Callable[[], None] | None = None
@@ -292,7 +294,8 @@ def answering(monkeypatch: pytest.MonkeyPatch) -> Answers:
         given.asked.append(f"{question} default={default}")
         given.directories = directories
         given.check = check
-        return given.path
+        found = (a for start, a in given.paths.items() if question.startswith(start))
+        return next(found, given.path)
 
     def pick(_self: Ui, title: str, choices: Sequence[PickChoice]) -> list[str] | None:
         given.asked.append(f"{title} {[(c.value, c.checked) for c in choices]}")

@@ -11,12 +11,16 @@ from atc.registry import (
     REGISTRY_FILE,
     ProjectRemoval,
     account_unit,
+    add_account,
     add_project,
     choose_account,
     load_registry,
     normalize_path,
     parse_registry,
     set_skills,
+    set_variables,
+    variable_name_problem,
+    variables_at,
 )
 from atc.sources import discover
 from tests.conftest import RegistryWriter
@@ -1124,3 +1128,114 @@ def test_an_agents_section_is_checked(
 
     with pytest.raises(RegistryError, match=pointer):
         _ = load_registry(write_registry(text), home)
+
+
+VARS_FILE = """\
+    # this machine
+    version: 1
+    default-account: a
+
+    # the accounts
+    accounts:
+      a:
+        agent: claude
+        dir: /a  # the main one
+        vars: {x: '1'}  # a's
+      b: {agent: claude, dir: /b}
+    projects:
+      bar: {repo: /bar}
+"""
+
+
+def test_set_variables_puts_a_new_machine_wide_vars_before_the_accounts(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    registry = set_variables(path, home, [(("vars",), "root", "/r")])
+
+    assert registry.vars == {"root": "/r"}
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(VARS_FILE).replace(
+        "default-account: a\n\n", "default-account: a\nvars:\n  root: /r\n\n"
+    )
+
+
+def test_set_variables_sets_every_level_in_one_edit(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    registry = set_variables(
+        path,
+        home,
+        [
+            (("accounts", "a", "vars"), "x", "2"),
+            (("accounts", "b", "vars"), "y", "3"),
+            (("projects", "bar", "vars"), "z", "4"),
+        ],
+    )
+
+    assert registry.accounts["a"].vars == {"x": "2"}
+    assert registry.accounts["b"].vars == {"y": "3"}
+    assert registry.projects["bar"].vars == {"z": "4"}
+    text = path.read_text(encoding="utf-8")
+    assert "    vars: {x: '2'}  # a's\n" in text
+    assert "  b: {agent: claude, dir: /b, vars: {y: '3'}}\n" in text
+    assert load_registry(path, home) == registry
+
+
+def test_set_variables_refuses_an_unknown_owner_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    with pytest.raises(RegistryError, match="no account named 'ghost'"):
+        _ = set_variables(path, home, [(("accounts", "ghost", "vars"), "x", "1")])
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(VARS_FILE)
+
+
+def test_set_variables_refuses_an_invalid_name_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    with pytest.raises(RegistryError, match="'Bad' is not a valid variable name"):
+        _ = set_variables(path, home, [(("vars",), "Bad", "1")])
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(VARS_FILE)
+
+
+def test_variables_at_follows_the_keys_of_each_level(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(VARS_FILE), home)
+
+    assert variables_at(registry, ("vars",)) == {}
+    assert variables_at(registry, ("accounts", "a", "vars")) == {"x": "1"}
+    assert variables_at(registry, ("projects", "bar", "vars")) == {}
+    with pytest.raises(ValueError, match="is not a vars mapping"):
+        _ = variables_at(registry, ("accounts", "a"))
+
+
+def test_variable_name_problem_says_what_names_can_be() -> None:
+    assert variable_name_problem("scratch_2") is None
+    problem = variable_name_problem("2x")
+    assert problem is not None
+    assert "lowercase letters, digits and '_'" in problem
+
+
+def test_add_account_puts_new_machine_wide_vars_before_the_accounts(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(VARS_FILE)
+
+    _ = add_account(
+        path, home, "c", {"agent": "claude", "dir": "/c"}, machine_vars={"r": "/r"}
+    )
+
+    head = (
+        "# this machine\nversion: 1\ndefault-account: a\nvars:\n  r: /r\n\n"
+        "# the accounts\naccounts:\n"
+    )
+    assert path.read_text(encoding="utf-8").startswith(head)

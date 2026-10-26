@@ -10,9 +10,9 @@ Code is the first agent it supports.
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc account ls`, `atc account add`,
 `atc account rm`, `atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`,
-`atc vars ls`, `atc wt new`, `atc wt ls`, `atc wt rm`, `atc skills ls`,
-`atc skills pick`, `atc skills add`, `atc skills rm`, `atc src ls`,
-`atc src check`, `atc src pull` and `atc usage`.
+`atc vars ls`, `atc vars set`, `atc wt new`, `atc wt ls`, `atc wt rm`,
+`atc skills ls`, `atc skills pick`, `atc skills add`, `atc skills rm`,
+`atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
 
 ## Install
 
@@ -124,13 +124,13 @@ is specific to this machine: which accounts exist and where each one lives.
 belongs to this machine and working out the rest from the config sources, and
 `atc account` and `atc prj` add and remove accounts and projects from then on
 (see Usage). `atc vars ls` lists the variables it defines and those the units
-need. It belongs to no config source, so it never lands in a git repository by
-accident. It may be a symbolic link, into a dotfiles repository for example: the
-commands that edit it write the file the link leads to, and the link stays. That
-file must then be as far out of sessions' reach as atc's configuration
-directory, since a session that could edit the registry could change the agent's
-command or widen the sandbox; `atc check` verifies that a session cannot write
-it.
+need, and `atc vars set` defines them. It belongs to no config source, so it
+never lands in a git repository by accident. It may be a symbolic link, into a
+dotfiles repository for example: the commands that edit it write the file the
+link leads to, and the link stays. That file must then be as far out of
+sessions' reach as atc's configuration directory, since a session that could
+edit the registry could change the agent's command or widen the sandbox;
+`atc check` verifies that a session cannot write it.
 
 ```yaml
 version: 1
@@ -931,10 +931,10 @@ Then it asks, in this order:
 The entry goes after the other accounts, as `agent` and `dir`, then `unit`,
 `use-default-agents-md`, `skills` and `vars` where they are not the defaults.
 `dir` is written as typed, without a trailing `/`. Machine-wide variables go in
-the registry's `vars`. The rest of the file stays as it was, comments included,
-and the new file is checked as the registry always is before it replaces the old
-one. A new `machine.yaml` holds `version: 1`, `default-account: NAME`, any
-`vars` and the account.
+the registry's `vars`, which goes before `accounts` when it is new. The rest of
+the file stays as it was, comments included, and the new file is checked as the
+registry always is before it replaces the old one. A new `machine.yaml` holds
+`version: 1`, `default-account: NAME`, any `vars` and the account.
 
 Nothing else is done: the directory is not created, and nothing is synced. It
 says what comes next: `atc sync`, for every account, since each account's
@@ -1111,8 +1111,38 @@ Rows come by owner: the machine's first, then the accounts' and the projects' in
 the order of the file. Within an owner, variables come in the order they are
 first used, then the unused ones by name. If an account's or a project's units
 cannot be read, a warning says why and the rest is still listed. When any
-variable is undefined, a line on standard error counts them. The exit status is
-`0` either way, and nothing is changed.
+variable is undefined, a line on standard error counts them and points at
+`atc vars set`. The exit status is `0` either way, and nothing is changed.
+
+### `atc vars set [NAME [VALUE]] [-a ACCOUNT | -p PROJECT]`
+
+Defines a variable. `NAME` goes in the `vars` of `ACCOUNT` with `-a`, of
+`PROJECT` with `-p`, and in the machine-wide `vars` with neither: the level that
+`{{account.vars.NAME}}`, `{{project.vars.NAME}}` and `{{vars.NAME}}` look in.
+Giving both is a usage error, exit status `2`. A value that was there is
+replaced, and the line says what it was and what it is now. When nothing uses
+`NAME` at that level, a warning says so, since it may be misspelt, and the value
+is written anyway. A machine-wide `vars` that does not exist yet goes before
+`accounts`, as it does when `atc account add` creates it; an account's or a
+project's goes at the end of its entry. The rest of the file stays as it was,
+comments included.
+
+A value must not be empty or contain `{{`, and a leading `~` or `~/` is written
+as your home directory, since a value is used as it is written. A name is
+lowercase letters, digits and `_`, starting with a letter. Either refused is a
+usage error, exit status `2`.
+
+With `NAME` and `VALUE`, nothing is asked, so it works in a script. With `NAME`
+alone, it asks for the value, with path completion and the current value to
+start from. With no `NAME`, it asks for every variable that `atc vars ls` lists
+as undefined, in that order, or only those of `ACCOUNT` or `PROJECT` with `-a`
+or `-p`. Each question names what uses the variable, and an empty answer leaves
+it undefined. What is answered is written at the end, in one edit. Asking needs
+a terminal, and without one it is a usage error, exit status `2`. Ctrl-C at any
+question changes nothing, with exit status `130`.
+
+It ends by saying when the change takes effect: a project's variables at its
+next `atc run`, the others once `atc sync` runs. It does not run `atc sync`.
 
 ### `atc wt new BRANCH [--from REF] [--run]`
 

@@ -17,6 +17,7 @@ from atc.cli.options import (
     load_sources,
 )
 from atc.cli.skills import skill_choices
+from atc.cli.values import as_value, value_fault
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
 from atc.jsonval import JsonObject, JsonValue
@@ -178,13 +179,13 @@ def add(name: str, unit: str | None, agent: str) -> None:
     own: JsonObject = {}
     machine: dict[str, str] = {}
     for need in needed:
-        value = ui.ask_path(_variable_question(need), check=_value_fault)
+        value = ui.ask_path(_variable_question(need), check=value_fault)
         if value is None:
             cancelled(ui)
         if need.machine_wide:
-            machine[need.name] = _as_value(value)
+            machine[need.name] = as_value(value)
         else:
-            own[need.name] = _as_value(value)
+            own[need.name] = as_value(value)
     if own:
         fields["vars"] = own
     updated = add_account(path, Path.home(), name, fields, machine)
@@ -355,29 +356,6 @@ def _variable_question(need: Needed) -> str:
     if len(need.users) > 3:
         users += f" and {len(need.users) - 3} more"
     return f"The {kind} {need.name}, used by {users}:"
-
-
-def _value_fault(text: str) -> str | None:
-    """Say what is wrong with ``text`` as a variable's value, if anything."""
-    value = text.strip()
-    if not value:
-        return "a value is needed"
-    if "{{" in value:
-        return "the value must not contain '{{'"
-    return None
-
-
-def _as_value(text: str) -> str:
-    """
-    Write ``text`` as a variable's value, with a leading ``~`` expanded.
-
-    A variable is used as written, so a ``~`` left in it would not be your home
-    directory wherever the value goes.
-    """
-    value = text.strip()
-    if value == "~" or value.startswith("~/"):
-        return str(Path.home()) + value[1:]
-    return value
 
 
 def _next_steps(registry: Registry, name: str) -> list[str]:

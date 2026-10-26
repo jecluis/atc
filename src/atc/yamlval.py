@@ -92,14 +92,19 @@ class _NoMergeConstructor(SafeConstructor):
                 )
 
 
-def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
+def set_in_text(
+    text: str, keys: Sequence[str], value: JsonValue, *, before: str | None = None
+) -> str:
     """
     Set the entry at ``keys`` in the YAML document ``text``, and return the new text.
 
     ``text`` is edited in ruamel's round-trip mode, so comments, key order,
     quoting and blank lines stay as they were, and the comment lines that
     follow the entry stay after it. A mapping that is missing on the way is
-    created, and so is the entry, at the end of its mapping. A mapping that was
+    created, and so is the entry, at the end of its mapping; at the root, it
+    goes just before the entry ``before`` instead, when there is one. The block
+    of comment lines directly above that entry, and the blank lines above the
+    block, then stay above it, after what is created. A mapping that was
     written as ``{}`` and gets its first entry is written in block style. A list
     is written in flow style, ``[a, b]``, and a list that was there is replaced.
     The comments inside a replaced block list or mapping go with it, but the
@@ -124,7 +129,10 @@ def set_in_text(text: str, keys: Sequence[str], value: JsonValue) -> str:
         entry = wrapper
     replaced = holder.get(keys[depth])
     after = _open_up(root, keys[:depth], holder)
-    _put(holder, keys[depth], entry)
+    if before is not None and not depth and keys[0] not in holder and before in root:
+        _insert(holder, keys[depth], entry, before)
+    else:
+        _put(holder, keys[depth], entry)
     if after:
         _tail(holder, keys[depth]).attach(after)
     edited = _render(editor, root)
@@ -387,6 +395,8 @@ class _Map(_Node, Protocol):
 
     def __reversed__(self) -> Iterator[str]: ...
 
+    def insert(self, pos: int, key: str, value: object) -> None: ...
+
 
 def _new_map() -> _Map:
     return cast("_Map", CommentedMap())
@@ -475,6 +485,35 @@ def _put(holder: _Map, key: str, value: object) -> None:
     lines = _detach_lines(ending)
     if lines:
         _tail(holder, key).attach(lines)
+
+
+def _insert(holder: _Map, key: str, value: object, before: str) -> None:
+    """
+    Put ``key`` in ``holder`` just before the entry ``before``.
+
+    The lines above ``before`` hang on the entry ahead of it. The block of
+    comment lines that describes ``before``, at its column, and the blank lines
+    above that block, move to the new entry, to stay above ``before``; a deeper
+    comment line stays with the entry it follows.
+    """
+    siblings = list(holder)
+    index = siblings.index(before)
+    ending = _ending(holder, siblings[index - 1]) if index else None
+    moved = ""
+    if ending is not None:
+        column = _key_column(holder, before)
+        kept, block = _split_above(ending.value, column, own_line=True, start=0)
+        head, newline, rest = kept.partition("\n")
+        lines = rest.splitlines(keepends=True)
+        blanks = 0
+        while lines and not lines[-1].strip():
+            _ = lines.pop()
+            blanks += 1
+        ending.value = head + newline + "".join(lines)
+        moved = "\n" * blanks + block
+    holder.insert(index, key, value)
+    if moved:
+        _tail(holder, key).attach(moved)
 
 
 def _detach_lines(ending: _Token) -> str:

@@ -35,6 +35,10 @@ DEFAULT_GC_HOURS = 24
 """The hours between full ``git gc`` runs when the registry says nothing."""
 DEFAULT_BRANCH_FROM = "main"
 """The branch new branches start from when a project says nothing."""
+MACHINE_VARS_KEYS = ("vars",)
+"""Where the machine-wide variables are, as :func:`variables_at` takes keys."""
+_MACHINE_VARS_BEFORE = "accounts"
+"""The entry a new machine-wide ``vars`` goes before, to read ahead of the rest."""
 AUTO_ACCOUNT = "auto"
 """What ``-a`` takes to mean the least used account, so no account has this name."""
 AGENTS = ("claude",)
@@ -337,8 +341,64 @@ def add_account(
         text = set_in_text("", ["version"], REGISTRY_VERSION)
         text = set_in_text(text, ["default-account"], name)
     for variable, value in (machine_vars or {}).items():
-        text = set_in_text(text, ["vars", variable], value)
+        text = set_in_text(
+            text, [*MACHINE_VARS_KEYS, variable], value, before=_MACHINE_VARS_BEFORE
+        )
     edited = set_in_text(text, ["accounts", name], fields)
+    return _write_checked(path, home, edited)
+
+
+def variables_at(registry: Registry, keys: Sequence[str]) -> Mapping[str, str]:
+    """
+    Give the variables that ``registry`` defines in the ``vars`` mapping at ``keys``.
+
+    ``keys`` are :data:`MACHINE_VARS_KEYS`, or ``accounts``, an account's name
+    and ``vars``, or the same for a project.
+
+    Raises:
+        RegistryError: there is no such account or project. The message names
+            the ones there are.
+        ValueError: ``keys`` lead to no ``vars`` mapping.
+
+    """
+    match tuple(keys):
+        case ("vars",):
+            return registry.vars
+        case ("accounts", name, "vars"):
+            return registry.account(name).vars
+        case ("projects", name, "vars"):
+            return registry.project(name).vars
+        case _:
+            raise ValueError(f"/{'/'.join(keys)}: is not a vars mapping")
+
+
+def set_variables(
+    path: Path, home: Path, values: Sequence[tuple[Sequence[str], str, str]]
+) -> Registry:
+    """
+    Set variables in the registry file ``path``, all in one edit.
+
+    Each of ``values`` is the keys of a ``vars`` mapping, as
+    :func:`variables_at` takes them, a variable's name and its value. A value
+    that was there is replaced. A ``vars`` mapping that is missing is created
+    at the end of its entry, except the machine-wide one, which goes before
+    ``accounts``. The file is edited and replaced as :func:`set_skills` does.
+    Returns the registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or has no such account or project. The
+            file is as it was.
+        WriteError: the file cannot be written.
+
+    """
+    text = _read_text(path)
+    registry = parse_registry(text, path, home)
+    edited = text
+    for keys, name, value in values:
+        _ = variables_at(registry, keys)
+        before = _MACHINE_VARS_BEFORE if tuple(keys) == MACHINE_VARS_KEYS else None
+        edited = set_in_text(edited, [*keys, name], value, before=before)
     return _write_checked(path, home, edited)
 
 
@@ -873,6 +933,16 @@ def _check_allowed(
     raise RegistryError(message)
 
 
+def variable_name_problem(name: str) -> str | None:
+    """Say what is wrong with ``name`` as a variable's name; ``None`` if nothing is."""
+    if _VARIABLE_NAME.fullmatch(name):
+        return None
+    return (
+        f"'{name}' is not a valid variable name; names are lowercase letters, "
+        "digits and '_', and start with a letter"
+    )
+
+
 def account_name_problem(name: str) -> str | None:
     """Say what is wrong with ``name`` as an account's name; ``None`` if nothing is."""
     if not _NAME.fullmatch(name):
@@ -916,13 +986,9 @@ def _no_account(name: str, accounts: Mapping[str, Account]) -> str:
 def _check_variables(variables: Mapping[str, str], pointer: str, origin: Path) -> None:
     """Refuse a variable whose name cannot be referenced, or whose value could."""
     for name, value in variables.items():
-        if not _VARIABLE_NAME.fullmatch(name):
-            message = (
-                f"{origin}: {pointer}/{name}: '{name}' is not a valid variable "
-                "name; names are lowercase letters, digits and '_', and start "
-                "with a letter"
-            )
-            raise RegistryError(message)
+        problem = variable_name_problem(name)
+        if problem is not None:
+            raise RegistryError(f"{origin}: {pointer}/{name}: {problem}")
         if "{{" in value:
             message = f"{origin}: {pointer}/{name}: the value must not contain '{{{{'"
             raise RegistryError(message)

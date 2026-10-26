@@ -8,7 +8,13 @@ from atc.context import BuildContext
 from atc.errors import ConfigError
 from atc.jsonval import JsonObject, JsonValue
 from atc.refs import Located
-from atc.registry import Registry, account_unit, project_unit
+from atc.registry import (
+    MACHINE_VARS_KEYS,
+    Registry,
+    account_unit,
+    project_unit,
+    variables_at,
+)
 from atc.rendered import rendered_name
 from atc.resolve import resolve
 from atc.template import REFERENCE
@@ -48,15 +54,26 @@ class Owner:
         """Give the reference that units write for the variable ``name`` here."""
         return _PREFIXES[self.level] + name
 
-    def defined(self, registry: Registry) -> Mapping[str, str]:
-        """Give the variables that ``registry`` defines here."""
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """Where the registry keeps the variables here, as ``variables_at`` takes."""
         match self.level:
             case "machine":
-                return registry.vars
+                return MACHINE_VARS_KEYS
             case "account":
-                return registry.accounts[self.name].vars
+                return ("accounts", self.name, "vars")
             case "project":
-                return registry.projects[self.name].vars
+                return ("projects", self.name, "vars")
+
+    def defined(self, registry: Registry) -> Mapping[str, str]:
+        """
+        Give the variables that ``registry`` defines here.
+
+        Raises:
+            RegistryError: it has no such account or project.
+
+        """
+        return variables_at(registry, self.keys)
 
 
 MACHINE = Owner("machine")

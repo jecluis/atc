@@ -382,6 +382,80 @@ def test_mappings_created_on_the_way_come_before_the_lines_that_followed() -> No
     )
 
 
+BEFORE = """\
+# this machine
+version: 1
+default-account: a  # mine
+
+# the accounts
+accounts:
+  a: {agent: claude}
+"""
+
+
+def test_a_missing_mapping_goes_before_the_entry_named() -> None:
+    changed = set_in_text(BEFORE, ["vars", "root"], "/r", before="accounts")
+
+    assert changed == BEFORE.replace(
+        "# mine\n\n# the accounts\n",
+        "# mine\nvars:\n  root: /r\n\n# the accounts\n",
+    )
+
+
+def test_before_does_not_move_a_mapping_that_is_there() -> None:
+    text = set_in_text(BEFORE, ["vars", "root"], "/r", before="accounts")
+
+    changed = set_in_text(text, ["vars", "b"], "2", before="accounts")
+
+    assert changed == text.replace("  root: /r\n", "  root: /r\n  b: '2'\n")
+
+
+def test_before_an_entry_the_mapping_lacks_puts_it_at_the_end() -> None:
+    changed = set_in_text(BEFORE, ["projects", "p", "repo"], "/p", before="nothing")
+
+    assert changed == BEFORE + "projects:\n  p:\n    repo: /p\n"
+
+
+def test_before_leaves_a_deeper_comment_with_the_entry_it_follows() -> None:
+    text = (
+        "version: 1\nagents:\n  claude:\n    bin: claude\n"
+        "    # bin: ~/bin/wrapper\naccounts:\n  a: {agent: claude}\n"
+    )
+
+    changed = set_in_text(text, ["vars", "root"], "/r", before="accounts")
+
+    assert changed == text.replace(
+        "    # bin: ~/bin/wrapper\n", "    # bin: ~/bin/wrapper\nvars:\n  root: /r\n"
+    )
+
+
+def test_before_moves_only_the_block_right_above_the_entry() -> None:
+    text = (
+        "version: 1\ndefault-account: a  # mine\n# about the default\n\n"
+        "# the accounts\naccounts:\n  a: {agent: claude}\n"
+    )
+
+    changed = set_in_text(text, ["vars", "root"], "/r", before="accounts")
+
+    assert changed == text.replace(
+        "# about the default\n\n", "# about the default\nvars:\n  root: /r\n\n"
+    )
+
+
+def test_before_applies_at_the_root_only() -> None:
+    text = "version: 1\nvars:\n  accounts: x\naccounts:\n  a: {agent: claude}\n"
+
+    changed = set_in_text(text, ["vars", "b"], "2", before="accounts")
+
+    assert changed == text.replace("  accounts: x\n", "  accounts: x\n  b: '2'\n")
+
+
+def test_before_the_first_entry_puts_it_first() -> None:
+    changed = set_in_text("a: 1\nb: 2\n", ["c"], 3, before="a")
+
+    assert changed == "c: 3\na: 1\nb: 2\n"
+
+
 def test_a_mapping_created_at_the_end_of_the_document_keeps_the_last_comment_last() -> (
     None
 ):

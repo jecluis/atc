@@ -1,15 +1,17 @@
-"""``atc vars``: list the variables of the registry."""
+"""``atc vars``: list and define the variables of the registry."""
 
 import re
+import sys
+from pathlib import Path
 
 import pytest
 
 from atc.cli import main
-from atc.exitcodes import OK
+from atc.exitcodes import CONFIG, INTERRUPTED, OK, USAGE
 from atc.paths import Dirs
-from atc.registry import REGISTRY_FILE
+from atc.registry import REGISTRY_FILE, load_registry
 from tests.conftest import ConfigWriter
-from tests.helpers import VARIABLE_FILES, VARIABLE_REGISTRY, unit
+from tests.helpers import VARIABLE_FILES, VARIABLE_REGISTRY, answering, unit
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +53,7 @@ def test_ls_shows_each_variable_with_its_owner_value_and_users(
     assert rows[8][:3] == ["account.vars.scratch", "account work", "undefined"]
     assert rows[-1] == ["project.vars.extra", "project baz", "e", "-"]
     assert len(rows) == 14
-    assert "8 variables are undefined\n" in captured.err
+    assert "8 variables are undefined; atc vars set asks for them" in captured.err
 
 
 def test_ls_names_three_users_and_counts_the_rest(
@@ -144,3 +146,294 @@ def test_ls_warns_about_units_it_cannot_read_and_lists_the_rest(
     assert "account 'personal': the variables of its units are left out" in (
         captured.err
     )
+
+
+def registry_path(dirs: Dirs) -> Path:
+    return dirs.config_dir / REGISTRY_FILE
+
+
+def test_set_writes_a_machine_wide_variable_before_the_accounts(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(
+        VARIABLE_FILES,
+        VARIABLE_REGISTRY.replace("    vars: {root: /r, zeta: z, alpha: a}\n", ""),
+    )
+
+    assert main(["vars", "set", "host", "example.org"]) == OK
+
+    captured = capsys.readouterr()
+    path = registry_path(dirs)
+    assert captured.out == f"vars.host: set to example.org for machine in {path}\n"
+    assert "warning: nothing uses" not in captured.err
+    assert "account and machine-wide variables take effect once atc sync runs" in (
+        captured.err
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "default-account: personal\nvars:\n  host: example.org\naccounts:\n" in (
+        text
+    )
+    assert load_registry(path, home).vars == {"host": "example.org"}
+
+
+def test_set_says_what_a_replaced_value_was(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+
+    assert main(["vars", "set", "scratch", "~/s", "-a", "personal"]) == OK
+
+    path = registry_path(dirs)
+    where = f"for account personal in {path}"
+    expected = f"account.vars.scratch: set to {home}/s {where}, was s\n"
+    assert capsys.readouterr().out == expected
+    registry = load_registry(path, home)
+    assert registry.accounts["personal"].vars == {"scratch": f"{home}/s"}
+
+
+def test_set_for_a_project_says_it_takes_effect_at_the_next_run(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+
+    assert main(["vars", "set", "port", "8080", "-p", "bar"]) == OK
+
+    err = capsys.readouterr().err
+    assert "a project's variables take effect at its next atc run" in err
+    assert "atc sync" not in err
+    assert load_registry(registry_path(dirs), home).projects["bar"].vars == {
+        "port": "8080"
+    }
+
+
+def test_set_warns_about_a_variable_nothing_uses_and_writes_it(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+
+    assert main(["vars", "set", "scrach", "x", "-a", "work"]) == OK
+
+    err = capsys.readouterr().err
+    assert "nothing uses account.vars.scrach for account work; is the name right?" in (
+        err
+    )
+    registry = load_registry(registry_path(dirs), home)
+    assert registry.accounts["work"].vars == {"scrach": "x"}
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["Bad", "x"], "'Bad' is not a valid variable name"),
+        (["ok", "a {{b}}"], "the value must not contain '{{'"),
+        (["ok", " "], "a value is needed"),
+        (["ok", "x", "-a", "personal", "-p", "bar"], "give -a or -p, not both"),
+    ],
+)
+def test_set_refuses_what_cannot_be_written_as_a_usage_error(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
+    args: list[str],
+    message: str,
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    before = registry_path(dirs).read_text(encoding="utf-8")
+
+    assert main(["vars", "set", *args]) == USAGE
+
+    assert message in capsys.readouterr().err
+    assert registry_path(dirs).read_text(encoding="utf-8") == before
+
+
+def test_set_for_an_unknown_account_names_the_accounts(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    before = registry_path(dirs).read_text(encoding="utf-8")
+
+    assert main(["vars", "set", "x", "1", "-a", "ghost"]) == CONFIG
+
+    assert "no account named 'ghost'" in capsys.readouterr().err
+    assert registry_path(dirs).read_text(encoding="utf-8") == before
+
+
+def test_set_without_a_value_asks_from_the_current_one(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    given = answering(monkeypatch)
+    given.path = "~/scratch"
+
+    assert main(["vars", "set", "scratch", "-a", "personal"]) == OK
+
+    assert given.asked == ["account.vars.scratch for account personal: default=s"]
+    assert given.check is not None
+    assert given.check("") == "a value is needed"
+    registry = load_registry(registry_path(dirs), home)
+    assert registry.accounts["personal"].vars == {"scratch": f"{home}/scratch"}
+
+
+def test_set_without_a_value_or_a_terminal_is_a_usage_error(
+    configure: ConfigWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    assert main(["vars", "set", "scratch", "-a", "personal"]) == USAGE
+
+    assert "give the VALUE" in capsys.readouterr().err
+
+
+def test_set_without_a_name_asks_for_each_undefined_one_and_skips_empty_answers(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    given = answering(monkeypatch)
+    given.path = ""
+    given.paths = {"vars.host ": "h", "account.vars.notes for account work": "n"}
+
+    assert main(["vars", "set"]) == OK
+
+    asked = [
+        ("vars.host", "machine", "projects/bar.json"),
+        ("account.vars.notes", "account personal", "status.in.sh"),
+        ("account.vars.cache", "account personal", "projects/bar.json"),
+        ("account.vars.other", "account personal", "projects/baz.json"),
+        ("account.vars.scratch", "account work", "accounts/work.json"),
+        ("account.vars.notes", "account work", "status.in.sh"),
+        ("account.vars.cache", "account work", "projects/bar.json"),
+        ("project.vars.port", "project bar", "projects/bar.json"),
+    ]
+    assert given.asked == [
+        f"{reference} for {owner}, used by {users} (empty to skip): default="
+        for reference, owner, users in asked
+    ]
+    assert given.check is not None
+    assert given.check("") is None
+    assert given.check("{{x}}") == "the value must not contain '{{'"
+    captured = capsys.readouterr()
+    path = registry_path(dirs)
+    assert captured.out == (
+        f"vars.host: set to h for machine in {path}\n"
+        f"account.vars.notes: set to n for account work in {path}\n"
+    )
+    assert "6 variables are still undefined" in captured.err
+    registry = load_registry(registry_path(dirs), home)
+    assert registry.vars["host"] == "h"
+    assert registry.accounts["work"].vars == {"notes": "n"}
+
+
+def test_set_without_a_name_for_one_owner_asks_only_for_its_variables(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    given = answering(monkeypatch)
+    given.path = "1"
+
+    assert main(["vars", "set", "-p", "bar"]) == OK
+
+    assert [q.split(" for ")[0] for q in given.asked] == ["project.vars.port"]
+    assert load_registry(registry_path(dirs), home).projects["bar"].vars == {
+        "port": "1"
+    }
+
+
+def test_set_without_a_name_cancelled_writes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    before = registry_path(dirs).read_text(encoding="utf-8")
+    given = answering(monkeypatch)
+    given.path = "x"
+    given.paths = {"account.vars.cache for account work": None}
+
+    assert main(["vars", "set"]) == INTERRUPTED
+
+    assert "cancelled; nothing changed" in capsys.readouterr().err
+    assert registry_path(dirs).read_text(encoding="utf-8") == before
+
+
+def test_set_without_a_name_with_nothing_undefined_says_so(
+    configure: ConfigWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure({"conf/accounts/personal.json": unit()})
+    given = answering(monkeypatch)
+
+    assert main(["vars", "set"]) == OK
+
+    assert given.asked == []
+    assert "no variable is undefined" in capsys.readouterr().err
+
+
+def test_set_without_a_name_or_a_terminal_is_a_usage_error(
+    configure: ConfigWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    assert main(["vars", "set"]) == USAGE
+
+    assert "give the NAME and the VALUE" in capsys.readouterr().err
+
+
+def test_set_without_a_value_cancelled_writes_nothing(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    before = registry_path(dirs).read_text(encoding="utf-8")
+    given = answering(monkeypatch)
+    given.path = None
+
+    assert main(["vars", "set", "scratch", "-a", "work"]) == INTERRUPTED
+
+    assert "cancelled; nothing changed" in capsys.readouterr().err
+    assert registry_path(dirs).read_text(encoding="utf-8") == before
+
+
+def test_set_without_a_name_for_an_unknown_account_names_the_accounts(
+    configure: ConfigWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(VARIABLE_FILES, VARIABLE_REGISTRY)
+    given = answering(monkeypatch)
+
+    assert main(["vars", "set", "-a", "ghost"]) == CONFIG
+
+    assert "no account named 'ghost'" in capsys.readouterr().err
+    assert given.asked == []
