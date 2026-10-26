@@ -1436,6 +1436,20 @@ To have staged markdown formatted and linted on every commit, install
 [lefthook](https://lefthook.dev) and run `lefthook install` once per clone; a
 commit then stops on what markdownlint-cli2 reports.
 
+## Contributing
+
+Run `./check-and-fix.sh` before sending a change; it must pass (see
+Development). Commit subjects take the form `component: short description`,
+where the component is `atc` for the tool, its packaging, tooling and examples,
+or `docs` for documentation.
+
+Every commit must carry a
+[Developer Certificate of Origin](https://developercertificate.org/) sign-off: a
+`Signed-off-by:` line, added by `git commit -s`, certifying that you have the
+right to submit the change under this repository's licenses (see License). Every
+commit must also be GPG-signed, with `git commit -S` or with `commit.gpgsign`
+set to `true`. A commit missing either is not accepted.
+
 ## License
 
 Copyright (C) 2026 Joao Eduardo Luis.
