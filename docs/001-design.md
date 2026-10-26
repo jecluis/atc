@@ -857,8 +857,10 @@ here and in `sync` and `run`.
   every project.
 - `atc prj show [NAME]`: one project, including its worktrees (from git). `NAME`
   defaults to the current project.
-- `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]`: adds
-  a project to `machine.yaml`.
+- `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]...`:
+  adds a project to `machine.yaml`.
+  - Each `-a ACCOUNT` goes into `accounts`, always written as a list, and the
+    first also into `account`. Without `-a`, every account is allowed.
   - `REPO` defaults to the current directory. What is stored is the repository's
     main worktree, found from `git rev-parse --git-common-dir`, whichever
     worktree `REPO` is in: the common directory's parent, or the common

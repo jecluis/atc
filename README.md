@@ -1016,7 +1016,7 @@ current directory is in, whether in the main checkout or in a worktree, as for
 `atc run`. Outside every registered project that is a usage error, exit status
 `2`. An unknown `NAME` is an error that lists the projects there are.
 
-### `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]`
+### `atc prj add NAME [REPO] [--worktrees DIR] [--from BRANCH] [-a ACCOUNT]...`
 
 Adds the project `NAME` to the machine registry. `REPO` is a checkout of the
 project's repository, the main one, a worktree or a bare repository, and
@@ -1031,11 +1031,25 @@ refused. `BRANCH` is `--from`, or `main` when that is not given. A failed check
 is an error that exits `1`.
 
 The entry goes after the others in `machine.yaml`, as `repo`, then `worktrees`,
-`branch-from` and `account` for the options that were given. Paths are written
-as absolute paths. The rest of the file stays as it was, comments included. The
-new file is checked as the registry always is, and when it is not valid, because
-`NAME` is not a valid name, `NAME` is registered already or `ACCOUNT` is not an
-account, the file is left alone and the error exits `1`.
+`branch-from`, `account` and `accounts` for the options that were given. Paths
+are written as absolute paths. The rest of the file stays as it was, comments
+included. The new file is checked as the registry always is, and when it is not
+valid, because `NAME` is not a valid name, `NAME` is registered already or an
+`ACCOUNT` is not an account, the file is left alone and the error exits `1`.
+
+`-a` can be given more than once. Every `ACCOUNT` goes into `accounts`, in the
+order given, and the first is also written as `account`. So
+`-a work -a personal` writes:
+
+```yaml
+account: work
+accounts: [work, personal]
+```
+
+`accounts` is written as a list even for a single `-a`, so more accounts can be
+added to it by hand. An `ACCOUNT` given twice is a usage error, exit status `2`,
+before anything else is checked. Without `-a`, neither key is written: every
+account may work on the project, and it uses the registry's default account.
 
 If no config source has `projects/NAME.json`, a warning says so: the project
 then has no settings of its own until one exists. It is still added.
@@ -1044,7 +1058,7 @@ then has no settings of its own until one exists. It is still added.
 | ------------------------- | --------------------------------------------------------------------------------------- |
 | `--worktrees DIR`         | Sets `worktrees`: the directory the project's worktrees are made in. It need not exist. |
 | `--from BRANCH`           | Sets `branch-from`: the branch new branches start from.                                 |
-| `-a`, `--account ACCOUNT` | Sets `account`: the account the project uses by default.                                |
+| `-a`, `--account ACCOUNT` | Adds `ACCOUNT` to `accounts`; the first one given also sets `account`, the default.     |
 
 ### `atc prj rm NAME`
 

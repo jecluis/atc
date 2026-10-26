@@ -17,7 +17,7 @@ from atc.cli.options import (
     worktrees_table,
 )
 from atc.errors import ConfigError, GitError
-from atc.jsonval import JsonObject
+from atc.jsonval import JsonObject, JsonValue
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
@@ -124,11 +124,14 @@ def show(name: str | None) -> None:
 @click.option(
     "-a",
     "--account",
-    "account_name",
+    "account_names",
     metavar="ACCOUNT",
+    multiple=True,
     help=(
-        "The account the project uses by default, which must exist. Without it, "
-        "the registry's default account applies."
+        "An account allowed to work on the project, which must exist; give it "
+        "once for each. The first is the one the project uses by default. "
+        "Without it, every account is allowed, and the registry's default "
+        "account applies."
     ),
 )
 def add(
@@ -136,7 +139,7 @@ def add(
     repo: str | None,
     worktrees: str | None,
     branch_from: str | None,
-    account_name: str | None,
+    account_names: tuple[str, ...],
 ) -> None:
     """
     Add a project to the machine registry.
@@ -152,14 +155,22 @@ def add(
     no project has yet, and the branch that new branches start from must exist
     in it.
 
+    Each ACCOUNT is written to the project's accounts, the list of those
+    allowed to work on it, and the first as its account, the one it uses by
+    default. The list is written even for one, so more can be added to it.
+
     The entry is added after the others in machine.yaml, with paths made
     absolute, and the rest of the file stays as it was, comments included.
     Nothing is written if the result would not be a valid registry, for example
-    because NAME is registered already or ACCOUNT does not exist.
+    because NAME is registered already or an ACCOUNT does not exist.
 
     If no config source has projects/NAME.json, a warning says that the project
     has no settings of its own until one does.
     """
+    repeated = sorted({a for a in account_names if account_names.count(a) > 1})
+    if repeated:
+        message = f"given more than once: {', '.join(repeated)}"
+        raise click.BadParameter(message, param_hint="'-a' / '--account'")
     ui = Ui.default()
     registry = load_machine_registry(ui)
     checkout = _checkout(repo)
@@ -174,8 +185,9 @@ def add(
         fields["worktrees"] = str(Path(worktrees).expanduser().resolve())
     if branch_from is not None:
         fields["branch-from"] = branch_from
-    if account_name is not None:
-        fields["account"] = account_name
+    if account_names:
+        fields["account"] = account_names[0]
+        fields["accounts"] = list[JsonValue](account_names)
     updated = add_project(registry.path, Path.home(), name, fields)
     ui.line(f"{name}: added to {updated.path}")
     warning = _unit_warning(name)

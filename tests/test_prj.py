@@ -107,7 +107,7 @@ def test_add_writes_the_project_and_keeps_comments(
     status = main(
         [
             *("prj", "add", "bar", str(repo), "--worktrees", str(worktrees)),
-            *("--from", "main", "-a", "work"),
+            *("--from", "main", "-a", "work", "--account", "personal"),
         ]
     )
 
@@ -117,7 +117,7 @@ def test_add_writes_the_project_and_keeps_comments(
     assert "bar" in captured.out
     entry = (
         f"  bar:\n    repo: {repo}\n    worktrees: {worktrees}\n"
-        "    branch-from: main\n    account: work\n"
+        "    branch-from: main\n    account: work\n    accounts: [work, personal]\n"
     )
     assert registry_file(dirs).read_text(encoding="utf-8") == before.replace(
         "\n# the end\n", f"{entry}\n# the end\n"
@@ -125,6 +125,74 @@ def test_add_writes_the_project_and_keeps_comments(
     added = load_registry(registry_file(dirs), home).projects["bar"]
     assert (added.repo, added.worktrees) == (repo, worktrees)
     assert (added.branch_from, added.account) == ("main", "work")
+    assert added.accounts == ("work", "personal")
+
+
+def test_add_writes_one_account_as_a_list(
+    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+
+    status = main(["prj", "add", "bar", str(repo), "-a", "work"])
+
+    assert status == OK
+    text = registry_file(dirs).read_text(encoding="utf-8")
+    assert "    account: work\n    accounts: [work]\n" in text
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == ("work", ("work",))
+
+
+def test_add_without_accounts_allows_every_account(
+    configure: ConfigWriter, dirs: Dirs, home: Path, tmp_path: Path
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+
+    status = main(["prj", "add", "bar", str(repo)])
+
+    assert status == OK
+    added = load_registry(registry_file(dirs), home).projects["bar"]
+    assert (added.account, added.accounts) == (None, None)
+
+
+def test_add_refuses_an_account_given_twice_before_reading_anything(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure(FILES, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+
+    status = main(
+        [
+            *("prj", "add", "bar", str(tmp_path / "nowhere")),
+            *("-a", "work", "-a", "personal", "--account", "work"),
+        ]
+    )
+
+    assert status == USAGE
+    assert "given more than once: work" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
+
+
+def test_add_refuses_an_unknown_second_account_and_leaves_the_file(
+    configure: ConfigWriter,
+    dirs: Dirs,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text())
+    before = registry_file(dirs).read_text(encoding="utf-8")
+
+    status = main(["prj", "add", "bar", str(repo), "-a", "work", "-a", "ghost"])
+
+    assert status == CONFIG
+    err = capsys.readouterr().err
+    assert "/projects/bar/accounts: no account named 'ghost'" in err
+    assert registry_file(dirs).read_text(encoding="utf-8") == before
 
 
 def test_add_refuses_an_existing_name(
