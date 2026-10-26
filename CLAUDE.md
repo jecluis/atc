@@ -67,11 +67,20 @@ as a design constraint, not a lint setting.
   first.
 - Tests are type checked under the same settings as `src/`.
 
+## Markdown
+
+prettier formats the markdown files and markdownlint-cli2 lints them, always
+through `scripts/normalize-markdown.sh`, which pins both versions; never run
+either tool directly. After editing a markdown file, run
+`scripts/normalize-markdown.sh --fix <file>` and fix whatever markdownlint-cli2
+still reports. The tools come from the npm registry until they are cached; if
+the script cannot fetch them, report that rather than skipping it.
+
 ## Before committing
 
-`./check-and-fix.sh` must pass. It runs ruff format, ruff check, basedpyright,
-and pytest, in that order. Use `./check-and-fix.sh --check` for a non-mutating
-verification.
+`./check-and-fix.sh` must pass. It runs ruff format, ruff check,
+`scripts/normalize-markdown.sh`, basedpyright, and pytest, in that order. Use
+`./check-and-fix.sh --check` for a non-mutating verification.
 
 ## Commit messages
 

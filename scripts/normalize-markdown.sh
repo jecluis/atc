@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Single source of truth for markdown formatting: which prettier and
-# markdownlint-cli2 versions are pinned and how they're invoked. Nothing else
-# should invoke either tool directly for markdown.
+# markdownlint-cli2 versions are pinned and how they're invoked. Run by
+# check-and-fix.sh and after edits to a markdown file — nothing else should
+# invoke either tool directly for markdown.
 #
 # There is no package.json/lockfile in this repo, so tool versions are
 # pinned here instead.

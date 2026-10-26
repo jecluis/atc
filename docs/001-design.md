@@ -109,8 +109,9 @@ itself a valid config source (§6). Cloning it into atc's `conf.d/` deploys it.
   `--editable`: an editable install runs the code in the working checkout, which
   sessions can edit, and atc's code decides every session's protections. The
   hardening unit write-protects the installed copy too (§13).
-- **Quality gates:** `check-and-fix.sh` (ruff format, ruff check, basedpyright
-  in `all` mode, pytest) stays the gate.
+- **Quality gates:** `check-and-fix.sh` (ruff format, ruff check,
+  `scripts/normalize-markdown.sh` for the markdown, basedpyright in `all` mode,
+  pytest) stays the gate.
 
 ## 4. Directories atc uses
 

@@ -1416,3 +1416,8 @@ uv run atc show --help        # run atc from the working tree
 ./check-and-fix.sh            # format, lint, type check, test
 ./check-and-fix.sh --check    # verify without changing anything
 ```
+
+Both also cover the markdown files, through `scripts/normalize-markdown.sh`: the
+first formats and lints them, the second only checks them. It needs Node.js: it
+runs pinned versions of prettier and markdownlint-cli2 through pnx or npx,
+fetched from the npm registry when they are not cached.

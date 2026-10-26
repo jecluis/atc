@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Format, lint, type check, and test atc.
+# Format, lint, type check, and test atc, and format and lint its markdown.
 #
 #   ./check-and-fix.sh          fix what can be fixed, then verify
 #   ./check-and-fix.sh --check   verify only, changing nothing
@@ -27,9 +27,11 @@ run() {
 if [[ "${check_only}" == true ]]; then
   run uv run ruff format --check src tests
   run uv run ruff check src tests
+  run scripts/normalize-markdown.sh --check
 else
   run uv run ruff format src tests
   run uv run ruff check --fix src tests
+  run scripts/normalize-markdown.sh --fix
 fi
 
 run uv run basedpyright
