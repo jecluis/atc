@@ -1435,3 +1435,13 @@ fetched from the npm registry when they are not cached.
 To have staged markdown formatted and linted on every commit, install
 [lefthook](https://lefthook.dev) and run `lefthook install` once per clone; a
 commit then stops on what markdownlint-cli2 reports.
+
+## License
+
+Copyright (C) 2026 Joao Eduardo Luis.
+
+atc is licensed under the GNU General Public License, version 3 or (at your
+option) any later version; see `LICENSE`. That covers everything in this
+repository except the files under `examples/` and `contrib/`, which are licensed
+under 0BSD instead (see the `LICENSE` file in each), so they can be copied into
+your own configuration, changed and shared without any conditions.
