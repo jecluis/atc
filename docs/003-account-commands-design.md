@@ -32,7 +32,7 @@ document covers accounts. Projects already have `atc prj add`, `ls`, `show` and
 
 - Projects. They keep the commands they have.
 - Changing an existing account, other than its skills, which `atc skills` does
-  already.
+  already, and its extra units, which `atc account units` does.
 - Logging in or creating the account's directory. atc never creates an account,
   since that means logging in (README, `atc sync`).
 - Running `atc sync` for the new account.

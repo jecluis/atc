@@ -293,6 +293,69 @@ def set_skills(path: Path, home: Path, account: str, refs: Sequence[str]) -> Reg
     return _write_checked(path, home, edited)
 
 
+def add_extra_units(
+    path: Path, home: Path, account: str, refs: Sequence[str]
+) -> Registry:
+    """
+    Add ``refs`` after the extra units of ``account`` in the registry file ``path``.
+
+    The file is edited and replaced as :func:`set_skills` does, and the list is
+    written anew, so a list over several lines goes to one line and loses the
+    comments inside it. Returns the registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or has no such account. The file is as it
+            was.
+        WriteError: the file cannot be written.
+
+    """
+    text = _read_text(path)
+    extra = parse_registry(text, path, home).account(account).extra_units
+    selection: list[JsonValue] = [*extra, *refs]
+    edited = set_in_text(text, ["accounts", account, "extra-units"], selection)
+    return _write_checked(path, home, edited)
+
+
+def remove_extra_units(
+    path: Path, home: Path, account: str, refs: Sequence[str]
+) -> Registry:
+    """
+    Remove ``refs`` from the extra units of ``account`` in the registry file ``path``.
+
+    Each is edited out of the list in place, so the list keeps its style and the
+    other units their comments. With none left, the key goes, with the comment
+    lines directly above it. The file is replaced as :func:`set_skills` does.
+    Returns the registry as it now reads.
+
+    Raises:
+        RegistryError: the file cannot be read, or is not a valid registry,
+            before or after the edit, or has no such account, or the account
+            does not have one of ``refs``, or the edit would lose a comment. The
+            file is as it was.
+        WriteError: the file cannot be written.
+
+    """
+    text = _read_text(path)
+    extra = parse_registry(text, path, home).account(account).extra_units
+    for ref in refs:
+        if ref not in extra:
+            there = (
+                f"the extra units are {', '.join(extra)}" if extra else "it has none"
+            )
+            message = f"{path}: account '{account}': no extra unit '{ref}'; {there}"
+            raise RegistryError(message)
+    keys = ["accounts", account, "extra-units"]
+    if set(extra) <= set(refs):
+        edited = delete_in_text(text, keys)
+    else:
+        edited = text
+        for entry in extra:
+            if entry in refs:
+                edited = delete_item_in_text(edited, keys, entry)
+    return _write_checked(path, home, edited)
+
+
 def add_project(
     path: Path,
     home: Path,

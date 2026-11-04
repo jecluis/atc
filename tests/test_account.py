@@ -1,7 +1,9 @@
 """``atc account``: list, add and remove the accounts of the registry."""
 
+import json
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -12,7 +14,7 @@ from atc.paths import Dirs
 from atc.registry import REGISTRY_FILE, load_registry
 from atc.ui import Ui
 from tests.conftest import ConfigWriter
-from tests.helpers import answering, skill_files, unit
+from tests.helpers import MINIMAL_REGISTRY, answering, skill_files, unit
 
 FILES = {
     "conf/accounts/personal.json": unit(),
@@ -1168,3 +1170,257 @@ def test_add_refuses_a_template_or_project_no_value_can_fix_before_asking(
     assert message in capsys.readouterr().err
     assert answers.asked == []
     assert text_of(dirs) == before
+
+
+HOST = "conf/hosts/behemoth.json"
+BEHEMOTH = "hosts/behemoth.json"
+HOST_FILES: dict[str, JsonObject] = {
+    **FILES,
+    HOST: unit({"theme": "dark"}),
+    "conf/hosts/other.json": unit({"model": "opus"}),
+}
+
+
+def spare_with(*extra: str) -> str:
+    """Write the registry with ``extra`` as the extra units of account spare."""
+    return registry_text().replace(
+        "spare: {agent: claude, dir: ~/.config/spare}",
+        "spare: {agent: claude, dir: ~/.config/spare, extra-units: "
+        + f"[{', '.join(extra)}]}}",
+    )
+
+
+def test_units_add_writes_the_unit_and_says_to_sync(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, registry_text())
+
+    assert main(["account", "units", "add", "work", BEHEMOTH]) == OK
+
+    captured = capsys.readouterr()
+    path = dirs.config_dir / REGISTRY_FILE
+    assert captured.out == f"work: extra units written to {path}\n"
+    assert "run atc sync work" in captured.err
+    assert text_of(dirs) == dedent(registry_text()).replace(
+        "    unit: accounts/job.json\n",
+        f"    unit: accounts/job.json\n    extra-units: [{BEHEMOTH}]\n",
+    )
+
+
+def test_units_add_goes_after_the_units_there_are_in_the_order_given(
+    configure: ConfigWriter, dirs: Dirs, home: Path
+) -> None:
+    configure(HOST_FILES, spare_with("hosts/other.json"))
+
+    assert main(["acc", "units", "add", "spare", BEHEMOTH]) == OK
+
+    registry = load_registry(dirs.config_dir / REGISTRY_FILE, home)
+    assert registry.accounts["spare"].extra_units == ("hosts/other.json", BEHEMOTH)
+
+
+def test_a_unit_added_reaches_the_settings_at_the_next_sync_and_not_before(
+    configure: ConfigWriter, home: Path
+) -> None:
+    (home / ".claude").mkdir()
+    configure(HOST_FILES, MINIMAL_REGISTRY)
+    assert main(["sync"]) == OK
+    settings = home / ".claude" / "settings.json"
+    before = settings.read_text(encoding="utf-8")
+
+    assert main(["account", "units", "add", "personal", BEHEMOTH]) == OK
+
+    assert settings.read_text(encoding="utf-8") == before
+    assert main(["sync"]) == OK
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"theme": "dark"}
+
+
+def test_units_add_leaves_a_unit_the_account_has_already(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, spare_with(BEHEMOTH))
+    written = text_of(dirs)
+
+    assert main(["account", "units", "add", "spare", BEHEMOTH, BEHEMOTH]) == OK
+
+    assert capsys.readouterr().out == "spare: extra units unchanged\n"
+    assert text_of(dirs) == written
+
+
+def test_units_add_knows_a_unit_the_account_has_by_another_spelling(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(
+        {
+            "main/conf/accounts/personal.json": unit(),
+            "main/conf/accounts/job.json": unit(),
+            "main/conf/accounts/spare.json": unit(),
+            "main/conf/hosts/behemoth.json": unit(),
+        },
+        spare_with(BEHEMOTH),
+    )
+    written = text_of(dirs)
+
+    status = main(["account", "units", "add", "spare", f"@main/{BEHEMOTH}"])
+
+    assert status == OK
+    assert capsys.readouterr().out == "spare: extra units unchanged\n"
+    assert text_of(dirs) == written
+
+
+def test_units_add_leaves_the_accounts_own_unit_out(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, registry_text())
+    written = text_of(dirs)
+
+    assert main(["account", "units", "add", "work", "accounts/job.json"]) == OK
+
+    assert capsys.readouterr().out == "work: extra units unchanged\n"
+    assert text_of(dirs) == written
+
+
+def test_units_add_says_references_start_under_conf_and_writes_nothing(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, registry_text())
+    written = text_of(dirs)
+
+    status = main(["account", "units", "add", "work", HOST])
+
+    assert status == CONFIG
+    err = capsys.readouterr().err
+    assert f"'{HOST}': no config source has it" in err
+    assert "conf/" in err.split("no config source has it")[1]
+    assert text_of(dirs) == written
+
+
+def test_units_add_writes_nothing_when_one_unit_of_several_is_missing(
+    configure: ConfigWriter, dirs: Dirs
+) -> None:
+    configure(HOST_FILES, registry_text())
+    written = text_of(dirs)
+
+    assert (
+        main(["account", "units", "add", "work", BEHEMOTH, "hosts/no.json"]) == CONFIG
+    )
+
+    assert text_of(dirs) == written
+
+
+def test_units_add_asks_which_source_when_several_have_the_unit(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(
+        {
+            "a/conf/accounts/personal.json": unit(),
+            "a/conf/accounts/job.json": unit(),
+            "a/conf/accounts/spare.json": unit(),
+            "a/conf/hosts/behemoth.json": unit(),
+            "b/conf/hosts/behemoth.json": unit(),
+        },
+        registry_text(),
+    )
+    written = text_of(dirs)
+
+    assert main(["account", "units", "add", "work", BEHEMOTH]) == CONFIG
+
+    assert "@name/" in capsys.readouterr().err
+    assert text_of(dirs) == written
+
+
+def test_units_add_of_an_unknown_account_lists_the_accounts(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, registry_text())
+
+    assert main(["account", "units", "add", "ghost", BEHEMOTH]) == CONFIG
+
+    assert "personal, work, spare" in capsys.readouterr().err
+
+
+def test_units_add_refuses_a_unit_that_cannot_be_built_for_the_account(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure({**FILES, HOST: unit({"autoMemoryDirectory": "/x"})}, registry_text())
+    written = text_of(dirs)
+
+    assert main(["account", "units", "add", "work", BEHEMOTH]) == CONFIG
+
+    assert "/autoMemoryDirectory" in capsys.readouterr().err
+    assert text_of(dirs) == written
+
+
+def test_units_add_names_the_variables_left_undefined_and_writes_the_unit(
+    configure: ConfigWriter, dirs: Dirs, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(
+        {**FILES, HOST: unit({"model": "{{account.vars.tier}}"})}, registry_text()
+    )
+
+    assert main(["account", "units", "add", "work", BEHEMOTH]) == OK
+
+    err = capsys.readouterr().err
+    assert f"account.vars.tier is undefined, used by {BEHEMOTH}" in err
+    assert "atc vars set, which asks for them, then atc sync work" in err
+    registry = load_registry(dirs.config_dir / REGISTRY_FILE, home)
+    assert registry.accounts["work"].extra_units == (BEHEMOTH,)
+
+
+def test_units_rm_removes_a_unit_and_keeps_the_others(
+    configure: ConfigWriter, dirs: Dirs, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, spare_with(BEHEMOTH, "hosts/other.json"))
+
+    assert main(["account", "units", "rm", "spare", BEHEMOTH]) == OK
+
+    captured = capsys.readouterr()
+    path = dirs.config_dir / REGISTRY_FILE
+    assert captured.out == f"spare: extra units written to {path}\n"
+    assert "run atc sync spare" in captured.err
+    registry = load_registry(path, home)
+    assert registry.accounts["spare"].extra_units == ("hosts/other.json",)
+
+
+def test_units_rm_of_the_last_unit_drops_the_key(
+    configure: ConfigWriter, dirs: Dirs
+) -> None:
+    configure(HOST_FILES, spare_with(BEHEMOTH))
+
+    assert main(["account", "units", "rm", "spare", BEHEMOTH]) == OK
+
+    assert "extra-units" not in text_of(dirs)
+
+
+def test_units_rm_works_when_the_unit_is_gone_from_the_sources(
+    configure: ConfigWriter, dirs: Dirs
+) -> None:
+    configure(FILES, spare_with(BEHEMOTH))
+
+    assert main(["account", "units", "rm", "spare", BEHEMOTH]) == OK
+
+    assert "extra-units" not in text_of(dirs)
+
+
+def test_units_rm_of_a_unit_the_account_lacks_lists_those_it_has(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, spare_with(BEHEMOTH))
+    written = text_of(dirs)
+
+    status = main(["account", "units", "rm", "spare", BEHEMOTH, "hosts/no.json"])
+
+    assert status == CONFIG
+    err = capsys.readouterr().err
+    assert "no extra unit 'hosts/no.json'" in err
+    assert f"the extra units are {BEHEMOTH}" in err
+    assert text_of(dirs) == written
+
+
+def test_units_rm_says_when_the_account_has_no_extra_units(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(HOST_FILES, registry_text())
+
+    assert main(["account", "units", "rm", "work", BEHEMOTH]) == CONFIG
+
+    assert "it has none" in capsys.readouterr().err

@@ -14,11 +14,13 @@ from atc.registry import (
     VariableRemoval,
     account_units,
     add_account,
+    add_extra_units,
     add_project,
     choose_account,
     load_registry,
     normalize_path,
     parse_registry,
+    remove_extra_units,
     set_skills,
     set_variables,
     variable_name_problem,
@@ -940,6 +942,110 @@ def test_account_units_names_the_account_when_an_extra_unit_is_missing(
 
     with pytest.raises(PathError, match=r"account 'a': 'hosts/one.json': no such unit"):
         _ = account_units(discover(root, uid=UID), registry, registry.account("a"))
+
+
+BLOCK_LIST = """\
+    version: 1
+    default-account: a
+    accounts:
+      a:
+        agent: claude
+        dir: /a
+        # for this machine
+        extra-units:
+          # first
+          - hosts/one.json
+          # second
+          - hosts/two.json  # here
+          - hosts/three.json
+"""
+
+
+def test_add_extra_units_writes_the_list_and_keeps_the_rest_of_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    registry = add_extra_units(path, home, "a", ["hosts/one.json", "@b/two.json"])
+
+    assert registry.accounts["a"].extra_units == ("hosts/one.json", "@b/two.json")
+    assert load_registry(path, home) == registry
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED).replace(
+        "dir: /a  # the main one\n",
+        "dir: /a  # the main one\n    extra-units: [hosts/one.json, '@b/two.json']\n",
+    )
+
+
+def test_add_extra_units_goes_after_what_the_file_holds_now(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+    _ = add_extra_units(path, home, "a", ["hosts/one.json"])
+
+    registry = add_extra_units(path, home, "a", ["hosts/two.json"])
+
+    assert registry.accounts["a"].extra_units == ("hosts/one.json", "hosts/two.json")
+
+
+def test_add_extra_units_refuses_an_unknown_account_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+
+    with pytest.raises(RegistryError, match=r"no account named 'ghost'; .* a, b"):
+        _ = add_extra_units(path, home, "ghost", ["x.json"])
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED)
+
+
+def test_remove_extra_units_edits_the_list_in_place_and_keeps_its_comments(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(BLOCK_LIST)
+
+    registry = remove_extra_units(path, home, "a", ["hosts/two.json"])
+
+    assert registry.accounts["a"].extra_units == ("hosts/one.json", "hosts/three.json")
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(BLOCK_LIST).replace(
+        "      # second\n      - hosts/two.json  # here\n", ""
+    )
+
+
+def test_remove_extra_units_drops_the_key_when_none_are_left(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(BLOCK_LIST)
+    everything = ["hosts/one.json", "hosts/two.json", "hosts/three.json"]
+
+    registry = remove_extra_units(path, home, "a", everything)
+
+    assert registry.accounts["a"].extra_units == ()
+    assert "extra-units" not in path.read_text(encoding="utf-8")
+
+
+def test_remove_extra_units_drops_the_key_of_an_entry_in_flow_style(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(COMMENTED)
+    _ = add_extra_units(path, home, "b", ["hosts/one.json"])
+
+    registry = remove_extra_units(path, home, "b", ["hosts/one.json"])
+
+    assert registry.accounts["b"].extra_units == ()
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED)
+
+
+def test_remove_extra_units_refuses_a_unit_the_account_lacks_and_leaves_the_file(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(BLOCK_LIST)
+
+    with pytest.raises(
+        RegistryError, match=r"account 'a': no extra unit 'hosts/no.json'; .*one.json"
+    ):
+        _ = remove_extra_units(path, home, "a", ["hosts/one.json", "hosts/no.json"])
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(BLOCK_LIST)
 
 
 def test_set_skills_writes_the_selection_and_returns_the_registry(

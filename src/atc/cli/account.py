@@ -1,6 +1,6 @@
 """``atc account``: see and change the accounts of the machine registry."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from rich.text import Text
 from atc.cli.options import (
     cancelled,
     current_dirs,
+    load_build_context,
     load_machine_registry,
     load_sources,
 )
@@ -22,7 +23,7 @@ from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
 from atc.jsonval import JsonObject, JsonValue
 from atc.needed import Needed, needed_variables
-from atc.refs import resolve_registry
+from atc.refs import Located, resolve_registry
 from atc.registry import (
     AGENTS,
     DEFAULT_AGENTS_MD,
@@ -33,7 +34,9 @@ from atc.registry import (
     Registry,
     account_name_problem,
     add_account,
+    add_extra_units,
     normalize_path,
+    remove_extra_units,
 )
 from atc.skills import discover_skills
 from atc.sources import Sources
@@ -269,6 +272,118 @@ def rm(name: str, force: bool) -> None:
             "out of it; delete it if it is no longer needed"
         )
         ui.warning(message)
+
+
+@click.group(cls=rich_click.RichGroup, name="units")
+def units() -> None:
+    """Add and remove the units that this machine adds to an account's settings."""
+
+
+account.add_command(units)
+
+
+@units.command(cls=rich_click.RichCommand, name="add")
+@click.argument("name", metavar="ACCOUNT")
+@click.argument("references", nargs=-1, required=True, metavar="UNIT...")
+def units_add(name: str, references: tuple[str, ...]) -> None:
+    """
+    Add extra units to ACCOUNT, on this machine.
+
+    Each UNIT is a unit reference, a path under a config source's conf, with
+    @source/ in front when several sources have it: hosts/NAME.json for the file
+    conf/hosts/NAME.json. It is written to the account's extra-units in
+    machine.yaml, after the ones there are, and the rest of the file stays as it
+    was, but for comments inside a list written over several lines. Extra units
+    are merged after the account's own unit, so they override it. "atc account
+    ls" lists them.
+
+    A UNIT the account has already is left as it is. Nothing is changed when a
+    UNIT does not exist, or when the account cannot be built with it, but for
+    settings keys Claude Code does not define, which "atc src check" reports.
+    Variables that are left undefined are named, and the unit is written anyway.
+
+    The account's settings are not touched: "atc sync" writes them.
+    """
+    ui = Ui.default()
+    ctx = load_build_context(None)
+    for warning in (*ctx.sources.warnings, *ctx.registry.warnings):
+        ui.warning(warning)
+    found = ctx.registry.account(name)
+    have = _unit_paths(ctx.sources, (found.unit, *found.extra_units))
+    added: list[str] = []
+    for reference in references:
+        unit = _extra_unit(ctx.sources, reference)
+        if unit.path not in have:
+            have.add(unit.path)
+            added.append(reference)
+    if not added:
+        ui.line(f"{name}: extra units unchanged")
+        return
+    updated = replace(found, extra_units=(*found.extra_units, *added))
+    accounts = {**ctx.registry.accounts, name: updated}
+    trial = replace(ctx, registry=replace(ctx.registry, accounts=accounts))
+    needed = needed_variables(trial, updated)
+    written = add_extra_units(ctx.registry.path, ctx.home, name, added)
+    ui.line(f"{name}: extra units written to {written.path}")
+    for need in needed:
+        ui.warning(f"{need.reference} is undefined, used by {users_text(need.users)}")
+    if needed:
+        ui.info(f"next, run atc vars set, which asks for them, then atc sync {name}")
+    else:
+        ui.info(f"next, run atc sync {name}")
+
+
+@units.command(cls=rich_click.RichCommand, name="rm")
+@click.argument("name", metavar="ACCOUNT")
+@click.argument("references", nargs=-1, required=True, metavar="UNIT...")
+def units_rm(name: str, references: tuple[str, ...]) -> None:
+    """
+    Remove extra units from ACCOUNT, on this machine.
+
+    Each UNIT is an entry of the account's extra-units as "atc account ls" lists
+    it. It need not exist any more. It is removed from machine.yaml, and the
+    rest of the file stays as it was. An extra-units left empty goes too, with
+    the comment lines directly above it. A UNIT the account does not have is an
+    error that lists the ones it has, and nothing is changed.
+
+    The account's settings are not touched: "atc sync" writes them.
+    """
+    ui = Ui.default()
+    registry = load_machine_registry(ui)
+    written = remove_extra_units(registry.path, Path.home(), name, references)
+    ui.line(f"{name}: extra units written to {written.path}")
+    ui.info(f"next, run atc sync {name}")
+
+
+def _extra_unit(sources: Sources, reference: str) -> Located:
+    """
+    Find the unit ``reference``, to add it to an account.
+
+    Raises:
+        PathError: it is malformed, or several sources have it, or none does.
+
+    """
+    found = resolve_registry(sources, reference)
+    if found is None:
+        message = (
+            f"'{reference}': no config source has it; a unit reference is a path "
+            "under a source's conf/, such as hosts/NAME.json"
+        )
+        raise PathError(message)
+    return found
+
+
+def _unit_paths(sources: Sources, references: Iterable[str]) -> set[Path]:
+    """Give the files that ``references`` name, leaving out those that name none."""
+    paths: set[Path] = set()
+    for reference in references:
+        try:
+            found = resolve_registry(sources, reference)
+        except PathError:
+            continue
+        if found is not None:
+            paths.add(found.path)
+    return paths
 
 
 def _uses(uses: AccountUses) -> list[str]:

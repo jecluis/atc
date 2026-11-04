@@ -9,10 +9,11 @@ Code is the first agent it supports.
 
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc account ls`, `atc account add`,
-`atc account rm`, `atc prj ls`, `atc prj show`, `atc prj add`, `atc prj rm`,
-`atc vars ls`, `atc vars set`, `atc vars rm`, `atc wt new`, `atc wt ls`,
-`atc wt rm`, `atc skills ls`, `atc skills pick`, `atc skills add`,
-`atc skills rm`, `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
+`atc account rm`, `atc account units add`, `atc account units rm`, `atc prj ls`,
+`atc prj show`, `atc prj add`, `atc prj rm`, `atc vars ls`, `atc vars set`,
+`atc vars rm`, `atc wt new`, `atc wt ls`, `atc wt rm`, `atc skills ls`,
+`atc skills pick`, `atc skills add`, `atc skills rm`, `atc src ls`,
+`atc src check`, `atc src pull` and `atc usage`.
 
 ## Install
 
@@ -123,9 +124,10 @@ is specific to this machine: which accounts exist and where each one lives.
 `atc account add` creates it along with the first account, asking for what
 belongs to this machine and working out the rest from the config sources, and
 `atc account` and `atc prj` add and remove accounts and projects from then on
-(see Usage). `atc vars ls` lists the variables it defines and those the units
-need, and `atc vars set` and `atc vars rm` define and remove them. It belongs to
-no config source, so it never lands in a git repository by accident. It may be a
+(see Usage). `atc account units` adds to an account's settings on this machine
+alone. `atc vars ls` lists the variables it defines and those the units need,
+and `atc vars set` and `atc vars rm` define and remove them. It belongs to no
+config source, so it never lands in a git repository by accident. It may be a
 symbolic link, into a dotfiles repository for example: the commands that edit it
 write the file the link leads to, and the link stays. That file must then be as
 far out of sessions' reach as atc's configuration directory, since a session
@@ -316,9 +318,10 @@ sorted.
 
 **Extra units.** Settings that one account needs on one machine go in a unit of
 their own, such as `conf/hosts/behemoth.json`, and the account's `extra-units`
-in that machine's registry name it, as `hosts/behemoth.json`. The unit stays in
-the config source, where the trust rules cover it and every machine can have one
-of its own; only the choice of it belongs to the machine.
+in that machine's registry name it, as `hosts/behemoth.json`, which
+`atc account units add` writes. The unit stays in the config source, where the
+trust rules cover it and every machine can have one of its own; only the choice
+of it belongs to the machine.
 
 An account's extra units are built as its unit is: they are merged after it, in
 the order of the list, so they override it, with the same references available
@@ -1014,6 +1017,41 @@ Answering no changes nothing. So does Ctrl-C, with status `130`.
 | Option    | Effect                                                                                 |
 | --------- | -------------------------------------------------------------------------------------- |
 | `--force` | Remove the account even while it is in use, and take it out of the places that use it. |
+
+### `atc account units add ACCOUNT UNIT...`
+
+Adds extra units to the account `ACCOUNT` on this machine (see Extra units under
+Units). Each `UNIT` is a unit reference: for the file
+`conf/hosts/behemoth.json`, that is `hosts/behemoth.json`, with `@name/` in
+front when several sources have it. The units go after the ones there are, in
+the account's `extra-units` in `machine.yaml`, as they were typed, and the rest
+of the file stays as it was. In a list written over several lines, the comments
+inside it are lost, since the list is written anew on one line.
+
+A unit the account has already is left as it is, under any spelling, and so is
+the account's own unit. Nothing is changed when a `UNIT` does not exist, when
+several sources have it, or when the account can no longer be built with it, for
+instance because of a missing import or a key the account's settings may not
+contain. A settings key that Claude Code does not define is not among those:
+`atc src check` reports it. A variable that is left undefined does not stop it:
+a warning names the variable and what uses it, and `atc vars set` asks for it.
+
+The account's settings are not touched, so the change takes effect at the next
+`atc sync`, which it says. Exit `1` on an error.
+
+### `atc account units rm ACCOUNT UNIT...`
+
+Removes extra units from the account `ACCOUNT` on this machine. Each `UNIT` is
+an entry of its `extra-units` as `atc account ls` lists it, which need not exist
+any more, so this also repairs an account whose unit is gone from the sources.
+Each is edited out of the list in place, so the list keeps its style and the
+other units their comments, and the rest of the file stays as it was. An
+`extra-units` left empty goes too, with the comment lines directly above it. A
+`UNIT` the account does not have is an error that lists the ones it has, and
+nothing is changed.
+
+The account's settings are not touched, so the change takes effect at the next
+`atc sync`, which it says. Exit `1` on an error.
 
 ### `atc prj ls`
 
