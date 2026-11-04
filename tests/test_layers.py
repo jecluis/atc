@@ -61,6 +61,129 @@ def test_the_registry_can_name_another_account_unit(
     assert layer.settings == {"model": "opus"}
 
 
+EXTRA_UNITS = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal:
+        agent: claude
+        dir: ~/.claude
+        extra-units: [hosts/first.json, hosts/second.json]
+      other: {agent: claude, dir: ~/.config/other}
+"""
+
+
+def test_extra_units_merge_after_the_account_unit_in_the_order_given(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit({"model": "opus", "theme": "dark"}),
+            "conf/accounts/other.json": unit({"model": "opus"}),
+            "conf/hosts/first.json": unit({"model": "sonnet", "effortLevel": "low"}),
+            "conf/hosts/second.json": unit({"effortLevel": "high"}),
+        },
+        EXTRA_UNITS,
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.settings == {
+        "model": "sonnet",
+        "theme": "dark",
+        "effortLevel": "high",
+    }
+    assert layer.warnings == ()
+
+
+def test_extra_units_belong_to_their_account_alone(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/accounts/other.json": unit({"model": "opus"}),
+            "conf/hosts/first.json": unit({"model": "sonnet"}),
+            "conf/hosts/second.json": unit(),
+        },
+        EXTRA_UNITS,
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("other"), lax=False)
+
+    assert layer.settings == {"model": "opus"}
+
+
+def test_an_extra_unit_is_built_like_the_account_unit(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/common/base.json": unit({"theme": "dark"}),
+            "conf/hosts/first.json": unit(
+                {"permissions": {"allow": ["Read({{account.dir}}/**)"]}},
+                imports=["common/base.json"],
+            ),
+            "conf/hosts/second.json": unit(),
+        },
+        EXTRA_UNITS,
+    )
+    account = ctx.registry.account("personal")
+
+    layer = build_account_layer(ctx, account, lax=False)
+
+    rule = f"Read({account.dir}/**)"
+    assert layer.settings == {"theme": "dark", "permissions": {"allow": [rule]}}
+    assert layer.origins == {("allow", rule): ("hosts/first.json",)}
+
+
+def test_an_extra_unit_answers_to_the_policy_of_the_account_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/hosts/first.json": unit({"autoMemoryDirectory": "/x"}),
+            "conf/hosts/second.json": unit(),
+        },
+        EXTRA_UNITS,
+    )
+
+    with pytest.raises(PolicyError, match=r"hosts/first.json: /autoMemoryDirectory"):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
+def test_an_extra_unit_the_account_unit_imports_keeps_its_place_and_warns(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(
+                {"model": "opus"}, imports=["hosts/first.json"]
+            ),
+            "conf/hosts/first.json": unit({"model": "sonnet"}),
+            "conf/hosts/second.json": unit(),
+        },
+        EXTRA_UNITS,
+    )
+
+    layer = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+    assert layer.settings == {"model": "opus"}
+    assert layer.warnings == (
+        "'hosts/first.json': already merged as an import of an earlier unit, "
+        + "so naming it here does not change the merge order",
+    )
+
+
+def test_a_missing_extra_unit_is_an_error(build_context: ContextBuilder) -> None:
+    ctx = build_context({"conf/accounts/personal.json": unit()}, EXTRA_UNITS)
+
+    with pytest.raises(PathError, match=r"'personal': 'hosts/first.json': no such"):
+        _ = build_account_layer(ctx, ctx.registry.account("personal"), lax=False)
+
+
 def test_a_missing_account_unit_is_an_error(build_context: ContextBuilder) -> None:
     ctx = build_context({"conf/other.json": unit()})
 

@@ -26,9 +26,9 @@ def account(name: str, conf_d: Path | None, lax: bool) -> None:
     """
     Print the settings of one account.
 
-    Merges the account's unit, together with everything it imports, and writes
-    the result to standard output as JSON. NAME is an account from the machine
-    registry, machine.yaml in atc's configuration directory.
+    Merges the account's unit and its extra units, together with everything they
+    import, and writes the result to standard output as JSON. NAME is an account
+    from the machine registry, machine.yaml in atc's configuration directory.
 
     Warns about a permission rule that can never apply because another rule in
     the account's settings overrides it.

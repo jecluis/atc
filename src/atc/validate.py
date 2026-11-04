@@ -78,7 +78,7 @@ def validate_config(ctx: BuildContext, *, lax: bool) -> Validation:
     each skill it selects, with no two sharing a name. Every templated asset must
     render for every account. Skills that are skipped,
     or whose front matter looks wrong, are reported as warnings. Building an
-    account layer finds the account's unit, which must exist, and
+    account layer finds the account's units, which must exist, and
     checks each unit it merges against the policy for the layer. A project's
     layer is built once for each account the project allows, or for every
     account when it allows none in particular. A project without a unit has no

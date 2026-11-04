@@ -12,7 +12,7 @@ from atc.registry import (
     REGISTRY_FILE,
     ProjectRemoval,
     VariableRemoval,
-    account_unit,
+    account_units,
     add_account,
     add_project,
     choose_account,
@@ -317,7 +317,7 @@ def test_account_unit_finds_the_default_unit(
     conf_d = make_source(tmp_path / "conf.d", {"conf/accounts/personal.json": unit()})
     registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
 
-    found = account_unit(
+    [found] = account_units(
         discover(conf_d, uid=UID), registry, registry.account("personal")
     )
 
@@ -336,7 +336,7 @@ def test_account_unit_follows_a_qualified_reference(
     )
     registry = load_registry(write_registry(text), home)
 
-    found = account_unit(discover(conf_d, uid=UID), registry, registry.account("a"))
+    [found] = account_units(discover(conf_d, uid=UID), registry, registry.account("a"))
 
     assert found.display == "@bravo/accounts/x.json"
 
@@ -348,7 +348,7 @@ def test_account_unit_names_the_account_when_the_unit_is_missing(
     registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
 
     with pytest.raises(PathError, match=r"personal.*accounts/personal\.json.*no such"):
-        _ = account_unit(
+        _ = account_units(
             discover(conf_d, uid=UID), registry, registry.account("personal")
         )
 
@@ -362,7 +362,7 @@ def test_account_unit_refuses_a_unit_several_sources_have(
     registry = load_registry(write_registry(MINIMAL_REGISTRY), home)
 
     with pytest.raises(PathError, match=r"personal.*@name/"):
-        _ = account_unit(
+        _ = account_units(
             discover(conf_d, uid=UID), registry, registry.account("personal")
         )
 
@@ -888,6 +888,58 @@ COMMENTED = """\
       # the second
       b: {agent: claude, dir: /b, skills: [x]}
 """
+
+
+EXTRA_UNITS = """\
+    version: 1
+    default-account: a
+    accounts:
+      a:
+        agent: claude
+        dir: /a
+        extra-units: [hosts/one.json, "@b/hosts/two.json"]
+      b: {agent: claude, dir: /b}
+"""
+
+
+def test_an_account_has_no_extra_units_unless_it_names_some(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    registry = load_registry(write_registry(EXTRA_UNITS), home)
+
+    assert registry.accounts["a"].extra_units == ("hosts/one.json", "@b/hosts/two.json")
+    assert registry.accounts["b"].extra_units == ()
+
+
+def test_account_units_gives_the_unit_and_then_the_extra_units_in_order(
+    write_registry: RegistryWriter, home: Path, root: Path
+) -> None:
+    conf_d = root
+    _ = make_source(conf_d / "a", {"conf/accounts/a.json": unit()})
+    _ = make_source(conf_d / "a", {"conf/hosts/one.json": unit()})
+    _ = make_source(conf_d / "b", {"conf/hosts/two.json": unit()})
+    registry = load_registry(write_registry(EXTRA_UNITS), home)
+
+    found = account_units(discover(conf_d, uid=UID), registry, registry.account("a"))
+
+    assert [unit.display for unit in found] == [
+        "@a/accounts/a.json",
+        "@a/hosts/one.json",
+        "@b/hosts/two.json",
+    ]
+
+
+def test_account_units_names_the_account_when_an_extra_unit_is_missing(
+    write_registry: RegistryWriter, home: Path, root: Path
+) -> None:
+    _ = make_source(root, {"conf/accounts/a.json": unit()})
+    registry = load_registry(
+        write_registry(EXTRA_UNITS.replace('"@b/hosts/two.json"', "hosts/three.json")),
+        home,
+    )
+
+    with pytest.raises(PathError, match=r"account 'a': 'hosts/one.json': no such unit"):
+        _ = account_units(discover(root, uid=UID), registry, registry.account("a"))
 
 
 def test_set_skills_writes_the_selection_and_returns_the_registry(

@@ -151,6 +151,7 @@ accounts:
     agent: claude
     dir: ~/.config/work/claude
     unit: "@work/accounts/work.json"
+    extra-units: [hosts/behemoth.json]
     agents-md-file: "@work/AGENTS.in.md"
     skills: [git-commits, "@work/review"]
     vars:
@@ -177,6 +178,7 @@ projects:
 | `accounts.<name>.agent`                 | yes      | The coding agent the account is for. Only `claude` exists.                                                                                                                                                                                                                                                                                         |
 | `accounts.<name>.dir`                   | yes      | The account's configuration directory.                                                                                                                                                                                                                                                                                                             |
 | `accounts.<name>.unit`                  | no       | The unit the account's settings are built from, as a unit reference (see Units). Defaults to `accounts/<name>.json`.                                                                                                                                                                                                                               |
+| `accounts.<name>.extra-units`           | no       | Units this machine adds to the account's, as unit references, merged after `unit` in this order (see Extra units under Units). Defaults to none.                                                                                                                                                                                                   |
 | `accounts.<name>.use-default-agents-md` | no       | `true` links `default-agents-md` as the account's instructions file (see `atc sync`). Defaults to `false`.                                                                                                                                                                                                                                         |
 | `accounts.<name>.agents-md-file`        | no       | The file to link as the account's instructions file instead of the default: an absolute or `~/` path, or an asset reference (see Units). `null` means not set.                                                                                                                                                                                     |
 | `accounts.<name>.skills`                | no       | The skills to link into the account, as skill references (see Skills). Defaults to none.                                                                                                                                                                                                                                                           |
@@ -217,6 +219,8 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
 - `skills` is a list of strings. Whether each names a skill that exists is
   checked by `atc src check`, `atc sync` and `atc skills ls`, not when the
   registry is read.
+- `extra-units` is a list of strings. Whether each names a unit that exists is
+  checked when the account is built, as for `unit`.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or a
   symbolic link in the path makes no difference.
 - Variable names are lowercase letters, digits and `_`, starting with a letter,
@@ -277,8 +281,8 @@ Claude Code settings and can import other units:
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
 
-**References.** An import, and the `unit` of an account or project in the
-registry, is one of:
+**References.** An import, and the `unit` and `extra-units` of an account or the
+`unit` of a project in the registry, is one of:
 
 - `path/to/unit.json`: a path relative to the `conf/` of the same source.
 - `@name/path/to/unit.json`: a path relative to the `conf/` of the source called
@@ -309,6 +313,20 @@ point the walk reaches it. Objects merge recursively, arrays concatenate without
 duplicates, and for any other value the later one wins. Two values of different
 JSON types at the same key are an error. The output is deterministic: keys are
 sorted.
+
+**Extra units.** Settings that one account needs on one machine go in a unit of
+their own, such as `conf/hosts/behemoth.json`, and the account's `extra-units`
+in that machine's registry name it, as `hosts/behemoth.json`. The unit stays in
+the config source, where the trust rules cover it and every machine can have one
+of its own; only the choice of it belongs to the machine.
+
+An account's extra units are built as its unit is: they are merged after it, in
+the order of the list, so they override it, with the same references available
+and the same checks. Whatever reads an account's settings reads them too:
+`atc sync`, `atc show`, `atc run --print`, `atc src check`, `atc src pull` and
+`atc vars`. One that does not exist stops the account from being built, rather
+than leaving it without settings it asked for. A unit that the account's unit
+also imports contributes once, at the import, and a warning says so.
 
 ### Templates
 
@@ -574,7 +592,7 @@ installed, atc warns and starts the agent anyway.
 | `--no-guard`              | Do not guard the repository's packed history in this session: no session entries, no gc override, no lock and no listing in the repository list. A warning says so inside a git repository. The project's snapshot is still made.                                                                                                                                                                                           |
 | `--print`                 | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account (with why `-a auto` chose it), whether the session is guarded, the snapshot if there is one, the changes to the environment, the command, and the settings as JSON. Nothing is listed, locked or snapshotted. Warnings about permission rules that never apply go to standard error. |
 | `-q`, `--quiet`           | Leave out the line that names the project, the account and the guard, and the one that says what `-a auto` chose.                                                                                                                                                                                                                                                                                                           |
-| `--lax`                   | Report settings keys Claude Code does not define in the project's units, and under `--print` in the account's unit too, as warnings rather than errors.                                                                                                                                                                                                                                                                     |
+| `--lax`                   | Report settings keys Claude Code does not define in the project's units, and under `--print` in the account's units too, as warnings rather than errors.                                                                                                                                                                                                                                                                    |
 | `--conf-d DIR`            | Read config sources from `DIR` instead of the default, `~/.config/atc/conf.d` (see Configuration). Only with `--print`.                                                                                                                                                                                                                                                                                                     |
 
 ### `atc src ls [--conf-d DIR]`
@@ -613,8 +631,8 @@ as `atc show account` does, and of every project, as `atc show project` does,
 once for each account the project allows (every account when it names none). It
 reports:
 
-- an account whose unit does not exist, or exists in several sources, and the
-  same for a project whose registry entry names a `unit`
+- an account with a unit that does not exist, or exists in several sources, and
+  the same for a project whose registry entry names a `unit`
 - an account that asks for an instructions file (`use-default-agents-md` or
   `agents-md-file`) that does not exist, or that several sources have
 - an account that selects a skill that does not exist or that several sources
@@ -827,9 +845,10 @@ directory is left alone. Otherwise it behaves as `atc skills add`.
 
 Builds the settings of the account `NAME`, one of the accounts in the machine
 registry, and writes them to standard output as JSON. They are the account's
-unit merged together with everything it imports, as described under Units, with
-the references in each unit expanded for the account (see Templates). Every unit
-is checked against what the account's settings may contain.
+unit and its extra units merged together with everything they import, as
+described under Units, with the references in each unit expanded for the account
+(see Templates). Every unit is checked against what the account's settings may
+contain.
 
 The output has sorted keys and a trailing newline, and is the same every time
 for the same configuration. On a terminal it is coloured. Redirected, it is
@@ -874,9 +893,10 @@ output and the exit status are the same as without the check.
 
 Lists the accounts of the machine registry as a table, one row per account, in
 the order of the file: its name, its agent, its directory and its unit, which is
-`accounts/<name>.json` when the registry names none. The default account is
-marked `(default)`. The table goes to standard output. Without a `machine.yaml`
-it prints no table, and says so on standard error.
+`accounts/<name>.json` when the registry names none. When an account has extra
+units, a further column lists them. The default account is marked `(default)`.
+The table goes to standard output. Without a `machine.yaml` it prints no table,
+and says so on standard error.
 
 `atc acc` is the same command as `atc account`, here and for every `atc account`
 command.
@@ -1133,7 +1153,7 @@ units and templated assets that use it: the first three, and a count of the
 rest, or `-` when nothing does.
 
 References are looked for where their level exists, each unit with what it
-imports. For an account, that is its unit, every templated asset, and the unit
+imports. For an account, that is its units, every templated asset, and the unit
 of each project it may work on; a project with no `accounts` allows every
 account. For a project, it is its unit: `{{project.vars.NAME}}` there is the
 project's, and `{{account.vars.NAME}}` belongs to each account the project

@@ -9,7 +9,7 @@ from atc.errors import MergeError, PolicyError
 from atc.jsonval import JsonObject, JsonValue
 from atc.merge import merge_objects
 from atc.refs import Located
-from atc.registry import Account, Project, account_unit, project_unit
+from atc.registry import Account, Project, account_units, project_unit
 from atc.resolve import Resolution, UnitTransform, resolve
 from atc.state import SyncState
 from atc.template import VarValue, expand
@@ -66,20 +66,21 @@ def check_policy(settings: JsonObject, kind: LayerKind, origin: str) -> None:
 
 def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> Layer:
     """
-    Merge the unit of ``account`` and everything it imports.
+    Merge the unit of ``account``, then its extra units, with all they import.
 
     The references in each unit are expanded for ``account``, and the unit is
     then checked against the policy for the account layer. Set ``lax`` to
     report unknown settings keys as warnings instead of errors.
 
     Raises:
-        PathError: the account's unit does not exist, or several sources have it.
+        PathError: a unit of the account does not exist, or several sources have
+            it.
         TemplateError: a unit has a reference that cannot be expanded.
         PolicyError: a unit sets a key the account layer must not.
         ConfigError: as :func:`atc.resolve.resolve`, for the units themselves.
 
     """
-    root = account_unit(ctx.sources, ctx.registry, account)
+    roots = account_units(ctx.sources, ctx.registry, account)
     origins: dict[tuple[str, str], list[str]] = {}
     transform = _unit_transform(
         "account",
@@ -88,7 +89,7 @@ def build_account_layer(ctx: BuildContext, account: Account, *, lax: bool) -> La
         f"account layer for {account.name}",
         origins,
     )
-    resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
+    resolution = resolve(ctx.sources, roots, lax=lax, transform=transform)
     return _layer("account", resolution, origins)
 
 

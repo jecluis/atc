@@ -84,6 +84,32 @@ def test_ls_lists_the_accounts_in_the_order_of_the_file(
     ]
 
 
+def test_ls_shows_the_extra_units_of_the_accounts_that_have_some(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(
+        FILES,
+        registry_text().replace(
+            "spare: {agent: claude, dir: ~/.config/spare}",
+            "spare: {agent: claude, dir: ~/.config/spare, extra-units: "
+            + "[hosts/a.json, hosts/b.json]}",
+        ),
+    )
+
+    assert main(["account", "ls"]) == OK
+
+    lines = [line.split() for line in capsys.readouterr().out.splitlines()]
+    assert ["Name", "Agent", "Directory", "Unit", "Extra", "units"] in lines
+    assert [
+        "spare",
+        "claude",
+        f"{home}/.config/spare",
+        "accounts/spare.json",
+        "hosts/a.json,",
+        "hosts/b.json",
+    ] in lines
+
+
 def test_acc_is_the_same_command(
     configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -288,6 +288,26 @@ def test_validate_config_skips_a_project_without_a_unit(
     assert validate_config(ctx, lax=False).errors == ()
 
 
+def test_validate_config_reports_a_missing_extra_unit(
+    build_context: ContextBuilder,
+) -> None:
+    registry = """\
+        version: 1
+        default-account: personal
+        accounts:
+          personal:
+            agent: claude
+            dir: ~/.claude
+            extra-units: [hosts/gone.json]
+        """
+    ctx = build_context({"conf/accounts/personal.json": unit()}, registry)
+
+    result = validate_config(ctx, lax=False)
+
+    assert len(result.errors) == 1
+    assert "'hosts/gone.json': no such unit" in result.errors[0]
+
+
 def test_validate_config_reports_a_missing_explicit_project_unit_once(
     build_context: ContextBuilder,
 ) -> None:

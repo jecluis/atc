@@ -11,7 +11,7 @@ from atc.refs import Located
 from atc.registry import (
     MACHINE_VARS_KEYS,
     Registry,
-    account_unit,
+    account_units,
     project_unit,
     variables_at,
 )
@@ -151,7 +151,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     List every variable that ``ctx.registry`` defines or that a unit it uses needs.
 
     References are looked for where their level exists, each unit with what it
-    imports. For each account: its unit, every templated asset, which atc
+    imports. For each account: its units, every templated asset, which atc
     renders for every account, and the unit of every project it may work on.
     For each project: its unit, where ``project.vars`` are the project's own and
     ``account.vars`` belong to every account the project allows. A ``vars``
@@ -160,8 +160,8 @@ def take_inventory(ctx: BuildContext) -> Inventory:
 
     An account or a project whose units cannot be read gets a warning, and what
     else uses its variables is still listed. For each variable used, it also
-    records where a change to it takes effect: ``sync`` when an account's unit
-    or a templated asset uses it, and ``run`` when a project's unit does.
+    records where a change to it takes effect: ``sync`` when an account's units
+    or a templated asset use it, and ``run`` when a project's unit does.
     """
     registry = ctx.registry
     found: dict[Owner, dict[str, list[str]]] = {}
@@ -183,7 +183,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     templates = list(template_references(ctx))
     for account in registry.accounts.values():
         try:
-            roots = [account_unit(ctx.sources, registry, account)]
+            roots = account_units(ctx.sources, registry, account)
             references = unit_references(ctx, roots)
         except ConfigError as exc:
             warnings.append(_unreadable(f"account '{account.name}'", exc))

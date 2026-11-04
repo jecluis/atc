@@ -45,6 +45,44 @@ def state(dirs: Dirs) -> SyncState:
     return SyncState(dirs.state_dir, "personal")
 
 
+EXTRA_UNITS = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal:
+        agent: claude
+        dir: ~/.claude
+        extra-units: [hosts/behemoth.json]
+"""
+BEHEMOTH = "conf/hosts/behemoth.json"
+
+
+def test_sync_writes_the_settings_of_the_accounts_extra_units(
+    configure: ConfigWriter, home: Path
+) -> None:
+    live = set_up(configure, home)
+    assert main(["sync"]) == OK
+    configure(
+        {PERSONAL: unit(SETTINGS), BEHEMOTH: unit({"theme": "dark"})}, EXTRA_UNITS
+    )
+
+    assert main(["sync"]) == OK
+
+    assert json.loads(live.read_text(encoding="utf-8")) == {**SETTINGS, "theme": "dark"}
+
+
+def test_sync_stops_on_a_missing_extra_unit_and_writes_nothing(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (home / ".claude").mkdir()
+    configure({PERSONAL: unit(SETTINGS)}, EXTRA_UNITS)
+
+    assert main(["sync"]) == CONFIG
+
+    assert "'hosts/behemoth.json': no such unit" in capsys.readouterr().err
+    assert not settings_file(home).exists()
+
+
 def test_first_sync_writes_settings_and_records_last(
     configure: ConfigWriter,
     home: Path,

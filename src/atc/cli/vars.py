@@ -50,7 +50,7 @@ def ls() -> None:
     variable and owner: the reference, the owner, the value or that it is
     undefined, and the units and templated assets that use it.
 
-    The references are looked for in each account's unit, in every templated
+    The references are looked for in each account's units, in every templated
     asset and in the unit of each project the account may work on, and in
     each project's unit, all with what they import. Variables the registry
     defines and nothing uses are listed too. Rows come by owner, the machine's

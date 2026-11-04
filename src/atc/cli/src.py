@@ -62,7 +62,7 @@ def check(conf_d: Path | None) -> None:
     whether anything uses it or not. When the machine registry (machine.yaml in
     atc's configuration directory) exists, it also builds the settings of every
     account, and of every project with each account the project allows, which
-    finds accounts and projects whose unit is missing, references that cannot
+    finds accounts and projects with a unit missing, references that cannot
     be expanded, and units that set a key their layer does not allow. It also
     finds accounts that select a skill, or ask for an instructions file, that
     does not exist. It warns about permission rules that can never apply, or

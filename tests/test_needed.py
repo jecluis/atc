@@ -9,7 +9,7 @@ from atc.context import BuildContext
 from atc.errors import ConfigError
 from atc.inventory import MACHINE, Owner, Variable
 from atc.jsonval import JsonObject
-from atc.needed import project_variables
+from atc.needed import needed_variables, project_variables
 from atc.registry import Project
 from tests.conftest import ContextBuilder
 from tests.helpers import unit
@@ -147,4 +147,25 @@ def test_a_variable_two_units_use_names_both(build_context: ContextBuilder) -> N
 
     assert project_variables(ctx, project) == [
         Variable("host", MACHINE, None, ("common/b.json", "projects/new.json")),
+    ]
+
+
+def test_an_account_needs_the_variables_of_its_extra_units(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            **ACCOUNTS,
+            "conf/hosts/here.json": unit({"model": "{{account.vars.tier}}"}),
+        },
+        REGISTRY.replace(
+            "dir: ~/.config/work}",
+            "dir: ~/.config/work, extra-units: [hosts/here.json]}",
+        ),
+    )
+
+    needed = needed_variables(ctx, ctx.registry.account("work"))
+
+    assert [(n.reference, n.users) for n in needed] == [
+        ("account.vars.tier", ("hosts/here.json",))
     ]

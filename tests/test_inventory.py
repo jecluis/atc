@@ -196,3 +196,43 @@ def test_effects_are_unknown_when_some_units_cannot_be_read(
 
     assert inventory.warnings
     assert inventory.effects_of([(MACHINE, "host")]) is None
+
+
+EXTRA_REGISTRY = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal:
+        agent: claude
+        dir: ~/.claude
+        extra-units: [hosts/here.json]
+"""
+
+
+def test_an_extra_unit_counts_as_a_user_of_the_variables_it_names(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/hosts/here.json": unit({"model": "{{account.vars.tier}}"}),
+        },
+        EXTRA_REGISTRY,
+    )
+
+    inventory = take_inventory(ctx)
+
+    assert inventory.variables == (
+        Variable("tier", PERSONAL, None, ("hosts/here.json",)),
+    )
+    assert inventory.effects_of([(PERSONAL, "tier")]) == frozenset({"sync"})
+
+
+def test_a_missing_extra_unit_leaves_the_account_unreadable(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context({"conf/accounts/personal.json": unit()}, EXTRA_REGISTRY)
+
+    inventory = take_inventory(ctx)
+
+    assert inventory.unreadable == (PERSONAL,)

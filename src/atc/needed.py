@@ -15,7 +15,7 @@ from atc.inventory import (
     unit_references,
 )
 from atc.layers import build_account_layer, build_project_layer
-from atc.registry import Account, Project, account_unit, project_unit
+from atc.registry import Account, Project, account_units, project_unit
 from atc.rendered import render_templates
 
 _STAND_IN = "x"
@@ -68,7 +68,7 @@ def needed_variables(ctx: BuildContext, account: Account) -> list[Needed]:
 
     """
     projects = _open_projects(ctx)
-    roots = [account_unit(ctx.sources, ctx.registry, account)]
+    roots = account_units(ctx.sources, ctx.registry, account)
     pairs = [*unit_references(ctx, roots), *template_references(ctx)]
     for project in projects:
         root = project_unit(ctx.sources, ctx.registry, project)

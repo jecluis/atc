@@ -180,9 +180,9 @@ def plan_launch(
     The plan has the project's snapshot config either way.
 
     Set ``explain`` to find the rules that can never apply, in the account's
-    settings, the project's and ``settings`` together. Only then is the
-    account's unit built. The agent reads the account's synced settings, so a
-    launch has no need of the unit. If it cannot be built, even then, the plan
+    settings, the project's and ``settings`` together. Only then are the
+    account's units built. The agent reads the account's synced settings, so a
+    launch has no need of them. If they cannot be built, even then, the plan
     has a warning that says why, and only the other rules are checked.
 
     Raises:

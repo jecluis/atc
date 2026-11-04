@@ -64,6 +64,7 @@ class _AccountModel(_Model):
     agent: Literal["claude"]
     dir: str
     unit: str | None = None
+    extra_units: list[str] = Field(default_factory=list)
     use_default_agents_md: bool = False
     agents_md_file: str | None = None
     skills: list[str] = Field(default_factory=list)
@@ -128,6 +129,9 @@ class Account:
 
     ``skills`` are the references, as written, of the skills to link into the
     account, in the registry's order.
+
+    ``extra_units`` are unit references, as written, of what this machine adds
+    to ``unit``. They are merged after it, in the registry's order.
     """
 
     name: str
@@ -138,6 +142,7 @@ class Account:
     use_default_agents_md: bool = False
     agents_md_file: Path | str | None = None
     skills: tuple[str, ...] = ()
+    extra_units: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -753,23 +758,30 @@ def _write_checked(path: Path, home: Path, edited: str) -> Registry:
     return registry
 
 
-def account_unit(sources: Sources, registry: Registry, account: Account) -> Located:
+def account_units(
+    sources: Sources, registry: Registry, account: Account
+) -> list[Located]:
     """
-    Find the unit that the settings of ``account`` are built from.
+    Find the units that the settings of ``account`` are built from, in merge order.
+
+    That is its unit, then its extra units.
 
     Raises:
-        PathError: the account's unit reference is malformed, no source has the
-            unit, or several do.
+        PathError: one of the account's unit references is malformed, no source
+            has the unit, or several do.
 
     """
     where = f"{registry.path}: account '{account.name}'"
-    try:
-        found = resolve_registry(sources, account.unit)
-    except PathError as exc:
-        raise PathError(f"{where}: {exc}") from exc
-    if found is None:
-        raise PathError(f"{where}: '{account.unit}': no such unit")
-    return found
+    units: list[Located] = []
+    for reference in (account.unit, *account.extra_units):
+        try:
+            found = resolve_registry(sources, reference)
+        except PathError as exc:
+            raise PathError(f"{where}: {exc}") from exc
+        if found is None:
+            raise PathError(f"{where}: '{reference}': no such unit")
+        units.append(found)
+    return units
 
 
 def project_unit(
@@ -901,6 +913,7 @@ def _build(document: JsonValue, origin: Path, home: Path) -> Registry:
             use_default_agents_md=entry.use_default_agents_md,
             agents_md_file=agents_md_file,
             skills=tuple(entry.skills),
+            extra_units=tuple(entry.extra_units),
         )
 
     _check_account(model.default_account, accounts, "/default-account", origin)

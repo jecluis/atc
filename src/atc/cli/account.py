@@ -52,8 +52,8 @@ def ls() -> None:
 
     Shows one row per account in the machine registry, machine.yaml in atc's
     configuration directory, in the order of the file: its name, agent,
-    directory and unit, with the default unit filled in. The default account is
-    marked. Nothing is changed.
+    directory and unit, with the default unit filled in, and its extra units
+    when an account has some. The default account is marked. Nothing is changed.
     """
     ui = Ui.default()
     path = current_dirs().config_dir / REGISTRY_FILE
@@ -70,13 +70,17 @@ def ls() -> None:
     table.add_column("Agent", no_wrap=True)
     table.add_column("Directory", overflow="fold", min_width=16)
     table.add_column("Unit", overflow="fold", min_width=16)
+    extras = any(found.extra_units for found in registry.accounts.values())
+    if extras:
+        table.add_column("Extra units", overflow="fold", min_width=16)
     for found in registry.accounts.values():
         name = shown(found.name)
         if found.name == registry.default_account:
             name = Text.assemble(name, (" (default)", "dim"))
-        table.add_row(
-            name, shown(found.agent), shown(str(found.dir)), shown(found.unit)
-        )
+        row = [name, shown(found.agent), shown(str(found.dir)), shown(found.unit)]
+        if extras:
+            row.append(shown(", ".join(found.extra_units)))
+        table.add_row(*row)
     ui.table(table)
 
 

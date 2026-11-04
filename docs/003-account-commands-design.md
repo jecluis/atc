@@ -215,7 +215,7 @@ prints no table and says so on standard error, as `atc prj ls` does.
 - `ui.py`: `Ui.pick`, the checklist and the typing boundary.
 - `template.py`, `variables.py` and `rendered.py`: how references are written,
   which variables a unit sees, and which assets are rendered for an account.
-- `registry.account_unit`: how an account's unit is resolved.
+- `registry.account_units`: how an account's units are resolved.
 
 ## Choices made while drafting
 
