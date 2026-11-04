@@ -25,12 +25,12 @@ run() {
 }
 
 if [[ "${check_only}" == true ]]; then
-  run uv run ruff format --check src tests
-  run uv run ruff check src tests
+  run uv run ruff format --check src tests hatch_build.py
+  run uv run ruff check src tests hatch_build.py
   run scripts/normalize-markdown.sh --check
 else
-  run uv run ruff format src tests
-  run uv run ruff check --fix src tests
+  run uv run ruff format src tests hatch_build.py
+  run uv run ruff check --fix src tests hatch_build.py
   run scripts/normalize-markdown.sh --fix
 fi
 

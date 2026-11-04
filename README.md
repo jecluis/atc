@@ -44,6 +44,13 @@ either one: deny `{{atc.install_dir}}` and `{{atc.python_dir}}` in
 `Edit(/{{atc.python_dir}}/**)` in `permissions.deny` (see Templates).
 `atc check` verifies that a session cannot write them.
 
+`atc --version` names the commit the installed copy was built from, as in
+`atc, version 0.1.0 (10dbeb769223)`. The commit is recorded when atc is built,
+so it says what is installed, whichever repository you run it in. It ends in
+`-dirty` when tracked files had changes at the time, and it reads
+`commit not recorded` when no commit could be, as for a build from outside a
+repository or in a development environment, whose code is the checkout itself.
+
 ## Configuration
 
 atc reads its configuration from `$XDG_CONFIG_HOME/atc`, which is

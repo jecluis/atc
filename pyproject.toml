@@ -24,8 +24,20 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/atc"]
 
+[tool.hatch.build.hooks.custom]
+
+[tool.uv]
+# uv otherwise reuses a local build while pyproject.toml stays the same, which
+# would install old code, with the old commit recorded in it.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "hatch_build.py" },
+    { file = "src/**/*" },
+    { git = { commit = true } },
+]
+
 [dependency-groups]
-dev = ["basedpyright>=1.31", "pytest>=8.3", "ruff>=0.14"]
+dev = ["basedpyright>=1.31", "hatchling>=1.27", "pytest>=8.3", "ruff>=0.14"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

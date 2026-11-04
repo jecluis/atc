@@ -7,6 +7,7 @@ import click
 import rich_click
 
 from atc import exitcodes
+from atc.buildinfo import version_message
 from atc.cli.account import account
 from atc.cli.check import check
 from atc.cli.maint import maint
@@ -55,7 +56,9 @@ class AtcGroup(rich_click.RichGroup):
 
 
 @click.group(cls=AtcGroup, name=PROGRAM, context_settings=HELP_OPTIONS)
-@click.version_option(package_name=PROGRAM, prog_name=PROGRAM)
+@click.version_option(
+    package_name=PROGRAM, prog_name=PROGRAM, message=version_message()
+)
 def app() -> None:
     """Start coding agents in the right account, with shared settings."""
 
