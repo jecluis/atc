@@ -15,7 +15,7 @@ from atc.jsonval import JsonObject, canonical, dumps
 from atc.layers import build_account_layer, build_project_layer, merge_fragment
 from atc.links import LinkPlan, apply_link, decide_link, wanted_instructions
 from atc.merge import keep_additions as merge_live
-from atc.registry import Account, Project, config_dir_account
+from atc.registry import Account, Project, config_dir_account, config_dir_link
 from atc.rendered import Rendering, render_templates
 from atc.rules import RuleWarning, dead_rules
 from atc.skills import Catalog, discover_skills, wanted_skill_links
@@ -253,6 +253,9 @@ def plan_account(
             + "atc does not create accounts, which means logging in"
         )
     target = account if project is None else config_dir_account(account, project)
+    link = None if project is None else config_dir_link(account, project)
+    if link is not None:
+        raise ConfigError(f"{account.name}/{_name(project)}: {link} {LINK_REFUSED}")
     if not target.dir.is_dir():
         message = (
             f"{account.name}/{_name(project)}: {target.dir} is not a directory; "
@@ -557,6 +560,12 @@ def _record(
     """Write the record of links when it changed."""
     if updated != recorded:
         state.record_links(updated)
+
+
+LINK_REFUSED = (
+    "is a symbolic link, and atc writes a project's config directory only in the "
+    + "account's directory; replace the link with a directory"
+)
 
 
 def kept_lines(settings: SettingsPlan) -> list[str]:

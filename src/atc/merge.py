@@ -79,7 +79,9 @@ def _render(pointer: tuple[str, ...]) -> str:
     """Render a key path as a JSON pointer."""
     if not pointer:
         return "/"
-    return "".join(f"/{segment}" for segment in pointer)
+    return "".join(
+        "/" + segment.replace("~", "~0").replace("/", "~1") for segment in pointer
+    )
 
 
 @dataclass(frozen=True, slots=True)

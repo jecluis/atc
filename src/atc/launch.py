@@ -30,9 +30,11 @@ from atc.registry import (
     Registry,
     choose_account,
     config_dir_account,
+    config_dir_link,
 )
 from atc.rules import RuleWarning, dead_rules
 from atc.sync import (
+    LINK_REFUSED,
     AccountPlan,
     apply_account,
     kept_lines,
@@ -290,9 +292,9 @@ def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> lis
     if plan.config_dir is None or plan.project is None:
         return []
     label = f"{plan.account.name}/{plan.project.name}"
-    if not plan.account.dir.is_dir():
-        message = f"{label}: the account's directory {plan.account.dir} is missing"
-        raise ConfigError(message)
+    problem = _config_dir_problem(plan.account, plan.project)
+    if problem is not None:
+        raise ConfigError(f"{label}: {problem}")
     try:
         make_private_dir(plan.config_dir)
     except OSError as exc:
@@ -306,7 +308,7 @@ def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> lis
         raise ConfigError(message)
     apply_account(synced, ctx, datetime.now(UTC))
     messages = [*synced.warnings, *(w.message() for w in synced.rule_warnings)]
-    if synced.settings is not None:
+    if synced.settings is not None and synced.settings.write:
         messages.extend(f"{label}: {line}" for line in kept_lines(synced.settings))
     return messages
 
@@ -315,6 +317,9 @@ def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
     """Say what :func:`prepare_config_dir` would do, changing nothing."""
     if plan.config_dir is None or plan.project is None:
         return ""
+    problem = _config_dir_problem(plan.account, plan.project)
+    if problem is not None:
+        return f"cannot be made: {problem}"
     if not plan.config_dir.is_dir():
         return "made and synced at the start"
     try:
@@ -324,6 +329,14 @@ def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
     if synced.blocked:
         return "cannot be brought up to date; atc sync --diff says why"
     return "synced at the start" if synced.pending else "current"
+
+
+def _config_dir_problem(account: Account, project: Project) -> str | None:
+    """Say why the configuration directory of ``project`` cannot be made, if so."""
+    if not account.dir.is_dir():
+        return f"the account's directory {account.dir} is missing"
+    link = config_dir_link(account, project)
+    return None if link is None else f"{link} {LINK_REFUSED}"
 
 
 def _plan_config_dir(

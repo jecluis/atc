@@ -166,3 +166,9 @@ def test_keep_additions_of_an_unchanged_file_is_the_new_settings() -> None:
 
     assert kept.settings == new
     assert (kept.kept, kept.reset) == ((), ())
+
+
+def test_keep_additions_escapes_the_keys_in_its_pointers() -> None:
+    kept = keep_additions({}, {"env": {"a/b~c": "1"}}, {"env": {}})
+
+    assert kept.kept == ("/env/a~1b~0c",)

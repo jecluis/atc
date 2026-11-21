@@ -1196,3 +1196,24 @@ def test_a_missing_project_dir_is_a_config_error(
 
     with pytest.raises(ConfigError, match=r"personal/bar.*atc-projects/bar"):
         _ = sync_project(ctx)
+
+
+@pytest.mark.parametrize("linked", ["atc-projects", "atc-projects/bar"])
+def test_a_project_dir_reached_through_a_symbolic_link_is_refused(
+    build_context: ContextBuilder, home: Path, tmp_path: Path, linked: str
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "bar").mkdir(parents=True)
+    (home / ".claude" / "atc-projects").mkdir(parents=True)
+    link = home / ".claude" / linked
+    if linked == "atc-projects":
+        (home / ".claude" / "atc-projects").rmdir()
+        link.symlink_to(elsewhere)
+    else:
+        link.symlink_to(elsewhere / "bar")
+    ctx = build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+
+    with pytest.raises(ConfigError, match=r"personal/bar: .* is a symbolic link"):
+        _ = sync_project(ctx)
+
+    assert not (elsewhere / "bar" / "settings.json").exists()

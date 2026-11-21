@@ -503,9 +503,11 @@ holds the account's settings with the project's merged over them, and its
 passed as `--settings` too, so they rank as they do in any other project. If the
 directory cannot be brought up to date, for instance because a unit cannot be
 built or its `settings.json` is not JSON, atc stops with exit status `1` and the
-agent does not start; `atc sync --diff` shows why. A line on standard error
-lists what the sync kept of the live settings and what it reset (see
-`atc sync`).
+agent does not start; `atc sync --diff` shows why. So does a symbolic link at
+`atc-projects` or at the project's directory in it: atc writes a project
+directory only as a directory inside the account's. When the sync writes the
+settings, a line on standard error lists what it kept of the live settings and
+what it reset (see `atc sync`).
 
 A project directory is a fresh Claude Code directory. It has its own login, so
 its first session asks for one, and its own session history, `.claude.json`,
@@ -1459,8 +1461,16 @@ what the live file added is kept: a key the units do not set, and entries of a
 list beyond the units' own. A key the units stopped setting goes. So `/model`
 holds in a project directory until its next sync when a unit sets `model`, and a
 domain Claude Code approved stays. A line on standard error lists what was kept
-and what was reset, by JSON pointer. A live file that is not JSON still stops
-the sync, and `--discard-live` overwrites it.
+and what was reset, by JSON pointer, whenever the file is written and with
+`--diff`. A live file that is not JSON still stops the sync, and
+`--discard-live` overwrites it.
+
+Additions are kept whatever they are, so they can loosen what the units leave
+unset: an entry added to `sandbox.excludedCommands`, to
+`sandbox.filesystem.allowRead` or to `permissions.allow`, or a hook. They never
+take away what the units set: a deny rule a session removed comes back at the
+next sync. To keep an addition out, set the key in a unit, or move what you want
+kept into a unit and run `atc sync --discard-live`.
 
 The directory must exist already, because creating an account means logging in,
 which atc does not do. Every account is planned before any is changed, so an

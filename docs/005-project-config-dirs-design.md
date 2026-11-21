@@ -67,7 +67,12 @@ directory is.
 
 - A directory that a session can edit to widen its own rules. A project
   directory is protected as the account's own directory is, no less, and no edit
-  to its `settings.json` survives a sync where it weakens what the units set.
+  to its `settings.json` survives a sync where it takes away what the units set.
+  Additions do survive, and can loosen what the units leave unset, such as an
+  entry of `sandbox.excludedCommands` or a hook; the sync lists every one.
+- A project directory reached through a symbolic link. atc refuses one at
+  `atc-projects` or at the project's directory, as it refuses a linked
+  `skills/`, so what it writes stays in the account's directory.
 - A launch that silently starts with stale settings. If `atc run` cannot bring
   the directory up to date, it does not start the agent.
 
@@ -168,10 +173,10 @@ generated, **live** the file and **new** what the units give now, at each key:
 
 atc records new, not what it wrote, as what it generated, so a kept addition is
 still an addition at the next sync. What the merge keeps from live, and what of
-live it resets, is listed by `atc sync`, `atc sync --diff` and `atc run`. A live
-file that is not a JSON object stops the sync as an edit does today, and
-`--discard-live` writes new over it. A file atc never wrote is taken over only
-with `--take-over`, as now.
+live it resets, is listed whenever the file is written, by `atc sync` and
+`atc run`, and always by `atc sync --diff`. A live file that is not a JSON
+object stops the sync as an edit does today, and `--discard-live` writes new
+over it. A file atc never wrote is taken over only with `--take-over`, as now.
 
 ## 5. `atc sync`
 

@@ -920,6 +920,21 @@ def config_dir_account(account: Account, project: Project) -> Account:
     return replace(account, dir=project_config_dir(account, project))
 
 
+def config_dir_link(account: Account, project: Project) -> Path | None:
+    """
+    Find a symbolic link on the way to the configuration directory of ``project``.
+
+    That is ``PROJECT_DIRS`` in the account's directory, or the project's
+    directory in it. atc makes and writes them only as directories, so that
+    what it writes stays in the account's directory. ``None`` means neither is
+    a link.
+    """
+    parent = account.dir / PROJECT_DIRS
+    return next(
+        (path for path in (parent, parent / project.name) if path.is_symlink()), None
+    )
+
+
 def own_config_projects(registry: Registry, account: str) -> list[Project]:
     """
     Give the projects with a configuration directory of their own for ``account``.

@@ -885,3 +885,50 @@ def test_print_names_the_config_dir_and_makes_nothing(
     )
     assert not own_dir.exists()
     assert executed == []
+
+
+def test_run_refuses_a_config_dir_behind_a_symbolic_link(
+    executed: list[LaunchPlan], own_dir: Path, tmp_path: Path
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    own_dir.parent.symlink_to(elsewhere)
+
+    assert main(["-q"]) == CONFIG
+
+    assert executed == []
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_run_reports_what_it_kept_only_when_it_writes(
+    executed: list[LaunchPlan], own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = start(executed, ["-q"])
+    executed.clear()
+    path = own_dir / "settings.json"
+    edited: JsonObject = {
+        "model": "haiku",
+        "x": 1,
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    _ = path.write_text(dumps(edited), encoding="utf-8")
+    _ = capsys.readouterr()
+
+    _ = start(executed, ["-q"])
+    first = capsys.readouterr().err
+    executed.clear()
+    _ = start(executed, ["-q"])
+
+    assert "kept what Claude Code added: /x" in first
+    assert "reset to what the units give: /model" in first
+    assert "kept" not in capsys.readouterr().err
+
+
+def test_print_says_a_config_dir_cannot_be_made_without_its_account_dir(
+    own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    own_dir.parent.parent.rmdir()
+
+    assert main(["--print"]) == OK
+
+    assert "cannot be made" in capsys.readouterr().out
