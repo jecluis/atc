@@ -236,3 +236,25 @@ def test_a_missing_extra_unit_leaves_the_account_unreadable(
     inventory = take_inventory(ctx)
 
     assert inventory.unreadable == (PERSONAL,)
+
+
+def test_a_project_extra_unit_counts_as_a_user_of_the_variables_it_names(
+    build_context: ContextBuilder,
+) -> None:
+    registry = """\
+        version: 1
+        default-account: personal
+        accounts:
+          personal: {agent: claude, dir: ~/.claude}
+        projects:
+          bar: {repo: /src/bar, extra-units: [net/bar.json]}
+    """
+    files = {
+        "conf/accounts/personal.json": unit(),
+        "conf/net/bar.json": unit({"env": {"P": "{{project.vars.port}}"}}),
+    }
+
+    inventory = take_inventory(build_context(files, registry))
+
+    assert inventory.variables == (Variable("port", BAR, None, ("net/bar.json",)),)
+    assert inventory.effects_of([(BAR, "port")]) == frozenset({"run"})

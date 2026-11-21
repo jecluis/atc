@@ -67,16 +67,16 @@ def project(
     """
     Print the settings of one project.
 
-    Merges the project's unit, together with everything it imports, as it is
-    for the account that works on the project, and writes the result to standard
-    output as JSON. NAME is a project from the machine registry, machine.yaml in
-    atc's configuration directory. The account is ACCOUNT if given, otherwise
-    the project's account, otherwise the registry's default account. It must be
-    one the project allows.
+    Merges the project's unit and its extra units, together with everything they
+    import, as it is for the account that works on the project, and writes the
+    result to standard output as JSON. NAME is a project from the machine
+    registry, machine.yaml in atc's configuration directory. The account is
+    ACCOUNT if given, otherwise the project's account, otherwise the registry's
+    default account. It must be one the project allows.
 
-    A project with no unit, because the registry names none and
-    projects/NAME.json does not exist, has no settings of its own: this prints
-    an empty object and says so.
+    A project with no units, because the registry names neither a unit nor
+    extra units and projects/NAME.json does not exist, has no settings of its
+    own: this prints an empty object and says so.
 
     The account's settings are built as well, to warn about a permission rule
     that can never apply because another rule in the account's settings or the
@@ -103,9 +103,11 @@ def project(
     for warning in (*ctx.sources.warnings, *ctx.registry.warnings):
         ui.warning(warning)
     if layer is None:
-        ui.warning(
-            f"project '{name}' has no project layer: {found.unit} does not exist"
+        message = (
+            f"project '{name}' has no project layer: {found.unit} does not exist "
+            + "and it has no extra units"
         )
+        ui.warning(message)
         ui.json({})
         return
     for warning in layer.warnings:

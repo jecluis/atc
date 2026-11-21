@@ -12,7 +12,7 @@ from atc.registry import (
     MACHINE_VARS_KEYS,
     Registry,
     account_units,
-    project_unit,
+    project_units,
     variables_at,
 )
 from atc.rendered import rendered_name
@@ -152,8 +152,8 @@ def take_inventory(ctx: BuildContext) -> Inventory:
 
     References are looked for where their level exists, each unit with what it
     imports. For each account: its units, every templated asset, which atc
-    renders for every account, and the unit of every project it may work on.
-    For each project: its unit, where ``project.vars`` are the project's own and
+    renders for every account, and the units of every project it may work on.
+    For each project: its units, where ``project.vars`` are the project's own and
     ``account.vars`` belong to every account the project allows. A ``vars``
     reference is the machine's wherever it is. Only names of one segment count,
     since those are the only ones the registry can define.
@@ -161,7 +161,7 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     An account or a project whose units cannot be read gets a warning, and what
     else uses its variables is still listed. For each variable used, it also
     records where a change to it takes effect: ``sync`` when an account's units
-    or a templated asset use it, and ``run`` when a project's unit does.
+    or a templated asset use it, and ``run`` when a project's units do.
     """
     registry = ctx.registry
     found: dict[Owner, dict[str, list[str]]] = {}
@@ -194,8 +194,8 @@ def take_inventory(ctx: BuildContext) -> Inventory:
     for project in registry.projects.values():
         allowed = registry.allowed_accounts(project)
         try:
-            root = project_unit(ctx.sources, registry, project)
-            references = [] if root is None else unit_references(ctx, [root])
+            roots = project_units(ctx.sources, registry, project)
+            references = unit_references(ctx, roots)
         except ConfigError as exc:
             warnings.append(_unreadable(f"project '{project.name}'", exc))
             unreadable.append(Owner("project", project.name))

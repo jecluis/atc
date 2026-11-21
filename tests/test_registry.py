@@ -20,6 +20,7 @@ from atc.registry import (
     load_registry,
     normalize_path,
     parse_registry,
+    project_units,
     remove_extra_units,
     set_skills,
     set_variables,
@@ -554,6 +555,66 @@ def test_project_unit_defaults_and_is_marked_default(
     bar, other = registry.projects["bar"], registry.projects["x"]
     assert (bar.unit, bar.unit_is_default) == ("projects/bar.json", True)
     assert (other.unit, other.unit_is_default) == ("@c/p/x.json", False)
+
+
+def test_a_project_has_no_extra_units_unless_it_names_some(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r") + "      x: {repo: /x, extra-units: [a.json]}\n"
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.projects["bar"].extra_units == ()
+    assert registry.projects["x"].extra_units == ("a.json",)
+
+
+def test_project_units_gives_the_unit_and_then_the_extra_units_in_order(
+    write_registry: RegistryWriter, home: Path, root: Path
+) -> None:
+    _ = make_source(
+        root,
+        {
+            "conf/projects/bar.json": unit(),
+            "conf/a.json": unit(),
+            "conf/b.json": unit(),
+        },
+    )
+    text = with_project("repo: /r, extra-units: [b.json, a.json]")
+    registry = load_registry(write_registry(text), home)
+
+    found = project_units(discover(root, uid=UID), registry, registry.project("bar"))
+
+    assert [unit.display for unit in found] == [
+        "projects/bar.json",
+        "b.json",
+        "a.json",
+    ]
+
+
+def test_project_units_leaves_out_a_default_unit_no_source_has(
+    write_registry: RegistryWriter, home: Path, root: Path
+) -> None:
+    _ = make_source(root, {"conf/a.json": unit()})
+    registry = load_registry(write_registry(with_project("repo: /r")), home)
+    with_extra = load_registry(
+        write_registry(with_project("repo: /r, extra-units: [a.json]")), home
+    )
+    sources = discover(root, uid=UID)
+
+    assert project_units(sources, registry, registry.project("bar")) == []
+    found = project_units(sources, with_extra, with_extra.project("bar"))
+    assert [unit.display for unit in found] == ["a.json"]
+
+
+def test_project_units_names_the_project_when_an_extra_unit_is_missing(
+    write_registry: RegistryWriter, home: Path, root: Path
+) -> None:
+    _ = make_source(root, {"conf/a.json": unit()})
+    text = with_project("repo: /r, extra-units: [a.json, gone.json]")
+    registry = load_registry(write_registry(text), home)
+
+    with pytest.raises(PathError, match=r"project 'bar': 'gone.json': no such unit"):
+        _ = project_units(discover(root, uid=UID), registry, registry.project("bar"))
 
 
 def test_a_project_can_name_a_snapshot_config(

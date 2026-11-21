@@ -1032,6 +1032,7 @@ def test_show_defaults_to_the_current_project_and_lists_worktrees(
         "account": "work",
         "accounts": "every account",
         "unit": "projects/bar.json (the default)",
+        "extra units": "-",
         "worktrees": str(tmp_path / "wt"),
         "branch from": "main",
         "snapshot": "-",
@@ -1058,6 +1059,21 @@ def test_show_takes_a_name_from_anywhere(
     assert status == OK
     assert fields_of(out)["account"] == "personal (the default account)"
     assert fields_of(out)["accounts"] == "work, personal"
+
+
+def test_show_lists_the_extra_units(
+    configure: ConfigWriter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    entry = project("bar", repo, "extra-units: [net/a.json, net/b.json]")
+    configure(FILES, registry_text(entry))
+
+    status = main(["prj", "show", "bar"])
+
+    assert status == OK
+    assert fields_of(capsys.readouterr().out)["extra units"] == "net/a.json, net/b.json"
 
 
 def test_show_outside_a_registered_project_needs_a_name(

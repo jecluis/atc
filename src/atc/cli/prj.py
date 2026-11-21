@@ -172,8 +172,8 @@ def add(
     allows every account; when more than one is ticked, a second question picks
     the one the project uses by default.
 
-    Then it asks for each variable that the project's unit, or what it imports,
-    uses and nothing defines: the project's own, those of each account it
+    Then it asks for each variable that the project's units, or what they
+    import, use and nothing defines: the project's own, those of each account it
     allows, and the machine-wide ones. They are written in the same edit, the
     project's in its entry, and a value cannot be empty. Before asking, the
     project is built for each account it allows, so that what no answer could
@@ -313,6 +313,7 @@ def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
         ("account", account),
         ("accounts", accounts),
         ("unit", unit),
+        ("extra units", ", ".join(project.extra_units) or "-"),
         ("worktrees", str(project.worktrees) if project.worktrees else "-"),
         ("branch from", project.branch_from),
         ("snapshot", project.snapshot or "-"),

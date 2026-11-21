@@ -51,8 +51,8 @@ def ls() -> None:
     undefined, and the units and templated assets that use it.
 
     The references are looked for in each account's units, in every templated
-    asset and in the unit of each project the account may work on, and in
-    each project's unit, all with what they import. Variables the registry
+    asset and in the units of each project the account may work on, and in
+    each project's units, all with what they import. Variables the registry
     defines and nothing uses are listed too. Rows come by owner, the machine's
     first, then the accounts' and the projects' in the order of the file.
 

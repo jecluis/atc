@@ -82,6 +82,7 @@ class _ProjectModel(_Model):
     account: str | None = None
     accounts: list[str] | None = None
     unit: str | None = None
+    extra_units: list[str] = Field(default_factory=list)
     snapshot: str | None = Field(default=None, min_length=1)
     vars: dict[str, str] = Field(default_factory=dict)
 
@@ -160,6 +161,9 @@ class Project:
     session; ``None`` means no snapshot. ``worktrees`` is the directory its
     worktrees are made in, absolute and normalized; ``None`` means the registry
     names none. ``branch_from`` is the branch that new branches start from.
+
+    ``extra_units`` are unit references, as written, of what this machine adds
+    to ``unit``. They are merged after it, in the registry's order.
     """
 
     name: str
@@ -172,6 +176,7 @@ class Project:
     snapshot: str | None = None
     worktrees: Path | None = None
     branch_from: str = DEFAULT_BRANCH_FROM
+    extra_units: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -847,28 +852,33 @@ def account_units(
     return units
 
 
-def project_unit(
+def project_units(
     sources: Sources, registry: Registry, project: Project
-) -> Located | None:
+) -> list[Located]:
     """
-    Find the unit that the settings of ``project`` are built from.
+    Find the units that the settings of ``project`` are built from, in merge order.
 
-    ``None`` means the project has no unit: it left the unit to the default, and
-    no source has it. A project without a unit has no project layer.
+    That is its unit, then its extra units. The unit is left out when the
+    registry left it to the default and no source has it. No units at all means
+    the project has no project layer.
 
     Raises:
-        PathError: the project's unit reference is malformed, a unit that the
-            registry names does not exist, or several sources have the unit.
+        PathError: one of the project's unit references is malformed, a unit
+            that the registry names does not exist, or several sources have it.
 
     """
     where = f"{registry.path}: project '{project.name}'"
-    try:
-        found = resolve_registry(sources, project.unit)
-    except PathError as exc:
-        raise PathError(f"{where}: {exc}") from exc
-    if found is None and not project.unit_is_default:
-        raise PathError(f"{where}: '{project.unit}': no such unit")
-    return found
+    units: list[Located] = []
+    for index, reference in enumerate((project.unit, *project.extra_units)):
+        try:
+            found = resolve_registry(sources, reference)
+        except PathError as exc:
+            raise PathError(f"{where}: {exc}") from exc
+        if found is not None:
+            units.append(found)
+        elif index > 0 or not project.unit_is_default:
+            raise PathError(f"{where}: '{reference}': no such unit")
+    return units
 
 
 def choose_account(
@@ -1074,6 +1084,7 @@ def _build_project(
         snapshot=entry.snapshot,
         worktrees=worktrees,
         branch_from=entry.branch_from,
+        extra_units=tuple(entry.extra_units),
     )
 
 

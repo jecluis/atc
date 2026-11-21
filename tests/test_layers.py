@@ -372,6 +372,95 @@ def test_a_missing_explicit_project_unit_is_an_error(
         _ = build_project(ctx)
 
 
+PROJECT_EXTRA_UNITS = PROJECT_REGISTRY.replace(
+    "vars: {team: ci}",
+    "vars: {team: ci}, extra-units: [hosts/first.json, hosts/second.json]",
+)
+
+
+def test_project_extra_units_merge_after_the_project_unit_in_the_order_given(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit({"model": "haiku"}),
+            "conf/projects/bar.json": unit({"model": "opus", "theme": "dark"}),
+            "conf/hosts/first.json": unit({"model": "sonnet", "effortLevel": "low"}),
+            "conf/hosts/second.json": unit(
+                {"effortLevel": "high", "env": {"T": "{{project.vars.team}}"}}
+            ),
+        },
+        PROJECT_EXTRA_UNITS,
+    )
+
+    layer = build_project(ctx)
+
+    assert layer is not None
+    assert layer.settings == {
+        "model": "sonnet",
+        "theme": "dark",
+        "effortLevel": "high",
+        "env": {"T": "ci"},
+    }
+    assert layer.warnings == ()
+
+
+def test_project_extra_units_make_a_layer_without_the_default_unit(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/hosts/first.json": unit(
+                {"sandbox": {"network": {"allowedDomains": ["example.org"]}}}
+            ),
+            "conf/hosts/second.json": unit(
+                {"permissions": {"allow": ["Bash(make *)"]}}
+            ),
+        },
+        PROJECT_EXTRA_UNITS,
+    )
+
+    layer = build_project(ctx)
+
+    assert layer is not None
+    assert layer.settings == {
+        "sandbox": {"network": {"allowedDomains": ["example.org"]}},
+        "permissions": {"allow": ["Bash(make *)"]},
+    }
+    assert layer.origins == {("allow", "Bash(make *)"): ("hosts/second.json",)}
+
+
+def test_a_project_extra_unit_answers_to_the_policy_of_the_project_layer(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {
+            "conf/accounts/personal.json": unit(),
+            "conf/hosts/first.json": unit(),
+            "conf/hosts/second.json": unit(
+                {"sandbox": {"allowUnsandboxedCommands": False}}
+            ),
+        },
+        PROJECT_EXTRA_UNITS,
+    )
+
+    with pytest.raises(PolicyError, match=r"hosts/second.json: /sandbox/allow"):
+        _ = build_project(ctx)
+
+
+def test_a_missing_project_extra_unit_is_an_error(
+    build_context: ContextBuilder,
+) -> None:
+    ctx = build_context(
+        {"conf/accounts/personal.json": unit(), "conf/hosts/first.json": unit()},
+        PROJECT_EXTRA_UNITS,
+    )
+
+    with pytest.raises(PathError, match=r"'bar': 'hosts/second.json': no such unit"):
+        _ = build_project(ctx)
+
+
 def test_allow_unsandboxed_commands_is_refused_in_the_project_layer(
     build_context: ContextBuilder,
 ) -> None:

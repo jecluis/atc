@@ -9,7 +9,7 @@ from atc.errors import MergeError, PolicyError
 from atc.jsonval import JsonObject, JsonValue
 from atc.merge import merge_objects
 from atc.refs import Located
-from atc.registry import Account, Project, account_units, project_unit
+from atc.registry import Account, Project, account_units, project_units
 from atc.resolve import Resolution, UnitTransform, resolve
 from atc.state import SyncState
 from atc.template import VarValue, expand
@@ -97,24 +97,25 @@ def build_project_layer(
     ctx: BuildContext, project: Project, account: Account, *, lax: bool
 ) -> Layer | None:
     """
-    Merge the unit of ``project`` and everything it imports, for ``account``.
+    Merge the unit of ``project``, then its extra units, with all they import.
 
-    Every unit is expanded with the project's variables as well as the
-    account's, and then checked against the policy for the project layer. The
-    result is ``None`` when the project has no unit: the registry left the unit
-    to the default, and no source has it. Set ``lax`` to report unknown
-    settings keys as warnings instead of errors.
+    The layer is built for ``account``. Every unit is expanded with the
+    project's variables as well as the account's, and then checked against the
+    policy for the project layer. The result is ``None`` when the project has no
+    units: the registry left the unit to the default, no source has it, and
+    there are no extra units. Set ``lax`` to report unknown settings keys as
+    warnings instead of errors.
 
     Raises:
         PathError: a unit the registry names does not exist, or several sources
-            have the project's unit.
+            have one of the project's units.
         TemplateError: a unit has a reference that cannot be expanded.
         PolicyError: a unit sets a key the project layer must not.
         ConfigError: as :func:`atc.resolve.resolve`, for the units themselves.
 
     """
-    root = project_unit(ctx.sources, ctx.registry, project)
-    if root is None:
+    roots = project_units(ctx.sources, ctx.registry, project)
+    if not roots:
         return None
     origins: dict[tuple[str, str], list[str]] = {}
     transform = _unit_transform(
@@ -124,7 +125,7 @@ def build_project_layer(
         f"project layer for {project.name} with account {account.name}",
         origins,
     )
-    resolution = resolve(ctx.sources, [root], lax=lax, transform=transform)
+    resolution = resolve(ctx.sources, roots, lax=lax, transform=transform)
     return _layer("project", resolution, origins)
 
 

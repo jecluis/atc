@@ -198,6 +198,7 @@ projects:
 | `projects.<name>.account`               | no       | The account the project uses by default. Defaults to `default-account`.                                                                                                                                                                                                                                                                            |
 | `projects.<name>.accounts`              | no       | The accounts allowed to work on the project. When set, it must name at least one and include the project's account: `account`, or `default-account` when the project sets none. Defaults to every account.                                                                                                                                         |
 | `projects.<name>.unit`                  | no       | The unit the project's settings are built from, as a unit reference (see Units). Defaults to `projects/<name>.json`. When that default does not exist, the project has no settings of its own.                                                                                                                                                     |
+| `projects.<name>.extra-units`           | no       | Units this machine adds to the project's, as unit references, merged after `unit` in this order (see Extra units under Units). Defaults to none.                                                                                                                                                                                                   |
 | `projects.<name>.snapshot`              | no       | The name of a snapper config. `atc run` takes a snapshot with it before each session in the project (see The guard). Defaults to no snapshot.                                                                                                                                                                                                      |
 | `projects.<name>.vars`                  | no       | Variables for this project's units, as `{{project.vars.<name>}}`.                                                                                                                                                                                                                                                                                  |
 | `maint.gc-hours`                        | no       | The hours between full `git gc` runs in `atc maint`. A whole number of at least 1. Defaults to `24`.                                                                                                                                                                                                                                               |
@@ -228,8 +229,9 @@ No other keys are accepted yet, and a misspelled key is an error. The rules:
 - `skills` is a list of strings. Whether each names a skill that exists is
   checked by `atc src check`, `atc sync` and `atc skills ls`, not when the
   registry is read.
-- `extra-units` is a list of strings. Whether each names a unit that exists is
-  checked when the account is built, as for `unit`.
+- `extra-units`, of an account or a project, is a list of strings. Whether each
+  names a unit that exists is checked when the account or the project is built,
+  as for an account's `unit`.
 - Two accounts cannot share a `dir`, however it is written: a trailing `/` or a
   symbolic link in the path makes no difference.
 - Variable names are lowercase letters, digits and `_`, starting with a letter,
@@ -290,8 +292,8 @@ Claude Code settings and can import other units:
 No other fields are allowed. A unit with only `imports` works as a profile that
 groups other units.
 
-**References.** An import, and the `unit` and `extra-units` of an account or the
-`unit` of a project in the registry, is one of:
+**References.** An import, and the `unit` and `extra-units` of an account or a
+project in the registry, is one of:
 
 - `path/to/unit.json`: a path relative to the `conf/` of the same source.
 - `@name/path/to/unit.json`: a path relative to the `conf/` of the source called
@@ -337,6 +339,15 @@ and the same checks. Whatever reads an account's settings reads them too:
 `atc vars`. One that does not exist stops the account from being built, rather
 than leaving it without settings it asked for. A unit that the account's unit
 also imports contributes once, at the import, and a warning says so.
+
+A project's `extra-units` work the same way for the project's settings: they are
+merged after the project's unit, and `atc run`, `atc show project`,
+`atc src check` and `atc vars` read them. Use them for what one project needs on
+one machine and no other project should get, such as a domain in
+`sandbox.network.allowedDomains` or a command in `sandbox.excludedCommands`,
+rather than an account's extra units, which reach every session of the account.
+A project whose default unit does not exist still has a project layer when it
+has extra units, made of them alone.
 
 ### Templates
 
@@ -875,17 +886,17 @@ warnings). An unknown `NAME` is an error that lists the accounts there are.
 
 Builds the settings of the project `NAME`, one of the projects in the machine
 registry, and writes them to standard output as JSON, in the same format as
-`atc show account`. They are the project's unit merged together with everything
-it imports, with the references in each unit expanded for the project and the
-account that works on it (see Templates). Every unit is checked against what a
-project's settings may contain.
+`atc show account`. They are the project's unit and its extra units merged
+together with everything they import, with the references in each unit expanded
+for the project and the account that works on it (see Templates). Every unit is
+checked against what a project's settings may contain.
 
 The account is `ACCOUNT` when given, otherwise the project's `account`,
 otherwise `default-account`. If the project lists `accounts`, the account must
 be one of them. A project with no unit, because `projects/NAME.json` does not
-exist and the registry names none, has no settings of its own: the output is an
-empty object, and a warning says why. An unknown `NAME` or `ACCOUNT` is an error
-that lists the ones there are.
+exist and the registry names neither a unit nor extra units, has no settings of
+its own: the output is an empty object, and a warning says why. An unknown
+`NAME` or `ACCOUNT` is an error that lists the ones there are.
 
 The account's settings are built too, so that the permission rules of the
 account and of the project can be checked together (see Rule warnings). The

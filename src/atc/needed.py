@@ -15,7 +15,7 @@ from atc.inventory import (
     unit_references,
 )
 from atc.layers import build_account_layer, build_project_layer
-from atc.registry import Account, Project, account_units, project_unit
+from atc.registry import Account, Project, account_units, project_units
 from atc.rendered import render_templates
 
 _STAND_IN = "x"
@@ -71,9 +71,8 @@ def needed_variables(ctx: BuildContext, account: Account) -> list[Needed]:
     roots = account_units(ctx.sources, ctx.registry, account)
     pairs = [*unit_references(ctx, roots), *template_references(ctx)]
     for project in projects:
-        root = project_unit(ctx.sources, ctx.registry, project)
-        if root is not None:
-            pairs.extend(unit_references(ctx, [root]))
+        roots = project_units(ctx.sources, ctx.registry, project)
+        pairs.extend(unit_references(ctx, roots))
     found: dict[str, list[str]] = {}
     for user, reference in pairs:
         users = found.setdefault(reference, [])
@@ -129,7 +128,7 @@ def project_variables(ctx: BuildContext, project: Project) -> list[Variable]:
     Find the variables that the new ``project`` needs and nothing defines yet.
 
     ``ctx.registry`` holds ``project``. What it needs is every reference to a
-    variable in its unit and what that imports, which is what is built for the
+    variable in its units and what they import, which is what is built for the
     project: its own variables, those of each account it allows, and the
     machine-wide ones. They come by owner, the project's, then each account's
     in the order of the file, then the machine's, each in the order they are
@@ -148,8 +147,8 @@ def project_variables(ctx: BuildContext, project: Project) -> list[Variable]:
     """
     registry = ctx.registry
     allowed = registry.allowed_accounts(project)
-    root = project_unit(ctx.sources, registry, project)
-    references = [] if root is None else unit_references(ctx, [root])
+    roots = project_units(ctx.sources, registry, project)
+    references = unit_references(ctx, roots)
     found: dict[Owner, dict[str, list[str]]] = {}
     for user, reference in references:
         for owner, name in owners_of(reference, allowed, project.name):

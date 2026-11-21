@@ -167,8 +167,8 @@ def plan_launch(
     record. With no such project there is nothing to choose between, so ``auto``
     is as if no account was given, and no record is read.
 
-    The settings for the session are those of the project's unit, if it has
-    one, then the agent's entries that protect the repository's packed history,
+    The settings for the session are those of the project's units, if it has
+    any, then the agent's entries that protect the repository's packed history,
     then ``settings``, each merged over the ones before. ``agent_args`` go to
     the agent. ``self_path`` is atc's own executable, which the agent's binary
     must not be. ``which`` finds a binary on ``PATH``. Set ``lax`` to report
