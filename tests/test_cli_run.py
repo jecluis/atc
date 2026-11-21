@@ -810,3 +810,78 @@ def test_run_help_describes_auto(capsys: pytest.CaptureFixture[str]) -> None:
     out = " ".join(capsys.readouterr().out.split())
     assert "auto picks the least used of the project's accounts" in out
     assert "With -a auto, a project that lists accounts" in out
+
+
+OWN_DIR_FILES = {
+    **FILES,
+    "conf/accounts/bravo.json": unit({"model": "opus"}),
+    PROJECT: unit({"sandbox": {"network": {"allowedDomains": ["bar.org"]}}}),
+}
+
+
+@pytest.fixture
+def own_dir(
+    configure: ConfigWriter,
+    agent: Path,
+    repo: Path,
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Give ``bar`` its own config dirs, work in it, and return bravo's."""
+    text = REGISTRY.format(agent=agent, repo=repo).replace(
+        "account: bravo}", "account: bravo, own-config-dir: true}"
+    )
+    configure(OWN_DIR_FILES, text)
+    (home / ".config" / "bravo" / "claude").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    return home / ".config" / "bravo" / "claude" / "atc-projects" / "bar"
+
+
+def test_run_starts_the_agent_in_the_projects_own_config_dir_synced(
+    executed: list[LaunchPlan], own_dir: Path
+) -> None:
+    plan = start(executed, ["-q"])
+
+    assert plan.env["CLAUDE_CONFIG_DIR"] == str(own_dir)
+    assert plan.config_dir == own_dir
+    assert (own_dir.stat().st_mode & 0o777) == 0o700
+    assert json.loads((own_dir / "settings.json").read_text(encoding="utf-8")) == {
+        "model": "opus",
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    assert "allowedDomains" in canonical(plan.fragment)
+
+
+def test_run_says_the_project_has_its_own_config_dir(
+    executed: list[LaunchPlan], own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = start(executed, [])
+
+    assert f"config {own_dir}" in capsys.readouterr().err
+
+
+def test_run_does_not_start_when_the_config_dir_cannot_be_brought_up_to_date(
+    executed: list[LaunchPlan], own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = start(executed, ["-q"])
+    executed.clear()
+    _ = (own_dir / "settings.json").write_text("{nope", encoding="utf-8")
+
+    assert main(["-q"]) == CONFIG
+
+    assert executed == []
+    err = capsys.readouterr().err
+    assert "bravo/bar" in err
+    assert "atc sync --diff" in err
+
+
+def test_print_names_the_config_dir_and_makes_nothing(
+    executed: list[LaunchPlan], own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--print"]) == OK
+
+    assert f"config dir: {own_dir} (made and synced at the start)" in (
+        capsys.readouterr().out
+    )
+    assert not own_dir.exists()
+    assert executed == []

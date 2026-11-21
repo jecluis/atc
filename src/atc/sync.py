@@ -559,6 +559,17 @@ def _record(
         state.record_links(updated)
 
 
+def kept_lines(settings: SettingsPlan) -> list[str]:
+    """Say what a project directory's settings kept of the live file, and reset."""
+    lines: list[str] = []
+    if settings.kept:
+        lines.append(f"kept what Claude Code added: {', '.join(settings.kept)}")
+    if settings.reset:
+        what = ", ".join(settings.reset)
+        lines.append(f"reset to what the units give: {what}")
+    return lines
+
+
 def config_dir_account(account: Account, project: Project) -> Account:
     """Give ``account`` as it is in the configuration directory of ``project``."""
     return replace(account, dir=project_config_dir(account, project))

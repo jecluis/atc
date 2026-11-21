@@ -20,7 +20,14 @@ from atc.errors import ConfigError
 from atc.links import LinkPlan
 from atc.registry import Account, Project, own_config_projects, project_config_dir
 from atc.skills import discover_skills
-from atc.sync import AccountPlan, AssetPlan, SettingsPlan, apply_account, plan_account
+from atc.sync import (
+    AccountPlan,
+    AssetPlan,
+    SettingsPlan,
+    apply_account,
+    kept_lines,
+    plan_account,
+)
 from atc.ui import Ui
 
 
@@ -207,17 +214,6 @@ def _project_dirs(ctx: BuildContext, account: Account) -> list[Project]:
         for project in own_config_projects(ctx.registry, account.name)
         if project_config_dir(account, project).is_dir()
     ]
-
-
-def kept_lines(settings: SettingsPlan) -> list[str]:
-    """Say what a project directory's settings kept of the live file, and reset."""
-    lines: list[str] = []
-    if settings.kept:
-        lines.append(f"kept what Claude Code added: {', '.join(settings.kept)}")
-    if settings.reset:
-        what = ", ".join(settings.reset)
-        lines.append(f"reset to what the units give: {what}")
-    return lines
 
 
 def _status(settings: SettingsPlan, *, dry: bool) -> str:

@@ -133,6 +133,15 @@ def run(
     the account's settings cannot be built, a warning says why and the other
     rules are still checked.
 
+    In a project whose registry entry sets own-config-dir, the agent runs in the
+    project's own configuration directory for the account, atc-projects/PROJECT
+    in the account's directory, and not in the account's. Before the agent
+    starts, atc makes that directory if it is missing and syncs it as "atc sync"
+    would: the account's settings with the project's merged over them, and the
+    account's instructions file and skills. If it cannot, atc stops and the
+    agent does not start. The directory has its own login, history and plugins:
+    its first session asks Claude Code for a login.
+
     Inside a git repository the session is guarded. The agent cannot write to
     the repository's objects/pack and packed-refs, git's automatic gc is turned
     off, the repository is listed for maintenance, and a shared lock on it is
@@ -172,8 +181,10 @@ def run(
     for rule_warning in plan.rule_warnings:
         ui.warning(rule_warning.message())
     if show_plan:
-        _show(ui, plan)
+        _show(ui, plan, launch.config_dir_state(build, plan, lax=lax))
         return
+    for message in launch.prepare_config_dir(build, plan, lax=lax):
+        ui.warning(message)
     if not quiet:
         for note in plan.notes:
             ui.info(f"atc: {note}")
@@ -183,6 +194,8 @@ def run(
             f"account {plan.account.name}",
             f"guard {_guard_state(plan)}",
         ]
+        if plan.config_dir is not None:
+            parts.append(f"config {plan.config_dir}")
         ui.info("atc: " + " · ".join(parts))
     launch.execute(plan, build.dirs)
 
@@ -205,7 +218,7 @@ def _guard_state(plan: LaunchPlan) -> str:
     return "off (--no-guard)"
 
 
-def _show(ui: Ui, plan: LaunchPlan) -> None:
+def _show(ui: Ui, plan: LaunchPlan, config_state: str) -> None:
     """Write the plan as a tree, followed by the fragment as JSON."""
     project = ABSENT if plan.project is None else plan.project.name
     repository = ABSENT if plan.common_dir is None else str(plan.common_dir)
@@ -218,6 +231,8 @@ def _show(ui: Ui, plan: LaunchPlan) -> None:
         *plan.notes,
         f"guard: {_guard_state(plan)}",
     ]
+    if plan.config_dir is not None:
+        lines.append(f"config dir: {plan.config_dir} ({config_state})")
     if plan.snapshot is not None:
         lines.append(f"snapshot: {plan.snapshot}")
     for line in lines:

@@ -14,6 +14,7 @@ from atc import git, guard
 from atc.backends import backend_for
 from atc.context import BuildContext
 from atc.errors import ConfigError, GitError, RegistryError, UnitError
+from atc.fsutil import make_private_dir
 from atc.jsonval import JsonObject, json_kind, load_json, parse_json
 from atc.layers import (
     build_account_layer,
@@ -24,6 +25,13 @@ from atc.layers import (
 from atc.paths import Dirs
 from atc.registry import AUTO_ACCOUNT, Account, Project, Registry, choose_account
 from atc.rules import RuleWarning, dead_rules
+from atc.sync import (
+    AccountPlan,
+    apply_account,
+    config_dir_account,
+    kept_lines,
+    plan_account,
+)
 from atc.ui import Ui
 from atc.usage import UsageRecord, choose_auto, read_usage
 
@@ -61,7 +69,9 @@ class LaunchPlan:
     outside a repository, and with ``no_guard``. ``protected`` are the paths of
     that history that existed when the fragment was made. ``snapshot`` is the
     snapper config of the project, whether or not the session is guarded: the
-    snapshot is made just before the agent starts.
+    snapshot is made just before the agent starts. ``config_dir`` is the
+    project's configuration directory for the account, which the agent is
+    started in, when the project has its own; ``None`` means the account's.
     """
 
     cwd: Path
@@ -78,6 +88,7 @@ class LaunchPlan:
     guarded: bool
     protected: tuple[Path, ...]
     snapshot: str | None
+    config_dir: Path | None = None
 
 
 def find_project(
@@ -228,7 +239,10 @@ def plan_launch(
             checked = [build_account_layer(ctx, chosen, lax=lax), *layers]
         except ConfigError as exc:
             warnings.append(f"rule check skipped for the account layer: {exc}")
-    selected = backend.environment(chosen, _atc_environment(env, ctx, chosen, project))
+    target = chosen
+    if project is not None and project.own_config_dir:
+        target = config_dir_account(chosen, project)
+    selected = backend.environment(target, _atc_environment(env, ctx, chosen, project))
     guarded = entries is not None
     if guarded:
         selected = guard.with_gc_disabled(selected)
@@ -249,6 +263,68 @@ def plan_launch(
         guarded=guarded,
         protected=protected,
         snapshot=None if project is None else project.snapshot,
+        config_dir=None if target is chosen else target.dir,
+    )
+
+
+def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> list[str]:
+    """
+    Make the plan's configuration directory if missing, and sync it.
+
+    The directory is made private to the user, and only in an account directory
+    that exists. It is then synced as ``atc sync`` would, without taking over or
+    discarding anything. Returns the warnings of the sync, and what it kept of
+    and reset in the live settings. Nothing is done for a plan without one.
+
+    Raises:
+        ConfigError: the directory cannot be made or synced, or the sync would
+            leave something as it is, for want of a flag.
+
+    """
+    if plan.config_dir is None or plan.project is None:
+        return []
+    label = f"{plan.account.name}/{plan.project.name}"
+    if not plan.account.dir.is_dir():
+        message = f"{label}: the account's directory {plan.account.dir} is missing"
+        raise ConfigError(message)
+    try:
+        make_private_dir(plan.config_dir)
+    except OSError as exc:
+        raise ConfigError(f"{label}: cannot make {plan.config_dir}: {exc}") from exc
+    synced = _plan_config_dir(ctx, plan.account, plan.project, lax=lax)
+    if synced.blocked:
+        message = (
+            f"{label}: {plan.config_dir} cannot be brought up to date, so the "
+            + "agent was not started; run atc sync --diff to see why"
+        )
+        raise ConfigError(message)
+    apply_account(synced, ctx, datetime.now(UTC))
+    messages = [*synced.warnings, *(w.message() for w in synced.rule_warnings)]
+    if synced.settings is not None:
+        messages.extend(f"{label}: {line}" for line in kept_lines(synced.settings))
+    return messages
+
+
+def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
+    """Say what :func:`prepare_config_dir` would do, changing nothing."""
+    if plan.config_dir is None or plan.project is None:
+        return ""
+    if not plan.config_dir.is_dir():
+        return "made and synced at the start"
+    try:
+        synced = _plan_config_dir(ctx, plan.account, plan.project, lax=lax)
+    except ConfigError as exc:
+        return f"cannot be synced: {exc}"
+    if synced.blocked:
+        return "cannot be brought up to date; atc sync --diff says why"
+    return "synced at the start" if synced.pending else "current"
+
+
+def _plan_config_dir(
+    ctx: BuildContext, account: Account, project: Project, *, lax: bool
+) -> AccountPlan:
+    return plan_account(
+        ctx, account, take_over=False, discard_live=False, lax=lax, project=project
     )
 
 
