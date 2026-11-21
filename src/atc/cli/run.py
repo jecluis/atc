@@ -181,6 +181,12 @@ def run(
     """
     if conf_d is not None and not show_plan:
         raise click.UsageError("--conf-d is only accepted with --print")
+    if resume == "" and ctx.args and not ctx.args[0].startswith("-"):
+        message = (
+            f"-r without a session would take '{ctx.args[0]}' for one; give "
+            + "-r SESSION, or start the agent's arguments with an option"
+        )
+        raise click.UsageError(message)
     build = load_build_context(conf_d)
     settings = None if settings_arg is None else launch.read_settings_arg(settings_arg)
     plan = launch.plan_launch(

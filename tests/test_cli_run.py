@@ -994,3 +994,12 @@ def test_resume_before_another_option_takes_no_session(
     plan = start(executed, ["-r", "-q"])
 
     assert plan.argv == [str(agent), "--resume"]
+
+
+def test_resume_without_a_session_refuses_words_it_would_take_for_one(
+    executed: list[LaunchPlan], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["-r", "--", "fix the bug"]) == USAGE
+
+    assert "-r SESSION" in capsys.readouterr().err
+    assert executed == []

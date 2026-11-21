@@ -1396,3 +1396,17 @@ def test_a_peers_project_dir_must_not_be_readable(own_dir_world: World) -> None:
     own_dir_world.probe.readable_paths.add(peer)
 
     assert failures(own_dir_world.run()) == [f"{peer} is not readable (account bravo)"]
+
+
+def test_a_login_left_in_a_project_dir_the_registry_forgot_must_be_hidden(
+    own_dir_world: World,
+) -> None:
+    projects = own_dir_world.dirs.state_dir / "projects"
+    left = projects / "gone" / "personal" / ".credentials.json"
+    own_dir_world.probe.listings[projects] = [projects / "bar", projects / "gone"]
+    own_dir_world.probe.existing.add(left)
+    own_dir_world.probe.readable_paths.add(left)
+
+    assert failures(own_dir_world.run()) == [
+        f"{left} is not readable (account personal)"
+    ]

@@ -520,11 +520,12 @@ settings are still passed as `--settings` too, so they rank as they do in any
 other project. If the directory cannot be brought up to date, for instance
 because a unit cannot be built or its `settings.json` is not JSON, atc stops
 with exit status `1` and the agent does not start; `atc sync --diff` shows why.
-So does a symbolic link at `projects`, at the project's directory in it or at
-the account's below that: atc writes a project directory only where it says.
-When the sync writes the settings, or keeps something of the live settings that
-it did not keep before, a line on standard error lists what it kept and what it
-reset (see `atc sync`). `--print` lists what it keeps too.
+So does a symbolic link at `projects`, at the project's directory in it, at the
+account's or at `_common` below that, at `_common/plugins`, or on the way to the
+project's auto memory directory: atc writes these only where it says. When the
+sync writes the settings, or keeps something of the live settings that it did
+not keep before, a line on standard error lists what it kept and what it reset
+(see `atc sync`). `--print` lists what it keeps too.
 
 A project directory is a fresh Claude Code directory. It has its own login, so
 its first session asks for one, and its own session history, `.claude.json`,
@@ -535,18 +536,19 @@ under the account, so `atc usage` and `-a auto` count every directory of the
 account together.
 
 Each account's `account.secrets` lists the credentials and state file of its
-project directories that exist, so a unit that denies it hides every login of
-the account from all its sessions. A file that does not exist is left out, since
-the sandbox would put a placeholder where a denied path is missing. So the
+project directories that exist, including those of projects that no longer give
+it one, which still hold its login, so a unit that denies it hides every login
+of the account from all its sessions. A file that does not exist is left out,
+since the sandbox would put a placeholder where a denied path is missing. So the
 session that first logs in to a project directory is not denied the credentials
 it writes; restart it once logged in, and run `atc sync` so that the account's
 other sessions are denied them too. `peers.dir` adds the project directories of
-every other account that exist, and the shared memory of each project the
-account may not work on, so a unit that denies it keeps an account's sessions
-out of them. Sharing memory between the accounts of one project is the one
-deliberate gap in their isolation: what a session of one account learns about
-the project, the others read. Turning the option off, or removing the project,
-leaves the directories as they are.
+every other account that exist, the same way, and the shared memory and
+`_common` of each project the account may not work on, so a unit that denies it
+keeps an account's sessions out of them. Sharing memory between the accounts of
+one project is the one deliberate gap in their isolation: what a session of one
+account learns about the project, the others read. Turning the option off, or
+removing the project, leaves the directories as they are.
 
 **`atc` with no command.** `atc` with no arguments, or with a first argument
 that starts with `-`, is `atc run`; this includes `--`. `atc -r x` therefore
@@ -678,7 +680,7 @@ installed, atc warns and starts the agent anyway.
 | `-a`, `--account ACCOUNT`  | Use `ACCOUNT` instead of the project's own account. `auto` picks the least used of the project's accounts.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `--settings FILE\|JSON`    | Settings for this session only: the path of a JSON file, or JSON text, which is anything that starts with `{`. They win over the project's settings, and are added to the session entries without being able to remove them.                                                                                                                                                                                                                                                                                     |
 | `-n`, `--name NAME`        | Name the session `NAME`, which the agent shows and can resume it by. It is the agent's `--name`, passed before the arguments after `--`.                                                                                                                                                                                                                                                                                                                                                                         |
-| `-r`, `--resume [SESSION]` | Resume the session `SESSION`, by its id or name, or without `SESSION` pick one of those the agent lists. It is the agent's `--resume`, passed before the arguments after `--`. In a project with its own config directory, the sessions are the project's for the account.                                                                                                                                                                                                                                       |
+| `-r`, `--resume [SESSION]` | Resume the session `SESSION`, by its id or name, or without `SESSION` pick one of those the agent lists. It is the agent's `--resume`, passed before the arguments after `--`, so without `SESSION` those must start with an option, or the agent would take the first for the session: `atc -r -- "fix it"` is a usage error. In a project with its own config directory, the sessions are the project's for the account.                                                                                       |
 | `--no-guard`               | Do not guard the repository's packed history in this session: no session entries, no gc override, no lock and no listing in the repository list. A warning says so inside a git repository. The project's snapshot is still made.                                                                                                                                                                                                                                                                                |
 | `--print`                  | Show on standard output how the agent would be started, and exit with status `0` without starting it: the repository, project, account (with why `-a auto` chose it), whether the session is guarded, the snapshot if there is one, the project's config directory and whether it would be made or synced, the changes to the environment, the command, and the settings as JSON. Nothing is made, synced, listed, locked or snapshotted. Warnings about permission rules that never apply go to standard error. |
 | `-q`, `--quiet`            | Leave out the line that names the project, the account and the guard, and the one that says what `-a auto` chose.                                                                                                                                                                                                                                                                                                                                                                                                |

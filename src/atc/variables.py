@@ -5,7 +5,7 @@ from pathlib import Path
 
 from atc.backends import backend_for
 from atc.context import BuildContext
-from atc.projectdirs import account_dirs, memory_dir
+from atc.projectdirs import account_dirs, common_dir, memory_dir
 from atc.registry import Account, Project, own_config_projects
 from atc.sources import Source
 from atc.state import SyncState
@@ -121,8 +121,9 @@ def _peer_dirs(
     Give the directories that ``account``'s sessions are kept out of.
 
     Those are every other account's directory, then their project configuration
-    directories that exist, then the auto memory directories that exist of the
-    projects with their own directories that ``account`` may not work on.
+    directories that exist, then the auto memory and shared directories that
+    exist of the projects with their own directories that ``account`` may not
+    work on.
     """
     own = [peer.dir for peer in peers]
     projects = [
@@ -131,12 +132,17 @@ def _peer_dirs(
         for there in account_dirs(ctx.dirs, ctx.registry, peer)[1:]
     ]
     allowed = {p.name for p in own_config_projects(ctx.registry, account.name)}
-    memories = [
-        memory_dir(ctx.dirs, project)
+    closed = [
+        project
         for project in ctx.registry.projects.values()
         if project.own_config_dir and project.name not in allowed
     ]
-    return (*own, *projects, *(path for path in memories if path.is_dir()))
+    shared = [
+        path
+        for project in closed
+        for path in (memory_dir(ctx.dirs, project), common_dir(ctx.dirs, project))
+    ]
+    return (*own, *projects, *(path for path in shared if path.is_dir()))
 
 
 def _strings(paths: tuple[Path, ...]) -> tuple[str, ...]:

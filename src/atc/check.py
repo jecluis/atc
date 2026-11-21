@@ -3,7 +3,7 @@
 import os
 import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol, final
 
@@ -14,7 +14,7 @@ from atc.git import common_dir as git_common_dir
 from atc.git import run_git
 from atc.guard import GUARD_VARIABLE
 from atc.paths import Dirs
-from atc.projectdirs import config_dir_account
+from atc.projectdirs import PROJECTS, config_dir_account
 from atc.refs import SKILL_FILE
 from atc.registry import (
     REGISTRY_FILE,
@@ -488,13 +488,13 @@ def _accounts(
         backend = backend_for(current.agent, home)
         owned += [
             (path, current)
-            for there in _every_dir(dirs, registry, current)
+            for there in _every_dir(probe, dirs, registry, current)
             for path in backend.secrets(there)
         ]
     for peer in registry.accounts.values():
         if current is None or peer.name != current.name:
             backend = backend_for(peer.agent, home)
-            own = [there.dir for there in _every_dir(dirs, registry, peer)]
+            own = [there.dir for there in _every_dir(probe, dirs, registry, peer)]
             owned += [(path, peer) for path in (*own, *backend.files(peer))]
     seen: set[Path] = set()
     for path, account in owned:
@@ -623,21 +623,39 @@ def _other_settings(
     backend = backend_for(account.agent, home)
     results = [
         _linked_file(probe, path, f"the account's settings {path}")
-        for there in _every_dir(dirs, registry, account)
+        for there in _every_dir(probe, dirs, registry, account)
         if there.dir != here.dir and probe.exists(path := backend.settings_file(there))
     ]
     return Report(tuple(results))
 
 
-def _every_dir(dirs: Dirs, registry: Registry, account: Account) -> list[Account]:
-    """Give ``account`` in its own directory and in each project's that it may have."""
-    return [
+def _every_dir(
+    probe: Probe, dirs: Dirs, registry: Registry, account: Account
+) -> list[Account]:
+    """
+    Give ``account`` in its own directory and in each project's that it may have.
+
+    Those are the ones of the projects the registry gives it, and any other
+    that ``probe`` lists in the directory of every project's.
+    """
+    found = [
         account,
         *(
             config_dir_account(dirs, account, project)
             for project in own_config_projects(registry, account.name)
         ),
     ]
+    try:
+        listed = probe.entries(dirs.state_dir / PROJECTS)
+    except OSError:
+        listed = []
+    known = {there.dir for there in found}
+    found.extend(
+        replace(account, dir=entry / account.name)
+        for entry in sorted(listed)
+        if entry / account.name not in known
+    )
+    return found
 
 
 def _has_entries(directory: Path) -> bool:

@@ -63,3 +63,27 @@ def test_a_link_anywhere_on_the_way_to_a_config_dir_is_found(
     assert config_dir_link(dirs, personal, bar) == link
     link.unlink()
     assert config_dir_link(dirs, personal, bar) is None
+
+
+def test_account_dirs_include_those_left_behind_by_the_registry(
+    home: Path, dirs: Dirs
+) -> None:
+    registry = parse_registry(REGISTRY, home / "machine.yaml", home)
+    personal = registry.account("personal")
+    left = dirs.state_dir / "projects" / "gone" / "personal"
+    left.mkdir(parents=True)
+
+    found = account_dirs(dirs, registry, personal)
+
+    assert [there.dir for there in found] == [personal.dir, left]
+
+
+def test_a_link_at_a_shared_directory_is_found(
+    home: Path, dirs: Dirs, tmp_path: Path
+) -> None:
+    registry = parse_registry(REGISTRY, home / "machine.yaml", home)
+    personal, bar = registry.account("personal"), registry.project("bar")
+    memory_dir(dirs, bar).parent.mkdir(parents=True)
+    memory_dir(dirs, bar).symlink_to(tmp_path)
+
+    assert config_dir_link(dirs, personal, bar) == memory_dir(dirs, bar)

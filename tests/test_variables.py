@@ -372,6 +372,7 @@ def test_account_secrets_add_those_of_its_project_dirs_that_exist(
         str(bar / ".credentials.json"),
         str(baz / ".credentials.json"),
         str(baz / ".claude.json"),
+        str(projects / "qux" / "bravo" / ".credentials.json"),
     )
     assert got["account.dir"] == str(bravo)
 
@@ -399,7 +400,7 @@ def test_peers_add_the_other_accounts_project_dirs_and_memory_out_of_reach(
     )
 
 
-def test_project_dirs_of_a_project_that_disallows_the_account_are_not_its_own(
+def test_a_project_dir_the_registry_no_longer_gives_the_account_is_still_its_own(
     build_context: ContextBuilder, home: Path
 ) -> None:
     ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
@@ -412,4 +413,5 @@ def test_project_dirs_of_a_project_that_disallows_the_account_are_not_its_own(
     assert got["account.secrets"] == (
         str(home / ".claude" / ".credentials.json"),
         str(home / ".claude.json"),
+        str(bar / ".credentials.json"),
     )

@@ -51,11 +51,24 @@ def config_dir_link(dirs: Dirs, account: Account, project: Project) -> Path | No
     """
     Find a symbolic link on the way to the configuration directory of ``project``.
 
-    atc makes and writes those directories only as directories, so that what it
-    writes stays where it says. ``None`` means none of them is a link.
+    That covers the directories the project's accounts share, and those its auto
+    memory directory is in. atc makes and writes them only as directories, so
+    that what it writes stays where it says. ``None`` means none of them is a
+    link.
     """
     root = dirs.state_dir / PROJECTS
-    candidates = (root, root / project.name, config_dir(dirs, account, project))
+    common = common_dir(dirs, project)
+    memory = memory_dir(dirs, project)
+    candidates = (
+        root,
+        root / project.name,
+        config_dir(dirs, account, project),
+        common,
+        *(common / name for name in SHARED),
+        memory.parent.parent,
+        memory.parent,
+        memory,
+    )
     return next((path for path in candidates if path.is_symlink()), None)
 
 
@@ -64,11 +77,19 @@ def account_dirs(dirs: Dirs, registry: Registry, account: Account) -> list[Accou
     Give ``account`` in each of its directories that exist, its own first.
 
     The others are its configuration directories of the projects that have
-    their own, in the order of the file.
+    their own, in the order of the file, then those that the registry no
+    longer gives it, which still hold its login, by project name.
     """
     found = [account]
     for project in own_config_projects(registry, account.name):
         there = config_dir_account(dirs, account, project)
         if there.dir.is_dir():
             found.append(there)
+    known = {there.dir for there in found}
+    root = dirs.state_dir / PROJECTS
+    if root.is_dir() and not root.is_symlink():
+        for entry in sorted(root.iterdir()):
+            path = entry / account.name
+            if not entry.is_symlink() and path not in known and path.is_dir():
+                found.append(replace(account, dir=path))
     return found
