@@ -1,6 +1,7 @@
 """``atc sync``: bring each account's files in line with the configuration."""
 
 import difflib
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,8 +15,10 @@ from atc.cli.options import (
     lax_option,
     load_build_context,
 )
+from atc.context import BuildContext
 from atc.errors import ConfigError
 from atc.links import LinkPlan
+from atc.registry import Account, Project, own_config_projects, project_config_dir
 from atc.skills import discover_skills
 from atc.sync import AccountPlan, AssetPlan, SettingsPlan, apply_account, plan_account
 from atc.ui import Ui
@@ -111,6 +114,15 @@ def sync(
     Claude Code's own, are never touched, except that a link or file where a
     selected skill is to go is a conflict, as above.
 
+    A project whose registry entry sets own-config-dir has a configuration
+    directory of its own in each account it allows, atc-projects/PROJECT in the
+    account's directory, which "atc run" in the project makes. Each one that
+    exists is synced with its account, as ACCOUNT/PROJECT: it gets the account's
+    settings with the project's merged over them, and the account's instructions
+    file and skills. There, what Claude Code writes into settings.json is no
+    edit: what it added is kept, and what the units set is reset to their
+    value, and both are listed.
+
     Prints one line per account, one more for each link that changes or is in
     conflict and for each rendered copy that changes, and on standard error the
     warnings of the account's settings and of the skills that were skipped or
@@ -129,23 +141,29 @@ def sync(
     catalog = discover_skills(ctx.sources)
     for warning in (*ctx.sources.warnings, *ctx.registry.warnings, *catalog.warnings):
         ui.warning(warning)
-    accounts = chosen_accounts(ctx, names)
+    targets = [
+        (account, project)
+        for account in chosen_accounts(ctx, names)
+        for project in (None, *_project_dirs(ctx, account))
+    ]
     plans: list[AccountPlan] = []
-    for account in accounts:
+    for account, project in targets:
         try:
-            plans.append(
-                plan_account(
-                    ctx,
-                    account,
-                    take_over=take_over,
-                    discard_live=discard_live,
-                    lax=lax,
-                    catalog=catalog,
-                )
+            plan = plan_account(
+                ctx,
+                account,
+                take_over=take_over,
+                discard_live=discard_live,
+                lax=lax,
+                catalog=catalog,
+                project=project,
             )
         except ConfigError as exc:
             ui.error(str(exc))
-    if len(plans) != len(accounts):
+            continue
+        # The account's own plan renders the copies a project directory links to.
+        plans.append(plan if project is None else replace(plan, assets=()))
+    if len(plans) != len(targets):
         raise click.exceptions.Exit(exitcodes.CONFIG)
 
     dry = check or show_diff
@@ -154,9 +172,11 @@ def sync(
     for plan in plans:
         if not dry:
             apply_account(plan, ctx, now)
-        name = plan.account.name
+        name = plan.label
         if plan.settings is not None:
             ui.line(f"{name}: {_status(plan.settings, dry=dry)}")
+            for line in kept_lines(plan.settings):
+                ui.info(f"{name}: {line}")
             if show_diff or plan.settings.blocked:
                 ui.diff(_diff(plan.settings_path, plan.settings))
         for asset in plan.assets:
@@ -178,6 +198,26 @@ def sync(
     pending = check and any(plan.pending for plan in plans)
     if pending or any(plan.blocked for plan in plans):
         raise click.exceptions.Exit(exitcodes.CHECK)
+
+
+def _project_dirs(ctx: BuildContext, account: Account) -> list[Project]:
+    """Give the projects whose configuration directory for ``account`` exists."""
+    return [
+        project
+        for project in own_config_projects(ctx.registry, account.name)
+        if project_config_dir(account, project).is_dir()
+    ]
+
+
+def kept_lines(settings: SettingsPlan) -> list[str]:
+    """Say what a project directory's settings kept of the live file, and reset."""
+    lines: list[str] = []
+    if settings.kept:
+        lines.append(f"kept what Claude Code added: {', '.join(settings.kept)}")
+    if settings.reset:
+        what = ", ".join(settings.reset)
+        lines.append(f"reset to what the units give: {what}")
+    return lines
 
 
 def _status(settings: SettingsPlan, *, dry: bool) -> str:

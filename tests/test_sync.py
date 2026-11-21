@@ -26,7 +26,7 @@ from atc.sync import (
     decide_settings,
     plan_account,
 )
-from tests.conftest import ContextBuilder
+from tests.conftest import ConfigWriter, ContextBuilder
 from tests.helpers import (
     LINKED_REGISTRY,
     MINIMAL_REGISTRY,
@@ -113,6 +113,44 @@ def test_texts_are_rendered_so_a_diff_shows_content_not_formatting() -> None:
 
 def test_an_unparseable_live_file_is_kept_as_it_is() -> None:
     assert plan("{nope", None).live_text == "{nope"
+
+
+def merged(live: str | None, last: JsonObject | None) -> SettingsPlan:
+    return decide_settings(
+        {"model": "opus", "allow": ["a"]},
+        live,
+        last,
+        parse=parse_live,
+        take_over=False,
+        discard_live=False,
+        keep_additions=True,
+    )
+
+
+def test_keeping_additions_writes_the_merge_and_records_the_new_settings() -> None:
+    p = merged('{"model": "haiku", "allow": ["a", "b"], "x": 1}', {"model": "opus"})
+
+    assert (p.situation, p.write, p.blocked) == ("merged", True, False)
+    assert p.new == {"model": "opus", "allow": ["a"]}
+    assert p.new_text == dumps({"model": "opus", "allow": ["a", "b"], "x": 1})
+    assert (p.kept, p.reset) == (("/allow", "/x"), ("/model",))
+
+
+def test_keeping_additions_writes_nothing_when_the_merge_is_the_live_file() -> None:
+    p = merged('{"model": "opus", "allow": ["a"], "x": 1}', {"model": "opus"})
+
+    assert (p.situation, p.write) == ("current", False)
+    assert p.kept == ("/x",)
+
+
+def test_keeping_additions_still_stops_on_a_live_file_that_is_not_json() -> None:
+    p = merged("{nope", {"model": "opus"})
+
+    assert (p.situation, p.blocked) == ("edited", True)
+
+
+def test_keeping_additions_still_needs_take_over_for_a_file_never_synced() -> None:
+    assert merged('{"x": 1}', None).situation == "never-synced"
 
 
 NOW = datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC)
@@ -1038,3 +1076,123 @@ def test_the_copies_of_a_source_that_is_gone_are_removed(
     ]
     assert not (rendered / "other").exists()
     assert (rendered / "main" / "x").read_text() == "x\n"
+
+
+OWN_DIR_REGISTRY = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal: {agent: claude, dir: ~/.claude, use-default-agents-md: true}
+    projects:
+      bar: {repo: /r/bar, own-config-dir: true}
+"""
+OWN_DIR_FILES = {
+    PERSONAL: unit({"model": "opus", "permissions": {"deny": ["Bash(rm *)"]}}),
+    "conf/projects/bar.json": unit(
+        {"sandbox": {"network": {"allowedDomains": ["{{project.name}}.org"]}}}
+    ),
+    "assets/AGENTS.in.md": "hi {{account.name}}\n",
+}
+
+
+def project_context(build_context: ContextBuilder, home: Path) -> BuildContext:
+    (home / ".claude" / "atc-projects" / "bar").mkdir(parents=True)
+    return build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+
+
+def sync_project(ctx: BuildContext, *, discard_live: bool = False) -> AccountPlan:
+    account_plan = plan_account(
+        ctx,
+        ctx.registry.account("personal"),
+        project=ctx.registry.project("bar"),
+        take_over=False,
+        discard_live=discard_live,
+        lax=False,
+    )
+    apply_account(account_plan, ctx, NOW)
+    return account_plan
+
+
+def test_a_project_dir_gets_the_account_settings_with_the_project_ones_over_them(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = project_context(build_context, home)
+    directory = home / ".claude" / "atc-projects" / "bar"
+
+    account_plan = sync_project(ctx)
+
+    assert account_plan.label == "personal/bar"
+    assert account_plan.settings_path == directory / "settings.json"
+    assert json.loads((directory / "settings.json").read_text()) == {
+        "model": "opus",
+        "permissions": {"deny": ["Bash(rm *)"]},
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    rendered = SyncState(ctx.dirs.state_dir, "personal").rendered_dir / "AGENTS.md"
+    assert (directory / "CLAUDE.md").readlink() == rendered
+    assert not (home / ".claude" / "settings.json").exists()
+    record = ctx.dirs.state_dir / "sync" / "personal" / "projects" / "bar"
+    assert json.loads((record / "settings.json").read_text())["model"] == "opus"
+
+
+def test_a_project_dir_keeps_what_claude_added_and_takes_the_units_changes(
+    build_context: ContextBuilder, home: Path, configure: ConfigWriter
+) -> None:
+    ctx = project_context(build_context, home)
+    path = home / ".claude" / "atc-projects" / "bar" / "settings.json"
+    _ = sync_project(ctx)
+    edited: JsonObject = {
+        "advisorModel": "fable",
+        "model": "haiku",
+        "permissions": {"deny": []},
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    _ = path.write_text(dumps(edited))
+    files = {**OWN_DIR_FILES, PERSONAL: unit({"model": "sonnet"})}
+    configure(files, OWN_DIR_REGISTRY)
+    ctx = load_context(env=os.environ, home=home, uid=UID, conf_d=None)
+
+    account_plan = sync_project(ctx)
+
+    assert json.loads(path.read_text()) == {
+        "model": "sonnet",
+        "advisorModel": "fable",
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    plan_of = settings_plan(account_plan)
+    assert (plan_of.situation, plan_of.kept, plan_of.reset) == (
+        "merged",
+        ("/advisorModel",),
+        ("/model", "/permissions"),
+    )
+
+
+def test_a_project_dir_restores_a_deny_rule_a_session_removed(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = project_context(build_context, home)
+    path = home / ".claude" / "atc-projects" / "bar" / "settings.json"
+    _ = sync_project(ctx)
+    edited: JsonObject = {
+        "model": "opus",
+        "permissions": {"deny": ["Bash(git *)"]},
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    _ = path.write_text(dumps(edited))
+
+    _ = sync_project(ctx)
+
+    assert json.loads(path.read_text())["permissions"]["deny"] == [
+        "Bash(rm *)",
+        "Bash(git *)",
+    ]
+
+
+def test_a_missing_project_dir_is_a_config_error(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    (home / ".claude").mkdir()
+    ctx = build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+
+    with pytest.raises(ConfigError, match=r"personal/bar.*atc-projects/bar"):
+        _ = sync_project(ctx)

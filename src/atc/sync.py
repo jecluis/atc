@@ -2,7 +2,7 @@
 
 import stat
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -12,9 +12,10 @@ from atc.context import BuildContext
 from atc.errors import ConfigError, UnitError, WriteError
 from atc.fsutil import atomic_write, backup, make_private_dir
 from atc.jsonval import JsonObject, canonical, dumps
-from atc.layers import build_account_layer
+from atc.layers import build_account_layer, build_project_layer, merge_fragment
 from atc.links import LinkPlan, apply_link, decide_link, wanted_instructions
-from atc.registry import Account
+from atc.merge import keep_additions as merge_live
+from atc.registry import Account, Project, project_config_dir
 from atc.rendered import Rendering, render_templates
 from atc.rules import RuleWarning, dead_rules
 from atc.skills import Catalog, discover_skills, wanted_skill_links
@@ -30,11 +31,14 @@ links of the selected ``skills``, or the rendered copies of templated
 ALL_PARTS: frozenset[Part] = frozenset({"settings", "instructions", "skills", "assets"})
 """Every part, which is what ``sync`` handles unless told otherwise."""
 
-type Situation = Literal["missing", "current", "never-synced", "unchanged", "edited"]
+type Situation = Literal[
+    "missing", "current", "never-synced", "unchanged", "edited", "merged"
+]
 """
 How the live settings file stands against what atc would write and last wrote:
 ``missing``, already ``current``, ``never-synced`` and different, ``unchanged``
-since the last sync, or ``edited`` outside atc.
+since the last sync, or ``edited`` outside atc. ``merged`` is an edited file
+whose additions are kept, where that is asked for.
 """
 
 
@@ -50,6 +54,11 @@ class SettingsPlan:
     shows changes in content and not in formatting. ``write`` says the file
     will be replaced, and ``blocked`` that it would be, but a flag the user did
     not give is needed first.
+
+    Where the live file's additions are kept, ``new_text`` holds them as well,
+    while ``new`` is still what the units produce, which is what gets recorded.
+    ``kept`` and ``reset`` are then the JSON pointers of what came from the live
+    file alone, and of where its own changes gave way to the units.
     """
 
     situation: Situation
@@ -59,6 +68,8 @@ class SettingsPlan:
     last_text: str | None
     write: bool
     blocked: bool
+    kept: tuple[str, ...] = ()
+    reset: tuple[str, ...] = ()
 
 
 type AssetAction = Literal["none", "write", "remove"]
@@ -103,8 +114,9 @@ class AccountPlan:
 
     ``settings`` is ``None`` when the settings were not among the parts planned.
     ``links`` are the link entries planned, and ``assets`` the rendered copies.
-    ``warnings`` are the layer's, and ``rule_warnings`` are the permission rules
-    that never apply. Neither stops the sync.
+    ``warnings`` are the layers', and ``rule_warnings`` are the permission rules
+    that never apply. Neither stops the sync. With a ``project``, the plan is
+    for the project's configuration directory for the account.
     """
 
     account: Account
@@ -114,6 +126,13 @@ class AccountPlan:
     rule_warnings: tuple[RuleWarning, ...]
     warnings: tuple[str, ...]
     assets: tuple[AssetPlan, ...] = ()
+    project: Project | None = None
+
+    @property
+    def label(self) -> str:
+        """Name what the plan is for: ``ACCOUNT``, or ``ACCOUNT/PROJECT``."""
+        name = self.account.name
+        return name if self.project is None else f"{name}/{self.project.name}"
 
     @property
     def pending(self) -> bool:
@@ -141,6 +160,7 @@ def decide_settings(
     take_over: bool,
     discard_live: bool,
     render: Callable[[JsonObject], str] = dumps,
+    keep_additions: bool = False,
 ) -> SettingsPlan:
     """
     Decide what happens to a settings file.
@@ -152,6 +172,9 @@ def decide_settings(
     ``last`` is unknown and edited outside atc otherwise. ``take_over`` allows
     writing over a file that was never synced, and ``discard_live`` over one
     that was edited. ``render`` makes the text of a version.
+
+    Set ``keep_additions`` to merge an edited file that is valid instead, as
+    :func:`atc.merge.keep_additions` does, rather than stop on it.
     """
     live = None if live_text is None else _parsed(live_text, parse)
     shown = live_text if live is None else render(live)
@@ -172,6 +195,20 @@ def decide_settings(
         return plan("never-synced", write=take_over, blocked=not take_over)
     if live is not None and canonical(live) == canonical(last):
         return plan("unchanged", write=True)
+    if keep_additions and live is not None and not discard_live:
+        kept = merge_live(last, live, new)
+        same = canonical(kept.settings) == canonical(live)
+        return SettingsPlan(
+            "current" if same else "merged",
+            new,
+            render(kept.settings),
+            shown,
+            last_text,
+            write=not same,
+            blocked=False,
+            kept=kept.kept,
+            reset=kept.reset,
+        )
     return plan("edited", write=discard_live, blocked=not discard_live)
 
 
@@ -184,9 +221,15 @@ def plan_account(
     lax: bool,
     parts: frozenset[Part] = ALL_PARTS,
     catalog: Catalog | None = None,
+    project: Project | None = None,
 ) -> AccountPlan:
     """
     Work out what ``sync`` does for ``account``, changing nothing.
+
+    With a ``project``, it is for the project's configuration directory for the
+    account instead, which must exist: its settings are the account's with the
+    project's merged over them, its links are the account's, and what the live
+    settings file added is kept, as :func:`decide_settings` does.
 
     Only the ``parts`` are planned: nothing is read, built or checked for the
     others, except that planning the instructions also plans the rendered
@@ -209,42 +252,53 @@ def plan_account(
             f"account '{account.name}': {account.dir} is not a directory; "
             + "atc does not create accounts, which means logging in"
         )
+    target = account if project is None else config_dir_account(account, project)
+    if not target.dir.is_dir():
+        message = (
+            f"{account.name}/{_name(project)}: {target.dir} is not a directory; "
+            + "atc run in the project makes it"
+        )
+        raise ConfigError(message)
     backend = backend_for(account.agent, ctx.home)
-    state = SyncState(ctx.dirs.state_dir, account.name)
-    path = backend.settings_file(account)
+    state = SyncState(ctx.dirs.state_dir, account.name, _name(project) or None)
+    path = backend.settings_file(target)
     settings: SettingsPlan | None = None
     rule_warnings: tuple[RuleWarning, ...] = ()
     warnings: tuple[str, ...] = ()
     if "settings" in parts:
-        layer = build_account_layer(ctx, account, lax=lax)
+        layers = [build_account_layer(ctx, account, lax=lax)]
+        if project is not None:
+            found = build_project_layer(ctx, project, account, lax=lax)
+            layers += [] if found is None else [found]
         settings = _plan_settings(
-            layer.settings,
+            merge_fragment(layers),
             path,
             state,
             backend,
             take_over=take_over,
             discard_live=discard_live,
+            keep_additions=project is not None,
         )
-        rule_warnings = dead_rules([layer])
-        warnings = layer.warnings
+        rule_warnings = dead_rules(layers)
+        warnings = tuple(warning for layer in layers for warning in layer.warnings)
     assets: list[AssetPlan] = []
     if not parts.isdisjoint({"assets", "instructions"}):
         assets = _plan_assets(render_templates(ctx, account), state.rendered_dir)
     links: list[LinkPlan] = []
     recorded = state.links()
     if "instructions" in parts:
-        entry = backend.instructions_file(account)
+        entry = backend.instructions_file(target)
         links.append(
             _plan_link(
-                entry, wanted_instructions(ctx, account), recorded, take_over=take_over
+                entry, wanted_instructions(ctx, target), recorded, take_over=take_over
             )
         )
     if "skills" in parts:
         links.extend(
             _plan_skills(
                 ctx,
-                account,
-                backend.skills_dir(account),
+                target,
+                backend.skills_dir(target),
                 catalog if catalog is not None else discover_skills(ctx.sources),
                 recorded,
                 take_over=take_over,
@@ -258,6 +312,7 @@ def plan_account(
         rule_warnings=rule_warnings,
         warnings=warnings,
         assets=tuple(assets),
+        project=project,
     )
 
 
@@ -279,7 +334,9 @@ def apply_account(plan: AccountPlan, ctx: BuildContext, now: datetime) -> None:
         WriteError: a file or link could not be written.
 
     """
-    state = SyncState(ctx.dirs.state_dir, plan.account.name)
+    state = SyncState(
+        ctx.dirs.state_dir, plan.account.name, _name(plan.project) or None
+    )
     try:
         _write_copies(plan.assets)
         if plan.settings is not None:
@@ -287,7 +344,8 @@ def apply_account(plan: AccountPlan, ctx: BuildContext, now: datetime) -> None:
         _apply_links(plan.links, state, now)
         _remove_copies(plan.assets, state.rendered_dir)
     except OSError as exc:
-        raise WriteError(f"account '{plan.account.name}': {exc}") from exc
+        where = f"account '{plan.account.name}'" if plan.project is None else plan.label
+        raise WriteError(f"{where}: {exc}") from exc
 
 
 def _plan_settings(
@@ -298,6 +356,7 @@ def _plan_settings(
     *,
     take_over: bool,
     discard_live: bool,
+    keep_additions: bool,
 ) -> SettingsPlan:
     """Decide what happens to the settings file at ``path``."""
     try:
@@ -316,6 +375,7 @@ def _plan_settings(
         take_over=take_over,
         discard_live=discard_live,
         render=backend.render,
+        keep_additions=keep_additions,
     )
 
 
@@ -497,6 +557,15 @@ def _record(
     """Write the record of links when it changed."""
     if updated != recorded:
         state.record_links(updated)
+
+
+def config_dir_account(account: Account, project: Project) -> Account:
+    """Give ``account`` as it is in the configuration directory of ``project``."""
+    return replace(account, dir=project_config_dir(account, project))
+
+
+def _name(project: Project | None) -> str:
+    return "" if project is None else project.name
 
 
 def _parsed(text: str, parse: Callable[[str], JsonObject]) -> JsonObject | None:

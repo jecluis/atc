@@ -18,18 +18,22 @@ class SyncState:
     """
     The record that ``atc sync`` keeps for one account, under ``state_dir``.
 
-    ``root`` holds the settings it last wrote, the links it made, the
-    ``backups_dir`` of what it replaced, and the ``rendered_dir`` of the
-    templated assets it rendered for the account. It stays private to the user,
-    because settings can hold secrets.
+    ``root`` holds the settings it last wrote, the links it made and the
+    ``backups_dir`` of what it replaced. With a ``project``, they are those of
+    the project's configuration directory for the account. ``rendered_dir``
+    holds the templated assets rendered for the account, whichever directory
+    the record is for. It all stays private to the user, because settings can
+    hold secrets.
     """
 
     state_dir: Path
     account: str
+    project: str | None = None
 
     @property
     def root(self) -> Path:
-        return self.state_dir / "sync" / self.account
+        account = self.state_dir / "sync" / self.account
+        return account if self.project is None else account / "projects" / self.project
 
     @property
     def backups_dir(self) -> Path:
@@ -37,7 +41,7 @@ class SyncState:
 
     @property
     def rendered_dir(self) -> Path:
-        return self.root / "assets"
+        return self.state_dir / "sync" / self.account / "assets"
 
     def rendered(self, source: Source) -> Path:
         """Give where the templated assets of ``source`` are rendered."""

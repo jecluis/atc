@@ -1126,3 +1126,70 @@ def test_diff_shows_a_copy_removed_and_a_copy_whose_mode_alone_changed(
     assert f"{rendered / 'a'}: mode 644 → 600" in out
     assert f"personal: {rendered / 'b'}: removed, as its template is gone" in out
     assert "-b" in out
+
+
+OWN_DIRS = """\
+    version: 1
+    default-account: personal
+    accounts:
+      personal: {agent: claude, dir: ~/.claude}
+      work: {agent: claude, dir: ~/.config/work}
+    projects:
+      bar: {repo: /r/bar, own-config-dir: true}
+      baz: {repo: /r/baz, own-config-dir: true}
+"""
+OWN_DIR_FILES = {
+    PERSONAL: unit(SETTINGS),
+    WORK: unit(SETTINGS),
+    "conf/projects/bar.json": unit({"env": {"P": "{{project.name}}"}}),
+}
+
+
+def test_sync_writes_the_project_dirs_that_exist_for_each_account_synced(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bar = home / ".claude" / "atc-projects" / "bar"
+    bar.mkdir(parents=True)
+    (home / ".config" / "work" / "atc-projects" / "bar").mkdir(parents=True)
+    configure(OWN_DIR_FILES, OWN_DIRS)
+
+    assert main(["sync", "personal"]) == OK
+
+    assert capsys.readouterr().out == ("personal: written\npersonal/bar: written\n")
+    assert json.loads((bar / "settings.json").read_text(encoding="utf-8")) == {
+        **SETTINGS,
+        "env": {"P": "bar"},
+    }
+    assert not (home / ".claude" / "atc-projects" / "baz").exists()
+    assert not (
+        home / ".config" / "work" / "atc-projects" / "bar" / "settings.json"
+    ).exists()
+
+
+def test_sync_keeps_what_claude_wrote_in_a_project_dir_and_says_so(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bar = home / ".claude" / "atc-projects" / "bar"
+    bar.mkdir(parents=True)
+    (home / ".config" / "work").mkdir(parents=True)
+    configure(OWN_DIR_FILES, OWN_DIRS)
+    assert main(["sync"]) == OK
+    live = bar / "settings.json"
+    _ = live.write_text(
+        json.dumps({**json.loads(live.read_text(encoding="utf-8")), "x": 1}),
+        encoding="utf-8",
+    )
+    assert main(["sync", "--check"]) == OK
+    configure({**OWN_DIR_FILES, PERSONAL: unit({"model": "sonnet"})}, OWN_DIRS)
+    _ = capsys.readouterr()
+
+    assert main(["sync"]) == OK
+
+    captured = capsys.readouterr()
+    assert "personal/bar: written\n" in captured.out
+    assert "personal/bar: kept what Claude Code added: /x" in captured.err
+    assert json.loads(live.read_text(encoding="utf-8")) == {
+        "model": "sonnet",
+        "env": {"P": "bar"},
+        "x": 1,
+    }

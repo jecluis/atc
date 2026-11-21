@@ -4,7 +4,7 @@ import pytest
 
 from atc.errors import MergeError
 from atc.jsonval import JsonObject
-from atc.merge import merge_objects
+from atc.merge import keep_additions, merge_objects
 
 
 def test_objects_merge_recursively() -> None:
@@ -87,3 +87,82 @@ def test_inputs_are_not_mutated() -> None:
 
     assert base == {"permissions": {"allow": ["a"]}}
     assert overlay == {"permissions": {"allow": ["b"]}}
+
+
+def test_keep_additions_takes_what_the_units_set() -> None:
+    base: JsonObject = {"model": "opus", "sandbox": {"enabled": True}}
+    live: JsonObject = {"model": "haiku", "sandbox": {"enabled": False}}
+    new: JsonObject = {"model": "opus", "sandbox": {"enabled": True}}
+
+    kept = keep_additions(base, live, new)
+
+    assert kept.settings == new
+    assert kept.reset == ("/model", "/sandbox/enabled")
+    assert kept.kept == ()
+
+
+def test_keep_additions_keeps_keys_only_the_live_file_has() -> None:
+    base: JsonObject = {"model": "opus"}
+    live: JsonObject = {"model": "opus", "advisorModel": "x", "env": {"A": "1"}}
+    new: JsonObject = {"model": "sonnet", "env": {"B": "2"}}
+
+    kept = keep_additions(base, live, new)
+
+    assert kept.settings == {
+        "model": "sonnet",
+        "advisorModel": "x",
+        "env": {"B": "2", "A": "1"},
+    }
+    assert kept.kept == ("/advisorModel", "/env/A")
+    assert kept.reset == ()
+
+
+def test_keep_additions_drops_what_the_units_removed() -> None:
+    base: JsonObject = {"model": "opus", "theme": "dark"}
+    live: JsonObject = {"model": "opus", "theme": "light"}
+    new: JsonObject = {"model": "opus"}
+
+    kept = keep_additions(base, live, new)
+
+    assert kept.settings == {"model": "opus"}
+    assert kept.reset == ("/theme",)
+
+
+def test_keep_additions_keeps_list_entries_the_live_file_added() -> None:
+    base: JsonObject = {"permissions": {"allow": ["a", "old"], "deny": ["x", "y"]}}
+    live: JsonObject = {
+        "permissions": {"allow": ["a", "old", "WebFetch(domain:b.org)"], "deny": ["x"]}
+    }
+    new: JsonObject = {"permissions": {"allow": ["a", "c"], "deny": ["x", "y"]}}
+
+    kept = keep_additions(base, live, new)
+
+    assert kept.settings == {
+        "permissions": {
+            "allow": ["a", "c", "WebFetch(domain:b.org)"],
+            "deny": ["x", "y"],
+        }
+    }
+    assert kept.kept == ("/permissions/allow",)
+    assert kept.reset == ("/permissions/deny",)
+
+
+def test_keep_additions_gives_the_units_value_where_the_types_differ() -> None:
+    base: JsonObject = {"env": {"A": "1"}, "allow": ["a"]}
+    live: JsonObject = {"env": "x", "allow": {"b": 1}}
+    new: JsonObject = {"env": {"A": "1"}, "allow": ["a"]}
+
+    kept = keep_additions(base, live, new)
+
+    assert kept.settings == new
+    assert kept.reset == ("/allow", "/env")
+
+
+def test_keep_additions_of_an_unchanged_file_is_the_new_settings() -> None:
+    base: JsonObject = {"model": "opus", "allow": ["a"]}
+    new: JsonObject = {"model": "sonnet", "allow": ["b"]}
+
+    kept = keep_additions(base, base, new)
+
+    assert kept.settings == new
+    assert (kept.kept, kept.reset) == ((), ())
