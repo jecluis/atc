@@ -1033,6 +1033,7 @@ def test_show_defaults_to_the_current_project_and_lists_worktrees(
         "accounts": "every account",
         "unit": "projects/bar.json (the default)",
         "extra units": "-",
+        "config dir": "the account's",
         "worktrees": str(tmp_path / "wt"),
         "branch from": "main",
         "snapshot": "-",
@@ -1059,6 +1060,19 @@ def test_show_takes_a_name_from_anywhere(
     assert status == OK
     assert fields_of(out)["account"] == "personal (the default account)"
     assert fields_of(out)["accounts"] == "work, personal"
+
+
+def test_show_says_when_a_project_has_its_own_config_dirs(
+    configure: ConfigWriter, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = make_repo(tmp_path / "bar")
+    configure(FILES, registry_text(project("bar", repo, "own-config-dir: true")))
+
+    assert main(["prj", "show", "bar"]) == OK
+
+    assert fields_of(capsys.readouterr().out)["config dir"] == (
+        "its own, ACCOUNT_DIR/atc-projects/bar for each account"
+    )
 
 
 def test_show_lists_the_extra_units(

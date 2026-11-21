@@ -1,11 +1,17 @@
 """The variables that a unit's references can name."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from atc.backends import backend_for
 from atc.context import BuildContext
-from atc.registry import Account, Project
+from atc.registry import (
+    Account,
+    Project,
+    own_config_projects,
+    project_config_dir,
+)
 from atc.sources import Source
 from atc.state import SyncState
 from atc.template import VarValue
@@ -50,7 +56,7 @@ def layer_variables(
             "account.agent": account.agent,
             "account.dir": str(account.dir),
             "account.files": _strings(own.files(account)),
-            "account.secrets": _strings(own.secrets(account)),
+            "account.secrets": _strings(_secrets(ctx, account)),
         }
     )
     variables.update({f"account.vars.{n}": v for n, v in account.vars.items()})
@@ -96,6 +102,21 @@ def _source_variables(
         f"{prefix}.assets": str(source.assets),
         f"{prefix}.rendered": str(rendered),
     }
+
+
+def _secrets(ctx: BuildContext, account: Account) -> tuple[Path, ...]:
+    """
+    Give the secrets of ``account``: its own, then those of its project directories.
+
+    Of a project directory, only the files that exist are given, since the
+    sandbox puts a placeholder where a denied path is missing.
+    """
+    backend = backend_for(account.agent, ctx.home)
+    found = list(backend.secrets(account))
+    for project in own_config_projects(ctx.registry, account.name):
+        there = replace(account, dir=project_config_dir(account, project))
+        found.extend(path for path in backend.secrets(there) if path.exists())
+    return tuple(found)
 
 
 def _strings(paths: tuple[Path, ...]) -> tuple[str, ...]:

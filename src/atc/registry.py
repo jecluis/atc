@@ -83,6 +83,7 @@ class _ProjectModel(_Model):
     accounts: list[str] | None = None
     unit: str | None = None
     extra_units: list[str] = Field(default_factory=list)
+    own_config_dir: bool = False
     snapshot: str | None = Field(default=None, min_length=1)
     vars: dict[str, str] = Field(default_factory=dict)
 
@@ -164,6 +165,9 @@ class Project:
 
     ``extra_units`` are unit references, as written, of what this machine adds
     to ``unit``. They are merged after it, in the registry's order.
+    ``own_config_dir`` says that the project's sessions run in a configuration
+    directory of its own for each account, :func:`project_config_dir`, and not
+    in the account's.
     """
 
     name: str
@@ -177,6 +181,7 @@ class Project:
     worktrees: Path | None = None
     branch_from: str = DEFAULT_BRANCH_FROM
     extra_units: tuple[str, ...] = ()
+    own_config_dir: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,6 +906,29 @@ def project_units(
     return units
 
 
+PROJECT_DIRS = "atc-projects"
+"""The directory in an account's directory that holds its project directories."""
+
+
+def project_config_dir(account: Account, project: Project) -> Path:
+    """Give the configuration directory of ``project`` for ``account``."""
+    return account.dir / PROJECT_DIRS / project.name
+
+
+def own_config_projects(registry: Registry, account: str) -> list[Project]:
+    """
+    Give the projects with a configuration directory of their own for ``account``.
+
+    They are those that ask for one and allow the account, in the order of the
+    file.
+    """
+    return [
+        project
+        for project in registry.projects.values()
+        if project.own_config_dir and account in registry.allowed_accounts(project)
+    ]
+
+
 def choose_account(
     registry: Registry, project: Project | None, override: str | None
 ) -> Account:
@@ -1105,6 +1133,7 @@ def _build_project(
         worktrees=worktrees,
         branch_from=entry.branch_from,
         extra_units=tuple(entry.extra_units),
+        own_config_dir=entry.own_config_dir,
     )
 
 

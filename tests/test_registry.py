@@ -19,7 +19,9 @@ from atc.registry import (
     choose_account,
     load_registry,
     normalize_path,
+    own_config_projects,
     parse_registry,
+    project_config_dir,
     project_units,
     remove_extra_units,
     set_skills,
@@ -555,6 +557,43 @@ def test_project_unit_defaults_and_is_marked_default(
     bar, other = registry.projects["bar"], registry.projects["x"]
     assert (bar.unit, bar.unit_is_default) == ("projects/bar.json", True)
     assert (other.unit, other.unit_is_default) == ("@c/p/x.json", False)
+
+
+def test_a_project_uses_the_accounts_config_dir_unless_it_asks_for_its_own(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r") + "      x: {repo: /x, own-config-dir: true}\n"
+
+    registry = load_registry(write_registry(text), home)
+
+    assert registry.projects["bar"].own_config_dir is False
+    assert registry.projects["x"].own_config_dir is True
+
+
+def test_a_project_config_dir_is_in_the_accounts_dir(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = with_project("repo: /r, own-config-dir: true")
+    registry = load_registry(write_registry(text), home)
+    account = registry.account("personal")
+
+    found = project_config_dir(account, registry.project("bar"))
+
+    assert found == account.dir / "atc-projects" / "bar"
+
+
+def test_own_config_projects_are_those_that_allow_the_account(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    text = (
+        with_project("repo: /r, own-config-dir: true, account: work, accounts: [work]")
+        + "      x: {repo: /x, own-config-dir: true}\n"
+        + "      y: {repo: /y}\n"
+    )
+    registry = load_registry(write_registry(text), home)
+
+    assert [p.name for p in own_config_projects(registry, "work")] == ["bar", "x"]
+    assert [p.name for p in own_config_projects(registry, "personal")] == ["x"]
 
 
 def test_a_project_has_no_extra_units_unless_it_names_some(

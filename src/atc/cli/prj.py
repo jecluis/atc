@@ -31,6 +31,7 @@ from atc.needed import project_variables
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
+    PROJECT_DIRS,
     REGISTRY_FILE,
     Project,
     ProjectRemoval,
@@ -403,11 +404,19 @@ def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
         ("accounts", accounts),
         ("unit", unit),
         ("extra units", ", ".join(project.extra_units) or "-"),
+        ("config dir", _config_dir(project)),
         ("worktrees", str(project.worktrees) if project.worktrees else "-"),
         ("branch from", project.branch_from),
         ("snapshot", project.snapshot or "-"),
         ("vars", variables or "-"),
     ]
+
+
+def _config_dir(project: Project) -> str:
+    """Say where the project's sessions keep their configuration."""
+    if project.own_config_dir:
+        return f"its own, ACCOUNT_DIR/{PROJECT_DIRS}/{project.name} for each account"
+    return "the account's"
 
 
 def _dash() -> Text:

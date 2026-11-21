@@ -338,3 +338,54 @@ def test_a_project_adds_its_name_repo_and_variables(
         "project.vars.team": "ci",
         "project.vars.ci": "x",
     }
+
+
+OWN_DIRS = (
+    THREE_ACCOUNTS
+    + """\
+    projects:
+      bar: {repo: /r/bar, own-config-dir: true, account: bravo, accounts: [bravo, work]}
+      baz: {repo: /r/baz, own-config-dir: true}
+      qux: {repo: /r/qux}
+"""
+)
+
+
+def test_account_secrets_add_those_of_its_project_dirs_that_exist(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
+    bravo = home / ".config" / "bravo" / "claude"
+    bar = bravo / "atc-projects" / "bar"
+    baz = bravo / "atc-projects" / "baz"
+    for directory in (bar, baz, bravo / "atc-projects" / "qux"):
+        directory.mkdir(parents=True)
+        _ = (directory / ".credentials.json").write_text("{}", encoding="utf-8")
+    _ = (baz / ".claude.json").write_text("{}", encoding="utf-8")
+
+    got = layer_variables(ctx, ctx.registry.account("bravo"))
+
+    assert got["account.secrets"] == (
+        str(bravo / ".credentials.json"),
+        str(bravo / ".claude.json"),
+        str(bar / ".credentials.json"),
+        str(baz / ".credentials.json"),
+        str(baz / ".claude.json"),
+    )
+    assert got["account.dir"] == str(bravo)
+
+
+def test_project_dirs_of_a_project_that_disallows_the_account_are_not_its_own(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
+    bar = home / ".claude" / "atc-projects" / "bar"
+    bar.mkdir(parents=True)
+    _ = (bar / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    got = layer_variables(ctx, ctx.registry.account("personal"))
+
+    assert got["account.secrets"] == (
+        str(home / ".claude" / ".credentials.json"),
+        str(home / ".claude.json"),
+    )
