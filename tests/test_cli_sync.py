@@ -1193,3 +1193,23 @@ def test_sync_keeps_what_claude_wrote_in_a_project_dir_and_says_so(
         "env": {"P": "bar"},
         "x": 1,
     }
+
+
+def test_sync_lists_what_a_project_dir_keeps_even_when_it_is_current(
+    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bar = home / ".claude" / "atc-projects" / "bar"
+    bar.mkdir(parents=True)
+    (home / ".config" / "work").mkdir(parents=True)
+    configure(OWN_DIR_FILES, OWN_DIRS)
+    assert main(["sync"]) == OK
+    live = bar / "settings.json"
+    edited: JsonObject = {**SETTINGS, "env": {"P": "bar"}, "apiKeyHelper": "x"}
+    _ = live.write_text(dumps(edited), encoding="utf-8")
+    _ = capsys.readouterr()
+
+    assert main(["sync", "--check"]) == OK
+
+    captured = capsys.readouterr()
+    assert "personal/bar: current\n" in captured.out
+    assert "personal/bar: kept what Claude Code added: /apiKeyHelper" in captured.err

@@ -1362,3 +1362,15 @@ def test_an_account_session_is_denied_the_logins_of_its_project_dirs(
     assert failures(own_dir_world.run()) == [
         f"{own} is not readable (account personal)"
     ]
+
+
+def test_every_settings_file_of_the_account_must_not_be_writable(
+    own_dir_world: World,
+) -> None:
+    del own_dir_world.env["ATC_PROJECT"], own_dir_world.env["CLAUDE_CONFIG_DIR"]
+    own = own_dir_world.personal / "atc-projects" / "bar" / "settings.json"
+    own_dir_world.probe.writable_paths.add(own)
+
+    assert failures(own_dir_world.run()) == [
+        f"the account's settings {own} is not writable"
+    ]

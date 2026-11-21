@@ -932,3 +932,29 @@ def test_print_says_a_config_dir_cannot_be_made_without_its_account_dir(
     assert main(["--print"]) == OK
 
     assert "cannot be made" in capsys.readouterr().out
+
+
+def test_run_reports_an_addition_once_even_when_nothing_is_written(
+    executed: list[LaunchPlan], own_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _ = start(executed, ["-q"])
+    executed.clear()
+    path = own_dir / "settings.json"
+    edited: JsonObject = {
+        "model": "opus",
+        "hooks": {"Stop": []},
+        "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
+    }
+    _ = path.write_text(dumps(edited), encoding="utf-8")
+    _ = capsys.readouterr()
+
+    _ = start(executed, ["-q"])
+    first = capsys.readouterr().err
+    executed.clear()
+    assert main(["--print"]) == OK
+    printed = capsys.readouterr().out
+    _ = start(executed, ["-q"])
+
+    assert "kept what Claude Code added: /hooks" in first
+    assert "keeps what Claude Code added: /hooks" in printed
+    assert "kept" not in capsys.readouterr().err

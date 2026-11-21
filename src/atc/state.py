@@ -11,6 +11,7 @@ from atc.sources import Source
 
 SETTINGS_RECORD = "settings.json"
 LINKS_RECORD = "links.json"
+KEPT_RECORD = "kept.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,34 @@ class SyncState:
         """
         make_private_dir(self.root)
         atomic_write(self.root / SETTINGS_RECORD, dumps(settings))
+
+    def last_kept(self) -> tuple[str, ...]:
+        """
+        Return what a sync last kept of the live settings, as JSON pointers.
+
+        A record that is missing, unreadable or not a list of strings is an empty
+        one, so what it held is reported again.
+        """
+        path = self.root / KEPT_RECORD
+        try:
+            recorded = parse_json(path.read_bytes().decode("utf-8"), str(path))
+        except (OSError, UnicodeDecodeError, UnitError):
+            return ()
+        if not isinstance(recorded, list):
+            return ()
+        kept = tuple(item for item in recorded if isinstance(item, str))
+        return kept if len(kept) == len(recorded) else ()
+
+    def record_kept(self, kept: tuple[str, ...]) -> None:
+        """
+        Remember ``kept`` as what a sync last kept of the live settings.
+
+        Raises:
+            OSError: the record cannot be written.
+
+        """
+        make_private_dir(self.root)
+        atomic_write(self.root / KEPT_RECORD, dumps(list(kept)))
 
     def links(self) -> dict[str, str]:
         """

@@ -3,7 +3,7 @@
 import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
@@ -299,7 +299,11 @@ def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> lis
         make_private_dir(plan.config_dir)
     except OSError as exc:
         raise ConfigError(f"{label}: cannot make {plan.config_dir}: {exc}") from exc
-    synced = _plan_config_dir(ctx, plan.account, plan.project, lax=lax)
+    planned = _plan_config_dir(ctx, plan.account, plan.project, lax=lax)
+    # Copies whose template is gone may still be linked from the account's own
+    # directory, which only atc sync brings in line.
+    kept = tuple(asset for asset in planned.assets if asset.action != "remove")
+    synced = replace(planned, assets=kept)
     if synced.blocked:
         message = (
             f"{label}: {plan.config_dir} cannot be brought up to date, so the "
@@ -308,8 +312,9 @@ def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> lis
         raise ConfigError(message)
     apply_account(synced, ctx, datetime.now(UTC))
     messages = [*synced.warnings, *(w.message() for w in synced.rule_warnings)]
-    if synced.settings is not None and synced.settings.write:
-        messages.extend(f"{label}: {line}" for line in kept_lines(synced.settings))
+    settings = synced.settings
+    if settings is not None and (settings.write or settings.new_kept):
+        messages.extend(f"{label}: {line}" for line in kept_lines(settings))
     return messages
 
 
@@ -328,7 +333,11 @@ def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
         return f"cannot be synced: {exc}"
     if synced.blocked:
         return "cannot be brought up to date; atc sync --diff says why"
-    return "synced at the start" if synced.pending else "current"
+    state = "synced at the start" if synced.pending else "current"
+    if synced.settings is not None and synced.settings.kept:
+        kept = ", ".join(synced.settings.kept)
+        state += f"; keeps what Claude Code added: {kept}"
+    return state
 
 
 def _config_dir_problem(account: Account, project: Project) -> str | None:

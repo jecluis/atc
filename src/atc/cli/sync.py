@@ -182,9 +182,8 @@ def sync(
         name = plan.label
         if plan.settings is not None:
             ui.line(f"{name}: {_status(plan.settings, dry=dry)}")
-            if plan.settings.write or show_diff:
-                for line in kept_lines(plan.settings):
-                    ui.info(f"{name}: {line}")
+            for line in kept_lines(plan.settings):
+                ui.info(f"{name}: {line}")
             if show_diff or plan.settings.blocked:
                 ui.diff(_diff(plan.settings_path, plan.settings))
         for asset in plan.assets:

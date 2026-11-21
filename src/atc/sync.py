@@ -2,7 +2,7 @@
 
 import stat
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -70,6 +70,12 @@ class SettingsPlan:
     blocked: bool
     kept: tuple[str, ...] = ()
     reset: tuple[str, ...] = ()
+    known_kept: tuple[str, ...] = ()
+
+    @property
+    def new_kept(self) -> tuple[str, ...]:
+        """What is kept that the last sync did not keep: ``known_kept`` is that."""
+        return tuple(pointer for pointer in self.kept if pointer not in self.known_kept)
 
 
 type AssetAction = Literal["none", "write", "remove"]
@@ -370,7 +376,7 @@ def _plan_settings(
         live_text = None
     except OSError as exc:
         raise ConfigError(f"{path}: cannot be read: {exc}") from exc
-    return decide_settings(
+    planned = decide_settings(
         new,
         live_text,
         state.last_settings(),
@@ -380,6 +386,9 @@ def _plan_settings(
         render=backend.render,
         keep_additions=keep_additions,
     )
+    if not keep_additions:
+        return planned
+    return replace(planned, known_kept=state.last_kept())
 
 
 def _apply_settings(
@@ -393,6 +402,8 @@ def _apply_settings(
     elif settings.situation != "current":
         return
     state.record_settings(settings.new)
+    if settings.kept != settings.known_kept:
+        state.record_kept(settings.kept)
 
 
 def _plan_assets(

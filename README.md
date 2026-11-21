@@ -506,8 +506,9 @@ built or its `settings.json` is not JSON, atc stops with exit status `1` and the
 agent does not start; `atc sync --diff` shows why. So does a symbolic link at
 `atc-projects` or at the project's directory in it: atc writes a project
 directory only as a directory inside the account's. When the sync writes the
-settings, a line on standard error lists what it kept of the live settings and
-what it reset (see `atc sync`).
+settings, or keeps something of the live settings that it did not keep before, a
+line on standard error lists what it kept and what it reset (see `atc sync`).
+`--print` lists what it keeps too.
 
 A project directory is a fresh Claude Code directory. It has its own login, so
 its first session asks for one, and its own session history, `.claude.json`,
@@ -1460,10 +1461,10 @@ an edit made outside atc does not stop the sync. What the units set wins, and
 what the live file added is kept: a key the units do not set, and entries of a
 list beyond the units' own. A key the units stopped setting goes. So `/model`
 holds in a project directory until its next sync when a unit sets `model`, and a
-domain Claude Code approved stays. A line on standard error lists what was kept
-and what was reset, by JSON pointer, whenever the file is written and with
-`--diff`. A live file that is not JSON still stops the sync, and
-`--discard-live` overwrites it.
+domain Claude Code approved stays. A line on standard error lists what is kept,
+on every sync, `--check` and `--diff` included, and what was reset, by JSON
+pointer. A live file that is not JSON still stops the sync, and `--discard-live`
+overwrites it.
 
 Additions are kept whatever they are, so they can loosen what the units leave
 unset: an entry added to `sandbox.excludedCommands`, to
@@ -1685,7 +1686,9 @@ It prints one `PASS` or `FAIL` line for each check, in these groups:
   directory, and for each skill, its `SKILL.md` too. This includes links that
   `atc sync` did not make. In a session in a project config directory, where
   `ATC_PROJECT` names the project and `CLAUDE_CONFIG_DIR` is its directory for
-  the account, these are checked in that directory instead.
+  the account, these are checked in that directory instead. The `settings.json`
+  of each of the account's other directories that exist, its own and its project
+  config directories, cannot be written either.
 
 A path that is missing, or a link that leads nowhere, is no reason to pass: a
 session could create what is not there. Such a check passes only when the

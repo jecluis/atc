@@ -280,6 +280,7 @@ def run_checks(
         _accounts(probe, registry, account, home, env),
         _atc_itself(probe, dirs, install_dir, python_dir),
         _instructions_and_skills(probe, here, home),
+        _other_settings(probe, registry, account, here, home),
     ]
     return Report(
         tuple(result for part in parts for result in part.results),
@@ -594,6 +595,37 @@ def _instructions_and_skills(
         if entry != instructions and landing is not None and probe.exists(landing):
             skill = found / SKILL_FILE
             results.append(_cannot_write(probe, skill, str(skill), where=where))
+    return Report(tuple(results))
+
+
+def _other_settings(
+    probe: Probe,
+    registry: Registry,
+    account: Account | None,
+    here: Account | None,
+    home: Path,
+) -> Report:
+    """
+    Check the settings of the account's other directories that exist.
+
+    Those are its own and its project configuration directories, but for the
+    one the session runs in, which is checked with its links.
+    """
+    if account is None or here is None:
+        return Report(())
+    backend = backend_for(account.agent, home)
+    others = [
+        account,
+        *(
+            config_dir_account(account, project)
+            for project in own_config_projects(registry, account.name)
+        ),
+    ]
+    results = [
+        _linked_file(probe, path, f"the account's settings {path}")
+        for there in others
+        if there.dir != here.dir and probe.exists(path := backend.settings_file(there))
+    ]
     return Report(tuple(results))
 
 
