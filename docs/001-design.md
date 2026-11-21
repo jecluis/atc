@@ -178,31 +178,32 @@ projects:
 
 ### Fields
 
-| Path                                    | Required | Meaning                                                                                                                          |
-| :-------------------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                               | yes      | Currently `1`                                                                                                                    |
-| `vars`                                  | no       | Machine-wide variables                                                                                                           |
-| `default-account`                       | yes      | An account name                                                                                                                  |
-| `default-agents-md`                     | no       | Asset reference (§7.2) to the default instructions file. Defaults to `AGENTS.in.md`                                              |
-| `agents.<agent>.bin`                    | no       | The agent binary                                                                                                                 |
-| `accounts.<name>.agent`                 | yes      | `claude` (later also `codex`)                                                                                                    |
-| `accounts.<name>.dir`                   | yes      | The account's config directory                                                                                                   |
-| `accounts.<name>.unit`                  | no       | Unit reference (§7.2). Defaults to `accounts/<name>.json`                                                                        |
-| `accounts.<name>.extra-units`           | no       | Unit references (§7.2) that this machine adds to the account's unit, merged after it in this order (§8). Defaults to none        |
-| `accounts.<name>.use-default-agents-md` | no       | `true` links `default-agents-md` into the account (§10.2). Defaults to `false`                                                   |
-| `accounts.<name>.agents-md-file`        | no       | An absolute or `~/` path, or an asset reference. When set, it is linked instead of the default (§10.2). `null` means not set     |
-| `accounts.<name>.skills`                | no       | Skill references (§7.2) to link into the account (§10.10). Defaults to none                                                      |
-| `accounts.<name>.vars`                  | no       | Variables for this account                                                                                                       |
-| `projects.<name>.repo`                  | yes      | A checkout of the repository (main or linked; resolved to its shared `.git`)                                                     |
-| `projects.<name>.worktrees`             | no       | Where `atc wt new` creates worktrees. Required by `wt new`                                                                       |
-| `projects.<name>.branch-from`           | no       | Default base for new branches. Defaults to `main`                                                                                |
-| `projects.<name>.account`               | no       | Default account. Defaults to `default-account`                                                                                   |
-| `projects.<name>.accounts`              | no       | The accounts allowed for this project. If set, it must include `account`, and `-a` must name one of them                         |
-| `projects.<name>.unit`                  | no       | Unit reference (§7.2). Defaults to `projects/<name>.json`. If the default doesn't exist, the project simply has no project layer |
-| `projects.<name>.extra-units`           | no       | Unit references (§7.2) that this machine adds to the project's unit, merged after it in this order (§8). Defaults to none        |
-| `projects.<name>.snapshot`              | no       | snapper config name                                                                                                              |
-| `projects.<name>.vars`                  | no       | Variables for this project                                                                                                       |
-| `maint.gc-hours`                        | no       | Hours between full `git gc` runs in `atc maint`. Defaults to 24                                                                  |
+| Path                                    | Required | Meaning                                                                                                                                                 |
+| :-------------------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `version`                               | yes      | Currently `1`                                                                                                                                           |
+| `vars`                                  | no       | Machine-wide variables                                                                                                                                  |
+| `default-account`                       | yes      | An account name                                                                                                                                         |
+| `default-agents-md`                     | no       | Asset reference (§7.2) to the default instructions file. Defaults to `AGENTS.in.md`                                                                     |
+| `agents.<agent>.bin`                    | no       | The agent binary                                                                                                                                        |
+| `accounts.<name>.agent`                 | yes      | `claude` (later also `codex`)                                                                                                                           |
+| `accounts.<name>.dir`                   | yes      | The account's config directory                                                                                                                          |
+| `accounts.<name>.unit`                  | no       | Unit reference (§7.2). Defaults to `accounts/<name>.json`                                                                                               |
+| `accounts.<name>.extra-units`           | no       | Unit references (§7.2) that this machine adds to the account's unit, merged after it in this order (§8). Defaults to none                               |
+| `accounts.<name>.use-default-agents-md` | no       | `true` links `default-agents-md` into the account (§10.2). Defaults to `false`                                                                          |
+| `accounts.<name>.agents-md-file`        | no       | An absolute or `~/` path, or an asset reference. When set, it is linked instead of the default (§10.2). `null` means not set                            |
+| `accounts.<name>.skills`                | no       | Skill references (§7.2) to link into the account (§10.10). Defaults to none                                                                             |
+| `accounts.<name>.vars`                  | no       | Variables for this account                                                                                                                              |
+| `projects.<name>.repo`                  | yes      | A checkout of the repository (main or linked; resolved to its shared `.git`)                                                                            |
+| `projects.<name>.worktrees`             | no       | Where `atc wt new` creates worktrees. Required by `wt new`                                                                                              |
+| `projects.<name>.branch-from`           | no       | Default base for new branches. Defaults to `main`                                                                                                       |
+| `projects.<name>.account`               | no       | Default account. Defaults to `default-account`                                                                                                          |
+| `projects.<name>.accounts`              | no       | The accounts allowed for this project. If set, it must include `account`, and `-a` must name one of them                                                |
+| `projects.<name>.unit`                  | no       | Unit reference (§7.2). Defaults to `projects/<name>.json`. If the default doesn't exist, the project simply has no project layer                        |
+| `projects.<name>.extra-units`           | no       | Unit references (§7.2) that this machine adds to the project's unit, merged after it in this order (§8). Defaults to none                               |
+| `projects.<name>.own-config-dir`        | no       | `true` gives the project a configuration directory of its own in each account it allows ([005](005-project-config-dirs-design.md)). Defaults to `false` |
+| `projects.<name>.snapshot`              | no       | snapper config name                                                                                                                                     |
+| `projects.<name>.vars`                  | no       | Variables for this project                                                                                                                              |
+| `maint.gc-hours`                        | no       | Hours between full `git gc` runs in `atc maint`. Defaults to 24                                                                                         |
 
 ### Loading rules
 
