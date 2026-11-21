@@ -23,12 +23,18 @@ from atc.layers import (
     session_layer,
 )
 from atc.paths import Dirs
-from atc.registry import AUTO_ACCOUNT, Account, Project, Registry, choose_account
+from atc.registry import (
+    AUTO_ACCOUNT,
+    Account,
+    Project,
+    Registry,
+    choose_account,
+    config_dir_account,
+)
 from atc.rules import RuleWarning, dead_rules
 from atc.sync import (
     AccountPlan,
     apply_account,
-    config_dir_account,
     kept_lines,
     plan_account,
 )

@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import ClassVar, Literal, Self
 
@@ -913,6 +913,11 @@ PROJECT_DIRS = "atc-projects"
 def project_config_dir(account: Account, project: Project) -> Path:
     """Give the configuration directory of ``project`` for ``account``."""
     return account.dir / PROJECT_DIRS / project.name
+
+
+def config_dir_account(account: Account, project: Project) -> Account:
+    """Give ``account`` as it is in the configuration directory of ``project``."""
+    return replace(account, dir=project_config_dir(account, project))
 
 
 def own_config_projects(registry: Registry, account: str) -> list[Project]:

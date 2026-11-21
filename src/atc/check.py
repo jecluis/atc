@@ -15,9 +15,17 @@ from atc.git import run_git
 from atc.guard import GUARD_VARIABLE
 from atc.paths import Dirs
 from atc.refs import SKILL_FILE
-from atc.registry import REGISTRY_FILE, Account, Registry, normalize_path
+from atc.registry import (
+    REGISTRY_FILE,
+    Account,
+    Registry,
+    config_dir_account,
+    normalize_path,
+    own_config_projects,
+)
 
 ACCOUNT_VARIABLE = "ATC_ACCOUNT"
+PROJECT_VARIABLE = "ATC_PROJECT"
 """The variable that names the account a session was started in."""
 _GUARD_SKIPPED = "the objects/pack, packed-refs and automatic gc checks are skipped"
 _NOT_STARTED = (
@@ -216,6 +224,30 @@ def current_account(
     )
 
 
+def session_dir_account(
+    registry: Registry, account: Account, env: Mapping[str, str], home: Path
+) -> Account:
+    """
+    Give ``account`` as it is in the directory the session runs in.
+
+    That is the configuration directory of the project ``ATC_PROJECT`` names
+    when ``CLAUDE_CONFIG_DIR`` is that directory, and the account's own
+    otherwise.
+    """
+    configured = env.get(CONFIG_DIR_VARIABLE, "")
+    if not configured:
+        return account
+    try:
+        directory = normalize_path(configured, home)
+    except RegistryError:
+        return account
+    for project in own_config_projects(registry, account.name):
+        there = config_dir_account(account, project)
+        if project.name == env.get(PROJECT_VARIABLE) and there.dir == directory:
+            return there
+    return account
+
+
 def run_checks(
     probe: Probe,
     *,
@@ -233,17 +265,21 @@ def run_checks(
     atc's own directories, ``install_dir`` and ``python_dir``, which are atc's
     environment and the Python installation it is built on, and the registry,
     and then the current account's settings file and what its instructions
-    file and skills lead to. The registry and the settings file are checked
+    file and skills lead to, in the project's configuration directory when the
+    session runs in one. The registry and the settings file are checked
     where a link leads. A repository check that git cannot make fails, and one
     that does not apply, outside a repository, is a note. So are the checks of
     the guard that ``atc run`` sets up, in a session it did not guard.
     """
     account = current_account(registry, env, home)
+    here = (
+        None if account is None else session_dir_account(registry, account, env, home)
+    )
     parts = [
         _repository(probe, env),
         _accounts(probe, registry, account, home, env),
         _atc_itself(probe, dirs, install_dir, python_dir),
-        _instructions_and_skills(probe, account, home),
+        _instructions_and_skills(probe, here, home),
     ]
     return Report(
         tuple(result for part in parts for result in part.results),
@@ -429,16 +465,26 @@ def _accounts(
     home: Path,
     env: Mapping[str, str],
 ) -> Report:
-    """Check that the current account's secrets and every peer's files are hidden."""
+    """
+    Check that the current account's secrets and every peer's files are hidden.
+
+    The account's secrets are those of its own directory and of each of its
+    project configuration directories.
+    """
     results: list[CheckResult] = []
     owned: list[tuple[Path, Account]] = []
     if current is None:
         results.append(CheckResult(False, _unidentified(env)))
     else:
-        owned += [
-            (path, current)
-            for path in backend_for(current.agent, home).secrets(current)
+        backend = backend_for(current.agent, home)
+        dirs = [
+            current,
+            *(
+                config_dir_account(current, project)
+                for project in own_config_projects(registry, current.name)
+            ),
         ]
+        owned += [(path, current) for there in dirs for path in backend.secrets(there)]
     for peer in registry.accounts.values():
         if current is None or peer.name != current.name:
             backend = backend_for(peer.agent, home)

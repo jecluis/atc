@@ -1,7 +1,6 @@
 """The variables that a unit's references can name."""
 
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 
 from atc.backends import backend_for
@@ -9,8 +8,8 @@ from atc.context import BuildContext
 from atc.registry import (
     Account,
     Project,
+    config_dir_account,
     own_config_projects,
-    project_config_dir,
 )
 from atc.sources import Source
 from atc.state import SyncState
@@ -114,7 +113,7 @@ def _secrets(ctx: BuildContext, account: Account) -> tuple[Path, ...]:
     backend = backend_for(account.agent, ctx.home)
     found = list(backend.secrets(account))
     for project in own_config_projects(ctx.registry, account.name):
-        there = replace(account, dir=project_config_dir(account, project))
+        there = config_dir_account(account, project)
         found.extend(path for path in backend.secrets(there) if path.exists())
     return tuple(found)
 

@@ -1305,3 +1305,60 @@ def test_a_missing_registry_is_a_config_error(
     assert captured.out == ""
     assert captured.err.startswith("error:")
     assert "machine.yaml" in captured.err
+
+
+OWN_DIR_REGISTRY = (
+    REGISTRY
+    + """\
+projects:
+  bar: {repo: ~/work/repo, own-config-dir: true}
+"""
+)
+
+
+@pytest.fixture
+def own_dir_world(home: Path, dirs: Dirs) -> World:
+    """Make a session of `personal` that atc run started in bar's own config dir."""
+    registry = parse_registry(OWN_DIR_REGISTRY, home / "machine.yaml", home)
+    world = make_world(home, dirs, registry)
+    own = world.personal / "atc-projects" / "bar"
+    world.probe.existing |= {own, own / "settings.json", own / ".credentials.json"}
+    world.probe.links[own / "CLAUDE.md"] = dirs.conf_d / "assets" / "AGENTS.md"
+    world.env.update({"ATC_PROJECT": "bar", "CLAUDE_CONFIG_DIR": str(own)})
+    return world
+
+
+def test_a_project_dir_session_checks_the_project_dirs_settings_and_links(
+    own_dir_world: World,
+) -> None:
+    own = own_dir_world.personal / "atc-projects" / "bar"
+    own_dir_world.probe.writable_paths.add(own / "settings.json")
+
+    assert failures(own_dir_world.run()) == [
+        f"the account's settings {own / 'settings.json'} is not writable"
+    ]
+
+
+def test_a_project_dir_session_is_denied_every_login_of_the_account(
+    own_dir_world: World,
+) -> None:
+    own = own_dir_world.personal / "atc-projects" / "bar" / ".credentials.json"
+    main = own_dir_world.personal / ".credentials.json"
+    own_dir_world.probe.readable_paths |= {own, main}
+
+    assert failures(own_dir_world.run()) == [
+        f"{main} is not readable (account personal)",
+        f"{own} is not readable (account personal)",
+    ]
+
+
+def test_an_account_session_is_denied_the_logins_of_its_project_dirs(
+    own_dir_world: World,
+) -> None:
+    own = own_dir_world.personal / "atc-projects" / "bar" / ".credentials.json"
+    del own_dir_world.env["ATC_PROJECT"], own_dir_world.env["CLAUDE_CONFIG_DIR"]
+    own_dir_world.probe.readable_paths.add(own)
+
+    assert failures(own_dir_world.run()) == [
+        f"{own} is not readable (account personal)"
+    ]

@@ -2,7 +2,7 @@
 
 import stat
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -15,7 +15,7 @@ from atc.jsonval import JsonObject, canonical, dumps
 from atc.layers import build_account_layer, build_project_layer, merge_fragment
 from atc.links import LinkPlan, apply_link, decide_link, wanted_instructions
 from atc.merge import keep_additions as merge_live
-from atc.registry import Account, Project, project_config_dir
+from atc.registry import Account, Project, config_dir_account
 from atc.rendered import Rendering, render_templates
 from atc.rules import RuleWarning, dead_rules
 from atc.skills import Catalog, discover_skills, wanted_skill_links
@@ -568,11 +568,6 @@ def kept_lines(settings: SettingsPlan) -> list[str]:
         what = ", ".join(settings.reset)
         lines.append(f"reset to what the units give: {what}")
     return lines
-
-
-def config_dir_account(account: Account, project: Project) -> Account:
-    """Give ``account`` as it is in the configuration directory of ``project``."""
-    return replace(account, dir=project_config_dir(account, project))
 
 
 def _name(project: Project | None) -> str:
