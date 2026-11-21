@@ -206,8 +206,8 @@ def test_atcs_own_words_after_double_dash_are_the_agents(
 def test_an_unknown_option_before_double_dash_is_an_error(
     executed: list[LaunchPlan], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(["--resume"]) == USAGE
-    assert main(["run", "-a", "personal", "--resume", "--", "x"]) == USAGE
+    assert main(["--continue"]) == USAGE
+    assert main(["run", "-a", "personal", "--continue", "--", "x"]) == USAGE
 
     assert "No such option" in capsys.readouterr().err
     assert executed == []
@@ -964,3 +964,33 @@ def test_run_reports_an_addition_once_even_when_nothing_is_written(
     assert "kept what Claude Code added: /hooks" in first
     assert "keeps what Claude Code added: /hooks" in printed
     assert "kept" not in capsys.readouterr().err
+
+
+def test_name_names_the_session(executed: list[LaunchPlan], agent: Path) -> None:
+    plan = start(executed, ["-n", "fix the build", "--", "--verbose"])
+
+    assert plan.argv == [str(agent), "--name", "fix the build", "--verbose"]
+
+
+def test_resume_alone_lets_the_agent_offer_the_sessions(
+    executed: list[LaunchPlan], agent: Path
+) -> None:
+    plan = start(executed, ["-r"])
+
+    assert plan.argv == [str(agent), "--resume"]
+
+
+def test_resume_takes_a_session_and_goes_with_a_name(
+    executed: list[LaunchPlan], agent: Path
+) -> None:
+    plan = start(executed, ["--resume", "abc", "--name", "x"])
+
+    assert plan.argv == [str(agent), "--name", "x", "--resume", "abc"]
+
+
+def test_resume_before_another_option_takes_no_session(
+    executed: list[LaunchPlan], agent: Path
+) -> None:
+    plan = start(executed, ["-r", "-q"])
+
+    assert plan.argv == [str(agent), "--resume"]

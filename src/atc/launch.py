@@ -174,6 +174,8 @@ def plan_launch(
     lax: bool,
     explain: bool,
     no_guard: bool,
+    session_name: str | None = None,
+    resume: str | None = None,
 ) -> LaunchPlan:
     """
     Plan how to start the agent in ``cwd``, with the environment ``env``.
@@ -188,7 +190,9 @@ def plan_launch(
     The settings for the session are those of the project's units, if it has
     any, then the agent's entries that protect the repository's packed history,
     then ``settings``, each merged over the ones before. ``agent_args`` go to
-    the agent. ``self_path`` is atc's own executable, which the agent's binary
+    the agent, after the arguments that give the session ``session_name`` and
+    resume the session ``resume``, ``""`` for the agent to offer them; ``None``
+    leaves either out. ``self_path`` is atc's own executable, which the agent's binary
     must not be. ``which`` finds a binary on ``PATH``. Set ``lax`` to report
     unknown settings keys in the project's units as warnings instead of errors.
 
@@ -263,7 +267,9 @@ def plan_launch(
         fragment=fragment,
         env=selected,
         env_changes=_changes(env, selected),
-        argv=backend.argv(binary, fragment, agent_args),
+        argv=backend.argv(
+            binary, fragment, [*backend.session_args(session_name, resume), *agent_args]
+        ),
         warnings=tuple(warnings),
         notes=notes,
         rule_warnings=dead_rules(checked) if explain else (),

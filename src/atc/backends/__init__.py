@@ -59,6 +59,15 @@ class Backend(Protocol):
         """
         ...
 
+    def session_args(self, name: str | None, resume: str | None) -> list[str]:
+        """
+        Return the agent's arguments that name the session and resume one.
+
+        ``name`` is the session's name, and ``resume`` the session to resume,
+        ``""`` to have the agent offer them; ``None`` leaves either out.
+        """
+        ...
+
     def session_fragment(self, common_dir: Path) -> JsonObject:
         """
         Return the settings that protect the repository's packed history.

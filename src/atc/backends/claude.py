@@ -73,6 +73,12 @@ class ClaudeBackend:
         settings = ["--settings", canonical(fragment)] if fragment else []
         return [bin, *settings, *args]
 
+    def session_args(self, name: str | None, resume: str | None) -> list[str]:
+        """``--name NAME``, then ``--resume`` with the session if there is one."""
+        named = [] if name is None else ["--name", name]
+        resumed = [] if resume is None else ["--resume", *([resume] if resume else [])]
+        return [*named, *resumed]
+
     def session_fragment(self, common_dir: Path) -> JsonObject:
         """
         Deny writes to the repository's packed history, to commands and to Claude.

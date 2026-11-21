@@ -196,3 +196,12 @@ def test_session_fragment_uses_absolute_edit_rules(home: Path, tmp_path: Path) -
             "deny": [f"Edit(//{str(pack)[1:]}/**)", f"Edit(//{str(refs)[1:]})"]
         },
     }
+
+
+def test_session_args_name_and_resume_the_session() -> None:
+    backend = ClaudeBackend(Path("/h"))
+
+    assert backend.session_args(None, None) == []
+    assert backend.session_args("x", None) == ["--name", "x"]
+    assert backend.session_args(None, "") == ["--resume"]
+    assert backend.session_args("x", "id") == ["--name", "x", "--resume", "id"]

@@ -76,6 +76,25 @@ class _RunCommand(rich_click.RichCommand):
     ),
 )
 @click.option(
+    "-n",
+    "--name",
+    "session_name",
+    metavar="NAME",
+    help="Give the session the name NAME, which the agent shows and resumes it by.",
+)
+@click.option(
+    "-r",
+    "--resume",
+    is_flag=False,
+    flag_value="",
+    metavar="[SESSION]",
+    help=(
+        "Resume the session SESSION, by its id or name, or without SESSION pick "
+        "one of the sessions the agent lists. In a project with its own config "
+        "dir, those are the project's sessions for the account."
+    ),
+)
+@click.option(
     "--print",
     "show_plan",
     is_flag=True,
@@ -98,6 +117,8 @@ def run(
     account_name: str | None,
     settings_arg: str | None,
     no_guard: bool,
+    session_name: str | None,
+    resume: str | None,
     show_plan: bool,
     quiet: bool,
     conf_d: Path | None,
@@ -173,6 +194,8 @@ def run(
         lax=lax,
         explain=show_plan,
         no_guard=no_guard,
+        session_name=session_name,
+        resume=resume,
     )
 
     ui = Ui.default()
