@@ -28,10 +28,10 @@ from atc.inventory import Variable, take_inventory
 from atc.jsonval import JsonObject, JsonValue
 from atc.launch import find_project
 from atc.needed import project_variables
+from atc.projectdirs import project_root
 from atc.refs import resolve_registry
 from atc.registry import (
     DEFAULT_BRANCH_FROM,
-    PROJECT_DIRS,
     REGISTRY_FILE,
     Project,
     ProjectRemoval,
@@ -415,7 +415,8 @@ def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:
 def _config_dir(project: Project) -> str:
     """Say where the project's sessions keep their configuration."""
     if project.own_config_dir:
-        return f"its own, ACCOUNT_DIR/{PROJECT_DIRS}/{project.name} for each account"
+        root = project_root(current_dirs(), project)
+        return f"its own, {root}/ACCOUNT for each account"
     return "the account's"
 
 

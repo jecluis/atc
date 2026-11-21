@@ -1096,8 +1096,18 @@ OWN_DIR_FILES = {
 
 
 def project_context(build_context: ContextBuilder, home: Path) -> BuildContext:
-    (home / ".claude" / "atc-projects" / "bar").mkdir(parents=True)
-    return build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+    (home / ".claude").mkdir()
+    ctx = build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+    own_dir(ctx).mkdir(parents=True)
+    return ctx
+
+
+def own_dir(ctx: BuildContext) -> Path:
+    return ctx.dirs.state_dir / "projects" / "bar" / "personal"
+
+
+def memory(ctx: BuildContext) -> str:
+    return str(ctx.dirs.data_dir / "projects" / "bar" / "memory")
 
 
 def sync_project(ctx: BuildContext, *, discard_live: bool = False) -> AccountPlan:
@@ -1117,13 +1127,14 @@ def test_a_project_dir_gets_the_account_settings_with_the_project_ones_over_them
     build_context: ContextBuilder, home: Path
 ) -> None:
     ctx = project_context(build_context, home)
-    directory = home / ".claude" / "atc-projects" / "bar"
+    directory = own_dir(ctx)
 
     account_plan = sync_project(ctx)
 
     assert account_plan.label == "personal/bar"
     assert account_plan.settings_path == directory / "settings.json"
     assert json.loads((directory / "settings.json").read_text()) == {
+        "autoMemoryDirectory": memory(ctx),
         "model": "opus",
         "permissions": {"deny": ["Bash(rm *)"]},
         "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
@@ -1135,14 +1146,45 @@ def test_a_project_dir_gets_the_account_settings_with_the_project_ones_over_them
     assert json.loads((record / "settings.json").read_text())["model"] == "opus"
 
 
+def test_a_project_dir_shares_its_memory_and_plugins_with_the_projects_accounts(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = project_context(build_context, home)
+
+    _ = sync_project(ctx)
+
+    common = ctx.dirs.state_dir / "projects" / "bar" / "_common"
+    assert (own_dir(ctx) / "plugins").readlink() == common / "plugins"
+    assert (common / "plugins").is_dir()
+    assert Path(memory(ctx)).is_dir()
+    assert (Path(memory(ctx)).stat().st_mode & 0o777) == 0o700
+
+
+def test_a_project_unit_can_point_auto_memory_elsewhere(
+    build_context: ContextBuilder, home: Path, configure: ConfigWriter
+) -> None:
+    ctx = project_context(build_context, home)
+    files = {
+        **OWN_DIR_FILES,
+        "conf/projects/bar.json": unit({"autoMemoryDirectory": "/m"}),
+    }
+    configure(files, OWN_DIR_REGISTRY)
+    ctx = load_context(env=os.environ, home=home, uid=UID, conf_d=None)
+
+    _ = sync_project(ctx)
+
+    assert '"autoMemoryDirectory": "/m"' in (own_dir(ctx) / "settings.json").read_text()
+
+
 def test_a_project_dir_keeps_what_claude_added_and_takes_the_units_changes(
     build_context: ContextBuilder, home: Path, configure: ConfigWriter
 ) -> None:
     ctx = project_context(build_context, home)
-    path = home / ".claude" / "atc-projects" / "bar" / "settings.json"
+    path = own_dir(ctx) / "settings.json"
     _ = sync_project(ctx)
     edited: JsonObject = {
         "advisorModel": "fable",
+        "autoMemoryDirectory": memory(ctx),
         "model": "haiku",
         "permissions": {"deny": []},
         "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
@@ -1155,6 +1197,7 @@ def test_a_project_dir_keeps_what_claude_added_and_takes_the_units_changes(
     account_plan = sync_project(ctx)
 
     assert json.loads(path.read_text()) == {
+        "autoMemoryDirectory": memory(ctx),
         "model": "sonnet",
         "advisorModel": "fable",
         "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
@@ -1171,9 +1214,10 @@ def test_a_project_dir_restores_a_deny_rule_a_session_removed(
     build_context: ContextBuilder, home: Path
 ) -> None:
     ctx = project_context(build_context, home)
-    path = home / ".claude" / "atc-projects" / "bar" / "settings.json"
+    path = own_dir(ctx) / "settings.json"
     _ = sync_project(ctx)
     edited: JsonObject = {
+        "autoMemoryDirectory": memory(ctx),
         "model": "opus",
         "permissions": {"deny": ["Bash(git *)"]},
         "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
@@ -1194,26 +1238,28 @@ def test_a_missing_project_dir_is_a_config_error(
     (home / ".claude").mkdir()
     ctx = build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
 
-    with pytest.raises(ConfigError, match=r"personal/bar.*atc-projects/bar"):
+    with pytest.raises(ConfigError, match=r"personal/bar.*projects/bar/personal"):
         _ = sync_project(ctx)
 
 
-@pytest.mark.parametrize("linked", ["atc-projects", "atc-projects/bar"])
+@pytest.mark.parametrize(
+    "linked", ["projects", "projects/bar", "projects/bar/personal"]
+)
 def test_a_project_dir_reached_through_a_symbolic_link_is_refused(
     build_context: ContextBuilder, home: Path, tmp_path: Path, linked: str
 ) -> None:
-    elsewhere = tmp_path / "elsewhere"
-    (elsewhere / "bar").mkdir(parents=True)
-    (home / ".claude" / "atc-projects").mkdir(parents=True)
-    link = home / ".claude" / linked
-    if linked == "atc-projects":
-        (home / ".claude" / "atc-projects").rmdir()
-        link.symlink_to(elsewhere)
-    else:
-        link.symlink_to(elsewhere / "bar")
+    (home / ".claude").mkdir()
     ctx = build_context(OWN_DIR_FILES, OWN_DIR_REGISTRY)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "bar" / "personal").mkdir(parents=True)
+    link = ctx.dirs.state_dir / linked
+    link.parent.mkdir(parents=True, exist_ok=True)
+    depth = linked.count("/")
+    link.symlink_to(
+        [elsewhere, elsewhere / "bar", elsewhere / "bar" / "personal"][depth]
+    )
 
     with pytest.raises(ConfigError, match=r"personal/bar: .* is a symbolic link"):
         _ = sync_project(ctx)
 
-    assert not (elsewhere / "bar" / "settings.json").exists()
+    assert not (elsewhere / "bar" / "personal" / "settings.json").exists()

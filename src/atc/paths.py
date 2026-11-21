@@ -14,13 +14,15 @@ class Dirs:
 
     ``config_dir`` holds atc's configuration, and ``conf_d`` inside it holds
     the config sources. ``state_dir`` holds what atc remembers between runs,
-    and ``runtime_dir`` what only matters while it is running.
+    and ``runtime_dir`` what only matters while it is running. ``data_dir``
+    holds what sessions write and share, such as a project's auto memory.
     """
 
     config_dir: Path
     conf_d: Path
     state_dir: Path
     runtime_dir: Path
+    data_dir: Path
 
 
 def dirs_from_env(env: Mapping[str, str], home: Path, uid: int) -> Dirs:
@@ -29,7 +31,8 @@ def dirs_from_env(env: Mapping[str, str], home: Path, uid: int) -> Dirs:
 
     Each directory is ``atc`` inside the XDG one. ``$XDG_CONFIG_HOME`` falls
     back to ``~/.config``, ``$XDG_STATE_HOME`` to ``~/.local/state`` and
-    ``$XDG_RUNTIME_DIR`` to ``/run/user/<uid>``. A variable that is unset,
+    ``$XDG_RUNTIME_DIR`` to ``/run/user/<uid>`` and ``$XDG_DATA_HOME`` to
+    ``~/.local/share``. A variable that is unset,
     empty or not an absolute path is ignored, as the XDG Base Directory
     Specification requires.
     """
@@ -40,6 +43,7 @@ def dirs_from_env(env: Mapping[str, str], home: Path, uid: int) -> Dirs:
         state_dir=_xdg(env, "XDG_STATE_HOME", home / ".local" / "state") / APP_NAME,
         runtime_dir=_xdg(env, "XDG_RUNTIME_DIR", Path("/run/user") / str(uid))
         / APP_NAME,
+        data_dir=_xdg(env, "XDG_DATA_HOME", home / ".local" / "share") / APP_NAME,
     )
 
 

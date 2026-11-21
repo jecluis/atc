@@ -394,25 +394,25 @@ variable as it is.
 - An unknown reference is an error. It names the unit, where in `settings` it
   is, the reference, and the account being built.
 
-| Reference                                                          | Type   | Value                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `home`                                                             | string | Your home directory.                                                                                                                                                                                                                                                                                                                                                        |
-| `atc.config_dir`, `atc.conf_d`, `atc.state_dir`, `atc.runtime_dir` | string | The directories atc uses: its configuration, its config sources, its state, and its locks.                                                                                                                                                                                                                                                                                  |
-| `atc.install_dir`                                                  | string | The Python environment atc runs from.                                                                                                                                                                                                                                                                                                                                       |
-| `atc.python_dir`                                                   | string | The Python installation that environment is built on, with symbolic links resolved. For uv, one of its managed interpreters under `~/.local/share/uv/python`. The same as `atc.install_dir` when atc does not run in a virtual environment.                                                                                                                                 |
-| `source.name`                                                      | string | The name of the source that contains the unit. Empty with a single source.                                                                                                                                                                                                                                                                                                  |
-| `source.root`, `source.conf`, `source.assets`                      | string | That source's directory, its `conf/` and its `assets/`.                                                                                                                                                                                                                                                                                                                     |
-| `source.rendered`                                                  | string | Where `atc sync` renders that source's templated assets for the account (see Templated assets under `atc sync`).                                                                                                                                                                                                                                                            |
-| `sources.<name>.root`, `.conf`, `.assets`, `.rendered`             | string | The same for any source, by name. Only with several sources.                                                                                                                                                                                                                                                                                                                |
-| `vars.<name>`                                                      | string | The registry's `vars`.                                                                                                                                                                                                                                                                                                                                                      |
-| `account.name`, `account.agent`, `account.dir`                     | string | The account being built, or in a project's units the account chosen for the project.                                                                                                                                                                                                                                                                                        |
-| `account.files`                                                    | list   | Files the account owns outside its `dir`. For Claude, `~/.claude.json` when `dir` is `~/.claude`, otherwise none.                                                                                                                                                                                                                                                           |
-| `account.secrets`                                                  | list   | The account's credentials and state file, which its own sessions must not read. For Claude, `.credentials.json` in `dir` and the state file: `~/.claude.json` when `dir` is `~/.claude`, otherwise `.claude.json` in `dir`. Then the same two files of each of the account's project config directories, those that exist (see Project config directories under `atc run`). |
-| `account.vars.<name>`                                              | string | The account's `vars`.                                                                                                                                                                                                                                                                                                                                                       |
-| `peers.dir`                                                        | list   | The `dir` of every other account.                                                                                                                                                                                                                                                                                                                                           |
-| `peers.files`                                                      | list   | The `files` of every other account, in one list.                                                                                                                                                                                                                                                                                                                            |
-| `project.name`, `project.repo`                                     | string | The project being built. Only in a project's units.                                                                                                                                                                                                                                                                                                                         |
-| `project.vars.<name>`                                              | string | The project's `vars`. Only in a project's units.                                                                                                                                                                                                                                                                                                                            |
+| Reference                                                                          | Type   | Value                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `home`                                                                             | string | Your home directory.                                                                                                                                                                                                                                                                                                                                                        |
+| `atc.config_dir`, `atc.conf_d`, `atc.state_dir`, `atc.runtime_dir`, `atc.data_dir` | string | The directories atc uses: its configuration, its config sources, its state, its locks, and what sessions write and share, such as a project's auto memory.                                                                                                                                                                                                                  |
+| `atc.install_dir`                                                                  | string | The Python environment atc runs from.                                                                                                                                                                                                                                                                                                                                       |
+| `atc.python_dir`                                                                   | string | The Python installation that environment is built on, with symbolic links resolved. For uv, one of its managed interpreters under `~/.local/share/uv/python`. The same as `atc.install_dir` when atc does not run in a virtual environment.                                                                                                                                 |
+| `source.name`                                                                      | string | The name of the source that contains the unit. Empty with a single source.                                                                                                                                                                                                                                                                                                  |
+| `source.root`, `source.conf`, `source.assets`                                      | string | That source's directory, its `conf/` and its `assets/`.                                                                                                                                                                                                                                                                                                                     |
+| `source.rendered`                                                                  | string | Where `atc sync` renders that source's templated assets for the account (see Templated assets under `atc sync`).                                                                                                                                                                                                                                                            |
+| `sources.<name>.root`, `.conf`, `.assets`, `.rendered`                             | string | The same for any source, by name. Only with several sources.                                                                                                                                                                                                                                                                                                                |
+| `vars.<name>`                                                                      | string | The registry's `vars`.                                                                                                                                                                                                                                                                                                                                                      |
+| `account.name`, `account.agent`, `account.dir`                                     | string | The account being built, or in a project's units the account chosen for the project.                                                                                                                                                                                                                                                                                        |
+| `account.files`                                                                    | list   | Files the account owns outside its `dir`. For Claude, `~/.claude.json` when `dir` is `~/.claude`, otherwise none.                                                                                                                                                                                                                                                           |
+| `account.secrets`                                                                  | list   | The account's credentials and state file, which its own sessions must not read. For Claude, `.credentials.json` in `dir` and the state file: `~/.claude.json` when `dir` is `~/.claude`, otherwise `.claude.json` in `dir`. Then the same two files of each of the account's project config directories, those that exist (see Project config directories under `atc run`). |
+| `account.vars.<name>`                                                              | string | The account's `vars`.                                                                                                                                                                                                                                                                                                                                                       |
+| `peers.dir`                                                                        | list   | The `dir` of every other account, then their project config directories that exist, then the shared auto memory directories that exist of the projects the account may not work on (see Project config directories under `atc run`).                                                                                                                                        |
+| `peers.files`                                                                      | list   | The `files` of every other account, in one list.                                                                                                                                                                                                                                                                                                                            |
+| `project.name`, `project.repo`                                                     | string | The project being built. Only in a project's units.                                                                                                                                                                                                                                                                                                                         |
+| `project.vars.<name>`                                                              | string | The project's `vars`. Only in a project's units.                                                                                                                                                                                                                                                                                                                            |
 
 In an account's units, `project.*` does not exist, so using it there is an
 unknown-reference error.
@@ -492,30 +492,47 @@ into the user settings of the directory it runs in: `/model`, `/config`,
 is admin-required. In the account's directory that file is the one `atc sync`
 writes, so such a change reaches every session of the account, and the next
 `atc sync` stops on it as an edit. A project whose registry entry sets
-`own-config-dir: true` has a directory of its own in each account it allows,
-`atc-projects/PROJECT` in the account's `dir`, and `atc run` in the project
-starts Claude Code there, with `CLAUDE_CONFIG_DIR` pointing at it.
+`own-config-dir: true` has a directory of its own for each account it allows,
+`projects/PROJECT/ACCOUNT` in atc's state directory
+(`~/.local/state/atc/projects/PROJECT/ACCOUNT`), and `atc run` in the project
+starts Claude Code there, with `CLAUDE_CONFIG_DIR` pointing at it. Being in the
+state directory, which the hardening units keep sessions from writing with
+commands and with Claude's file tools alike, no session can edit a project
+directory's settings, its own or another's.
+
+The project's accounts share `projects/PROJECT/_common` there, which no account
+can be called. Each project directory's `plugins` is a link to the one in it, so
+a plugin installed for one account of the project is installed for all. Auto
+memory is shared too, but outside the state directory, since Claude Code writes
+it with its file tools: each project directory's settings set
+`autoMemoryDirectory` to `projects/PROJECT/memory` in atc's data directory
+(`~/.local/share/atc`, or `atc` in `$XDG_DATA_HOME`), so every account and every
+worktree of the project read and write one memory. A unit of the project that
+sets `autoMemoryDirectory` overrides it. Session history and logins are not
+shared.
 
 Before the agent starts, `atc run` makes the directory, private to you, if it is
 missing, and syncs it as `atc sync` would (see `atc sync`): its `settings.json`
-holds the account's settings with the project's merged over them, and its
-`CLAUDE.md` and skills are the account's links. The project's settings are still
-passed as `--settings` too, so they rank as they do in any other project. If the
-directory cannot be brought up to date, for instance because a unit cannot be
-built or its `settings.json` is not JSON, atc stops with exit status `1` and the
-agent does not start; `atc sync --diff` shows why. So does a symbolic link at
-`atc-projects` or at the project's directory in it: atc writes a project
-directory only as a directory inside the account's. When the sync writes the
-settings, or keeps something of the live settings that it did not keep before, a
-line on standard error lists what it kept and what it reset (see `atc sync`).
-`--print` lists what it keeps too.
+holds the account's settings, then the shared auto memory directory, then the
+project's settings, merged in that order, its `CLAUDE.md` and skills are the
+account's links, and its `plugins` the link into `_common`. The project's
+settings are still passed as `--settings` too, so they rank as they do in any
+other project. If the directory cannot be brought up to date, for instance
+because a unit cannot be built or its `settings.json` is not JSON, atc stops
+with exit status `1` and the agent does not start; `atc sync --diff` shows why.
+So does a symbolic link at `projects`, at the project's directory in it or at
+the account's below that: atc writes a project directory only where it says.
+When the sync writes the settings, or keeps something of the live settings that
+it did not keep before, a line on standard error lists what it kept and what it
+reset (see `atc sync`). `--print` lists what it keeps too.
 
 A project directory is a fresh Claude Code directory. It has its own login, so
 its first session asks for one, and its own session history, `.claude.json`,
-plugins, agents, commands and keybindings, none of which atc copies from the
-account. `enabledPlugins` there names plugins that are installed only once you
-install them in it. Usage is still recorded under the account, so `atc usage`
-and `-a auto` count every directory of the account together.
+agents, commands and keybindings, none of which atc copies from the account. Its
+plugins are the project's, in `_common`, so `enabledPlugins` there names plugins
+that load only once they are installed for the project. Usage is still recorded
+under the account, so `atc usage` and `-a auto` count every directory of the
+account together.
 
 Each account's `account.secrets` lists the credentials and state file of its
 project directories that exist, so a unit that denies it hides every login of
@@ -523,9 +540,13 @@ the account from all its sessions. A file that does not exist is left out, since
 the sandbox would put a placeholder where a denied path is missing. So the
 session that first logs in to a project directory is not denied the credentials
 it writes; restart it once logged in, and run `atc sync` so that the account's
-other sessions are denied them too. Every other account's sessions are denied
-the directories with the account's `dir`. Turning the option off, or removing
-the project, leaves the directories as they are.
+other sessions are denied them too. `peers.dir` adds the project directories of
+every other account that exist, and the shared memory of each project the
+account may not work on, so a unit that denies it keeps an account's sessions
+out of them. Sharing memory between the accounts of one project is the one
+deliberate gap in their isolation: what a session of one account learns about
+the project, the others read. Turning the option off, or removing the project,
+leaves the directories as they are.
 
 **`atc` with no command.** `atc` with no arguments, or with a first argument
 that starts with `-`, is `atc run`; this includes `--`. `atc -- --resume x`

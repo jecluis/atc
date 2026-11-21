@@ -14,12 +14,12 @@ from atc.git import common_dir as git_common_dir
 from atc.git import run_git
 from atc.guard import GUARD_VARIABLE
 from atc.paths import Dirs
+from atc.projectdirs import config_dir_account
 from atc.refs import SKILL_FILE
 from atc.registry import (
     REGISTRY_FILE,
     Account,
     Registry,
-    config_dir_account,
     normalize_path,
     own_config_projects,
 )
@@ -225,7 +225,11 @@ def current_account(
 
 
 def session_dir_account(
-    registry: Registry, account: Account, env: Mapping[str, str], home: Path
+    dirs: Dirs,
+    registry: Registry,
+    account: Account,
+    env: Mapping[str, str],
+    home: Path,
 ) -> Account:
     """
     Give ``account`` as it is in the directory the session runs in.
@@ -242,7 +246,7 @@ def session_dir_account(
     except RegistryError:
         return account
     for project in own_config_projects(registry, account.name):
-        there = config_dir_account(account, project)
+        there = config_dir_account(dirs, account, project)
         if project.name == env.get(PROJECT_VARIABLE) and there.dir == directory:
             return there
     return account
@@ -273,14 +277,16 @@ def run_checks(
     """
     account = current_account(registry, env, home)
     here = (
-        None if account is None else session_dir_account(registry, account, env, home)
+        None
+        if account is None
+        else session_dir_account(dirs, registry, account, env, home)
     )
     parts = [
         _repository(probe, env),
-        _accounts(probe, registry, account, home, env),
+        _accounts(probe, dirs, registry, account, home, env),
         _atc_itself(probe, dirs, install_dir, python_dir),
         _instructions_and_skills(probe, here, home),
-        _other_settings(probe, registry, account, here, home),
+        _other_settings(probe, dirs, registry, account, here, home),
     ]
     return Report(
         tuple(result for part in parts for result in part.results),
@@ -461,6 +467,7 @@ def _worktree_parent_is_read_only(probe: Probe) -> CheckResult:
 
 def _accounts(
     probe: Probe,
+    dirs: Dirs,
     registry: Registry,
     current: Account | None,
     home: Path,
@@ -470,7 +477,8 @@ def _accounts(
     Check that the current account's secrets and every peer's files are hidden.
 
     The account's secrets are those of its own directory and of each of its
-    project configuration directories.
+    project configuration directories, and a peer's directories are its own
+    and its project configuration directories.
     """
     results: list[CheckResult] = []
     owned: list[tuple[Path, Account]] = []
@@ -478,18 +486,16 @@ def _accounts(
         results.append(CheckResult(False, _unidentified(env)))
     else:
         backend = backend_for(current.agent, home)
-        dirs = [
-            current,
-            *(
-                config_dir_account(current, project)
-                for project in own_config_projects(registry, current.name)
-            ),
+        owned += [
+            (path, current)
+            for there in _every_dir(dirs, registry, current)
+            for path in backend.secrets(there)
         ]
-        owned += [(path, current) for there in dirs for path in backend.secrets(there)]
     for peer in registry.accounts.values():
         if current is None or peer.name != current.name:
             backend = backend_for(peer.agent, home)
-            owned += [(path, peer) for path in (peer.dir, *backend.files(peer))]
+            own = [there.dir for there in _every_dir(dirs, registry, peer)]
+            owned += [(path, peer) for path in (*own, *backend.files(peer))]
     seen: set[Path] = set()
     for path, account in owned:
         if path not in seen and probe.exists(path):
@@ -600,6 +606,7 @@ def _instructions_and_skills(
 
 def _other_settings(
     probe: Probe,
+    dirs: Dirs,
     registry: Registry,
     account: Account | None,
     here: Account | None,
@@ -614,19 +621,23 @@ def _other_settings(
     if account is None or here is None:
         return Report(())
     backend = backend_for(account.agent, home)
-    others = [
-        account,
-        *(
-            config_dir_account(account, project)
-            for project in own_config_projects(registry, account.name)
-        ),
-    ]
     results = [
         _linked_file(probe, path, f"the account's settings {path}")
-        for there in others
+        for there in _every_dir(dirs, registry, account)
         if there.dir != here.dir and probe.exists(path := backend.settings_file(there))
     ]
     return Report(tuple(results))
+
+
+def _every_dir(dirs: Dirs, registry: Registry, account: Account) -> list[Account]:
+    """Give ``account`` in its own directory and in each project's that it may have."""
+    return [
+        account,
+        *(
+            config_dir_account(dirs, account, project)
+            for project in own_config_projects(registry, account.name)
+        ),
+    ]
 
 
 def _has_entries(directory: Path) -> bool:

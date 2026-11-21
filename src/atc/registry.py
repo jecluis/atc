@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal, Self
 
@@ -166,8 +166,7 @@ class Project:
     ``extra_units`` are unit references, as written, of what this machine adds
     to ``unit``. They are merged after it, in the registry's order.
     ``own_config_dir`` says that the project's sessions run in a configuration
-    directory of its own for each account, :func:`project_config_dir`, and not
-    in the account's.
+    directory of its own for each account, and not in the account's.
     """
 
     name: str
@@ -904,35 +903,6 @@ def project_units(
         elif index > 0 or not project.unit_is_default:
             raise PathError(f"{where}: '{reference}': no such unit")
     return units
-
-
-PROJECT_DIRS = "atc-projects"
-"""The directory in an account's directory that holds its project directories."""
-
-
-def project_config_dir(account: Account, project: Project) -> Path:
-    """Give the configuration directory of ``project`` for ``account``."""
-    return account.dir / PROJECT_DIRS / project.name
-
-
-def config_dir_account(account: Account, project: Project) -> Account:
-    """Give ``account`` as it is in the configuration directory of ``project``."""
-    return replace(account, dir=project_config_dir(account, project))
-
-
-def config_dir_link(account: Account, project: Project) -> Path | None:
-    """
-    Find a symbolic link on the way to the configuration directory of ``project``.
-
-    That is ``PROJECT_DIRS`` in the account's directory, or the project's
-    directory in it. atc makes and writes them only as directories, so that
-    what it writes stays in the account's directory. ``None`` means neither is
-    a link.
-    """
-    parent = account.dir / PROJECT_DIRS
-    return next(
-        (path for path in (parent, parent / project.name) if path.is_symlink()), None
-    )
 
 
 def own_config_projects(registry: Registry, account: str) -> list[Project]:

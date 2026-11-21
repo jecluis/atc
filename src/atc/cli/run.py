@@ -134,13 +134,13 @@ def run(
     rules are still checked.
 
     In a project whose registry entry sets own-config-dir, the agent runs in the
-    project's own configuration directory for the account, atc-projects/PROJECT
-    in the account's directory, and not in the account's. Before the agent
-    starts, atc makes that directory if it is missing and syncs it as "atc sync"
-    would: the account's settings with the project's merged over them, and the
-    account's instructions file and skills. If it cannot, atc stops and the
-    agent does not start. The directory has its own login, history and plugins:
-    its first session asks Claude Code for a login.
+    project's own configuration directory for the account,
+    projects/PROJECT/ACCOUNT in atc's state directory, and not in the
+    account's. Before the agent starts, atc makes that directory if it is
+    missing and syncs it as "atc sync" would. If it cannot, atc stops and the
+    agent does not start. The directory has its own login and history, and
+    shares its plugins and auto memory with the project's other accounts: its
+    first session asks Claude Code for a login.
 
     Inside a git repository the session is guarded. The agent cannot write to
     the repository's objects/pack and packed-refs, git's automatic gc is turned

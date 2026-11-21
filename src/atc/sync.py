@@ -12,10 +12,22 @@ from atc.context import BuildContext
 from atc.errors import ConfigError, UnitError, WriteError
 from atc.fsutil import atomic_write, backup, make_private_dir
 from atc.jsonval import JsonObject, canonical, dumps
-from atc.layers import build_account_layer, build_project_layer, merge_fragment
+from atc.layers import (
+    Layer,
+    build_account_layer,
+    build_project_layer,
+    merge_fragment,
+)
 from atc.links import LinkPlan, apply_link, decide_link, wanted_instructions
 from atc.merge import keep_additions as merge_live
-from atc.registry import Account, Project, config_dir_account, config_dir_link
+from atc.projectdirs import (
+    SHARED,
+    common_dir,
+    config_dir_account,
+    config_dir_link,
+    memory_dir,
+)
+from atc.registry import Account, Project
 from atc.rendered import Rendering, render_templates
 from atc.rules import RuleWarning, dead_rules
 from atc.skills import Catalog, discover_skills, wanted_skill_links
@@ -122,7 +134,8 @@ class AccountPlan:
     ``links`` are the link entries planned, and ``assets`` the rendered copies.
     ``warnings`` are the layers', and ``rule_warnings`` are the permission rules
     that never apply. Neither stops the sync. With a ``project``, the plan is
-    for the project's configuration directory for the account.
+    for the project's configuration directory for the account, and
+    ``shared_dirs`` are the directories its accounts share, made when missing.
     """
 
     account: Account
@@ -133,6 +146,7 @@ class AccountPlan:
     warnings: tuple[str, ...]
     assets: tuple[AssetPlan, ...] = ()
     project: Project | None = None
+    shared_dirs: tuple[Path, ...] = ()
 
     @property
     def label(self) -> str:
@@ -233,9 +247,12 @@ def plan_account(
     Work out what ``sync`` does for ``account``, changing nothing.
 
     With a ``project``, it is for the project's configuration directory for the
-    account instead, which must exist: its settings are the account's with the
-    project's merged over them, its links are the account's, and what the live
-    settings file added is kept, as :func:`decide_settings` does.
+    account instead, which must exist: its settings are the account's, then the
+    project's auto memory directory, then the project's settings, merged in that
+    order, and what the live settings file added is kept, as
+    :func:`decide_settings` does. Its links are the account's, and those of
+    :data:`atc.projectdirs.SHARED` into the directory the project's accounts
+    share.
 
     Only the ``parts`` are planned: nothing is read, built or checked for the
     others, except that planning the instructions also plans the rendered
@@ -258,8 +275,10 @@ def plan_account(
             f"account '{account.name}': {account.dir} is not a directory; "
             + "atc does not create accounts, which means logging in"
         )
-    target = account if project is None else config_dir_account(account, project)
-    link = None if project is None else config_dir_link(account, project)
+    target = (
+        account if project is None else config_dir_account(ctx.dirs, account, project)
+    )
+    link = None if project is None else config_dir_link(ctx.dirs, account, project)
     if link is not None:
         raise ConfigError(f"{account.name}/{_name(project)}: {link} {LINK_REFUSED}")
     if not target.dir.is_dir():
@@ -277,6 +296,7 @@ def plan_account(
     if "settings" in parts:
         layers = [build_account_layer(ctx, account, lax=lax)]
         if project is not None:
+            layers.append(_memory_layer(ctx, project))
             found = build_project_layer(ctx, project, account, lax=lax)
             layers += [] if found is None else [found]
         settings = _plan_settings(
@@ -313,6 +333,14 @@ def plan_account(
                 take_over=take_over,
             )
         )
+    shared: tuple[Path, ...] = ()
+    if project is not None:
+        common = common_dir(ctx.dirs, project)
+        shared = (memory_dir(ctx.dirs, project), *(common / name for name in SHARED))
+        links.extend(
+            _plan_link(target.dir / name, common / name, recorded, take_over=take_over)
+            for name in SHARED
+        )
     return AccountPlan(
         account=account,
         settings_path=path,
@@ -322,6 +350,7 @@ def plan_account(
         warnings=warnings,
         assets=tuple(assets),
         project=project,
+        shared_dirs=shared,
     )
 
 
@@ -347,6 +376,8 @@ def apply_account(plan: AccountPlan, ctx: BuildContext, now: datetime) -> None:
         ctx.dirs.state_dir, plan.account.name, _name(plan.project) or None
     )
     try:
+        for directory in plan.shared_dirs:
+            make_private_dir(directory)
         _write_copies(plan.assets)
         if plan.settings is not None:
             _apply_settings(plan.settings, plan.settings_path, state, now)
@@ -588,6 +619,12 @@ def kept_lines(settings: SettingsPlan) -> list[str]:
         what = ", ".join(settings.reset)
         lines.append(f"reset to what the units give: {what}")
     return lines
+
+
+def _memory_layer(ctx: BuildContext, project: Project) -> Layer:
+    """Point auto memory at the directory every account of ``project`` shares."""
+    memory: JsonObject = {"autoMemoryDirectory": str(memory_dir(ctx.dirs, project))}
+    return Layer("project", memory, (), {})
 
 
 def _name(project: Project | None) -> str:

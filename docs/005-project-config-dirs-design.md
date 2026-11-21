@@ -72,8 +72,8 @@ directory is.
   entry of `sandbox.excludedCommands` or a hook; every `atc sync` lists them,
   and `atc run` does when one is new.
 - A project directory reached through a symbolic link. atc refuses one at
-  `atc-projects` or at the project's directory, as it refuses a linked
-  `skills/`, so what it writes stays in the account's directory.
+  `projects`, at the project's directory or at the account's below it, as it
+  refuses a linked `skills/`, so what it writes stays where it says.
 - A launch that silently starts with stale settings. If `atc run` cannot bring
   the directory up to date, it does not start the agent.
 
@@ -90,12 +90,16 @@ directory is.
 **Not established yet**, and settled by running `atc check` in a session in a
 project directory:
 
-- That Claude Code works with a `CLAUDE_CONFIG_DIR` inside another account's
-  directory. Nothing documented says otherwise.
+- That Claude Code writes its own configuration directory freely under a
+  directory that `sandbox.filesystem.denyWrite` and an `Edit` deny rule cover.
+  Both govern commands and Claude's file tools, not Claude Code itself, so it
+  should.
 - That Claude Code's file tools are refused writes to auto memory under a
-  directory an `Edit` deny rule covers. If so, a directory under atc's state
-  directory, which the hardening units deny, would lose auto memory. This is why
-  the directories are not there (below).
+  directory an `Edit` deny rule covers. If so, auto memory in a project
+  directory under atc's state directory would fail, which is why it is moved out
+  (§3). If not, it could stay, with no harm done by moving it.
+- That a `plugins` link into another directory works, and that two accounts can
+  install into one plugins directory.
 
 ## 1. The registry
 
@@ -103,15 +107,18 @@ project directory:
 the project has a **project directory** for each account it allows: every
 account when it sets no `accounts`.
 
-A project directory is `<account dir>/atc-projects/<project>`, computed in one
-place. It is inside the account's directory, not in atc's state directory:
+A project directory is `<state_dir>/projects/<project>/<account>`, computed in
+one place (`atc.projectdirs`). The project's accounts share
+`<state_dir>/projects/<project>/_common`; no account can be called `_common`,
+since an account's name starts with a letter or a digit. A project's auto memory
+is `<data_dir>/projects/<project>/memory`, where `data_dir` is `atc` in
+`$XDG_DATA_HOME`, `~/.local/share/atc` by default.
 
-- Every other account's sessions are already denied the account's directory
-  (`peers.dir`), so they are denied its project directories too, with no new
-  rule.
-- atc's state directory is write-denied to sessions, for Claude's tools as well
-  as commands. Claude Code keeps auto memory in its configuration directory and
-  writes it with its file tools, which such a rule would refuse.
+In atc's state directory, the hardening units already keep sessions from writing
+a project directory, with commands and with Claude's file tools alike, so no
+session can edit the settings of its own project directory or of another's. Auto
+memory is the one thing in a configuration directory that Claude Code writes
+with its file tools, so it lives in the data directory, which nothing denies.
 
 ## 2. Variables
 
@@ -122,8 +129,14 @@ and units that use it keep meaning the same file.
 `account.secrets` grows: after the account's own credentials and state file come
 those of its project directories that exist, in the order of the projects. A
 unit that denies `{{account.secrets}}` therefore denies an account's sessions
-every login of the account, from whichever directory they run. `peers.dir` and
-`peers.files` do not change.
+every login of the account, from whichever directory they run.
+
+`peers.dir` grows too: after every other account's directory come their project
+directories that exist, and then the auto memory directories that exist of the
+projects with their own directories that the account may not work on. A unit
+that denies `{{peers.dir}}` keeps an account's sessions out of all of them.
+`peers.files` does not change. The auto memory of a project is shared by every
+account the project allows: that is the one deliberate gap in their isolation.
 
 Only files that exist are listed, as the guard lists only paths that exist: the
 sandbox puts a placeholder where a denied path is missing, and an empty
@@ -138,12 +151,22 @@ in closes the gap for it.
 
 As an account's directory, built by the same code, with the account's selection:
 
-- `settings.json`: the account layer, then the project layer, merged with the
-  usual rules, the project winning. The account layer is built as for the
-  account; the project layer as `atc run` builds it, for that account. The
-  policy of each layer applies to its own units, as now.
+- `settings.json`: the account layer, then `autoMemoryDirectory` set to the
+  project's auto memory directory, then the project layer, merged with the usual
+  rules. The account layer is built as for the account; the project layer as
+  `atc run` builds it, for that account. The policy of each layer applies to its
+  own units, as now, and a project unit may set `autoMemoryDirectory` to move
+  the memory elsewhere. A memory directory per project, rather than a link per
+  worktree, works because Claude Code uses `autoMemoryDirectory` as the memory
+  directory itself (F5 of 001), while the memory it finds on its own is under a
+  directory named for the working directory, one per worktree.
 - `CLAUDE.md` and `skills/`: the account's instructions file and skills, linked
   as for the account. The templated assets are the account's rendered copies.
+- `plugins`: a link to `plugins` in `_common`, so the project's accounts share
+  what is installed for the project.
+
+The auto memory directory and `_common/plugins` are made, private to the user,
+when a project directory is synced.
 
 atc's record for a project directory is
 `<state_dir>/sync/<account>/projects/<project>/`: the settings last generated,
@@ -221,10 +244,16 @@ checked are `account.secrets`: those of every directory of the account.
 
 ## Choices made while drafting
 
-- **Inside the account's directory, not under `~/.local/state/atc`.** The state
-  directory is write-denied to sessions by the hardening units, which would
-  refuse Claude's own auto memory writes, and a directory there would need peer
-  rules of its own. Inside the account's directory, both come for free.
+- **In atc's state directory, by project and then account.** The hardening units
+  already deny sessions every write there, which keeps each project directory's
+  settings out of reach of every session. Inside the account's directory, a
+  session of the account could edit them with Claude's file tools.
+- **Auto memory in the data directory, through `autoMemoryDirectory`.** Moving
+  it out of the state directory needs no change to the hardening units, whose
+  one `Edit` rule on the state directory keeps covering whatever atc puts there.
+  Leaving it in would need that rule split into one per directory of atc's.
+- **History and logins not shared.** `--resume` across accounts would hand one
+  account's transcripts to another, and a login must never be shared.
 - **Project layer in the file and on the command line.** In the file alone, a
   repository's own `.claude/settings.json` would override a project's scalar
   settings, which `--settings` outranks today. On the command line alone, the

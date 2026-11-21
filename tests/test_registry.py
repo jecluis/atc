@@ -21,7 +21,6 @@ from atc.registry import (
     normalize_path,
     own_config_projects,
     parse_registry,
-    project_config_dir,
     project_units,
     remove_extra_units,
     set_skills,
@@ -568,18 +567,6 @@ def test_a_project_uses_the_accounts_config_dir_unless_it_asks_for_its_own(
 
     assert registry.projects["bar"].own_config_dir is False
     assert registry.projects["x"].own_config_dir is True
-
-
-def test_a_project_config_dir_is_in_the_accounts_dir(
-    write_registry: RegistryWriter, home: Path
-) -> None:
-    text = with_project("repo: /r, own-config-dir: true")
-    registry = load_registry(write_registry(text), home)
-    account = registry.account("personal")
-
-    found = project_config_dir(account, registry.project("bar"))
-
-    assert found == account.dir / "atc-projects" / "bar"
 
 
 def test_own_config_projects_are_those_that_allow_the_account(

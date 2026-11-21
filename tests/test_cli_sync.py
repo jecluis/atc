@@ -1145,40 +1145,56 @@ OWN_DIR_FILES = {
 }
 
 
+def project_dir(dirs: Dirs, project: str, account: str) -> Path:
+    return dirs.state_dir / "projects" / project / account
+
+
+def memory(dirs: Dirs, project: str) -> str:
+    return str(dirs.data_dir / "projects" / project / "memory")
+
+
 def test_sync_writes_the_project_dirs_that_exist_for_each_account_synced(
-    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+    configure: ConfigWriter, home: Path, dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    bar = home / ".claude" / "atc-projects" / "bar"
+    (home / ".claude").mkdir()
+    bar = project_dir(dirs, "bar", "personal")
     bar.mkdir(parents=True)
-    (home / ".config" / "work" / "atc-projects" / "bar").mkdir(parents=True)
+    project_dir(dirs, "bar", "work").mkdir(parents=True)
     configure(OWN_DIR_FILES, OWN_DIRS)
 
     assert main(["sync", "personal"]) == OK
 
-    assert capsys.readouterr().out == ("personal: written\npersonal/bar: written\n")
+    common = dirs.state_dir / "projects" / "bar" / "_common"
+    assert capsys.readouterr().out == (
+        "personal: written\npersonal/bar: written\n"
+        + f"personal/bar: plugins: (none) → {common / 'plugins'} (changed)\n"
+    )
     assert json.loads((bar / "settings.json").read_text(encoding="utf-8")) == {
         **SETTINGS,
+        "autoMemoryDirectory": memory(dirs, "bar"),
         "env": {"P": "bar"},
     }
-    assert not (home / ".claude" / "atc-projects" / "baz").exists()
-    assert not (
-        home / ".config" / "work" / "atc-projects" / "bar" / "settings.json"
-    ).exists()
+    assert not project_dir(dirs, "baz", "personal").exists()
+    assert not (project_dir(dirs, "bar", "work") / "settings.json").exists()
 
 
 def test_sync_keeps_what_claude_wrote_in_a_project_dir_and_says_so(
-    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+    configure: ConfigWriter, home: Path, dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    bar = home / ".claude" / "atc-projects" / "bar"
+    (home / ".claude").mkdir()
+    bar = project_dir(dirs, "bar", "personal")
     bar.mkdir(parents=True)
     (home / ".config" / "work").mkdir(parents=True)
     configure(OWN_DIR_FILES, OWN_DIRS)
     assert main(["sync"]) == OK
     live = bar / "settings.json"
-    _ = live.write_text(
-        json.dumps({**json.loads(live.read_text(encoding="utf-8")), "x": 1}),
-        encoding="utf-8",
-    )
+    edited: JsonObject = {
+        **SETTINGS,
+        "autoMemoryDirectory": memory(dirs, "bar"),
+        "env": {"P": "bar"},
+        "x": 1,
+    }
+    _ = live.write_text(dumps(edited), encoding="utf-8")
     assert main(["sync", "--check"]) == OK
     configure({**OWN_DIR_FILES, PERSONAL: unit({"model": "sonnet"})}, OWN_DIRS)
     _ = capsys.readouterr()
@@ -1189,6 +1205,7 @@ def test_sync_keeps_what_claude_wrote_in_a_project_dir_and_says_so(
     assert "personal/bar: written\n" in captured.out
     assert "personal/bar: kept what Claude Code added: /x" in captured.err
     assert json.loads(live.read_text(encoding="utf-8")) == {
+        "autoMemoryDirectory": memory(dirs, "bar"),
         "model": "sonnet",
         "env": {"P": "bar"},
         "x": 1,
@@ -1196,15 +1213,21 @@ def test_sync_keeps_what_claude_wrote_in_a_project_dir_and_says_so(
 
 
 def test_sync_lists_what_a_project_dir_keeps_even_when_it_is_current(
-    configure: ConfigWriter, home: Path, capsys: pytest.CaptureFixture[str]
+    configure: ConfigWriter, home: Path, dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    bar = home / ".claude" / "atc-projects" / "bar"
+    (home / ".claude").mkdir()
+    bar = project_dir(dirs, "bar", "personal")
     bar.mkdir(parents=True)
     (home / ".config" / "work").mkdir(parents=True)
     configure(OWN_DIR_FILES, OWN_DIRS)
     assert main(["sync"]) == OK
     live = bar / "settings.json"
-    edited: JsonObject = {**SETTINGS, "env": {"P": "bar"}, "apiKeyHelper": "x"}
+    edited: JsonObject = {
+        **SETTINGS,
+        "autoMemoryDirectory": memory(dirs, "bar"),
+        "env": {"P": "bar"},
+        "apiKeyHelper": "x",
+    }
     _ = live.write_text(dumps(edited), encoding="utf-8")
     _ = capsys.readouterr()
 

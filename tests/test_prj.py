@@ -1063,15 +1063,19 @@ def test_show_takes_a_name_from_anywhere(
 
 
 def test_show_says_when_a_project_has_its_own_config_dirs(
-    configure: ConfigWriter, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    configure: ConfigWriter,
+    tmp_path: Path,
+    dirs: Dirs,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo = make_repo(tmp_path / "bar")
     configure(FILES, registry_text(project("bar", repo, "own-config-dir: true")))
 
     assert main(["prj", "show", "bar"]) == OK
 
+    root = dirs.state_dir / "projects" / "bar"
     assert fields_of(capsys.readouterr().out)["config dir"] == (
-        "its own, ACCOUNT_DIR/atc-projects/bar for each account"
+        f"its own, {root}/ACCOUNT for each account"
     )
 
 

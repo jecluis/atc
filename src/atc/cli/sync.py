@@ -18,7 +18,8 @@ from atc.cli.options import (
 from atc.context import BuildContext
 from atc.errors import ConfigError
 from atc.links import LinkPlan
-from atc.registry import Account, Project, own_config_projects, project_config_dir
+from atc.projectdirs import config_dir
+from atc.registry import Account, Project, own_config_projects
 from atc.skills import discover_skills
 from atc.sync import (
     AccountPlan,
@@ -122,11 +123,13 @@ def sync(
     selected skill is to go is a conflict, as above.
 
     A project whose registry entry sets own-config-dir has a configuration
-    directory of its own in each account it allows, atc-projects/PROJECT in the
-    account's directory, which "atc run" in the project makes. Each one that
+    directory of its own for each account it allows, projects/PROJECT/ACCOUNT in
+    atc's state directory, which "atc run" in the project makes. Each one that
     exists is synced with its account, as ACCOUNT/PROJECT: it gets the account's
-    settings with the project's merged over them, and the account's instructions
-    file and skills. There, what Claude Code writes into settings.json is no
+    settings with the project's merged over them and auto memory pointed at the
+    project's shared directory, the account's instructions file and skills, and
+    a plugins link into projects/PROJECT/_common, which the project's accounts
+    share. There, what Claude Code writes into settings.json is no
     edit: what it added is kept, and what the units set is reset to their
     value, and both are listed.
 
@@ -212,7 +215,7 @@ def _project_dirs(ctx: BuildContext, account: Account) -> list[Project]:
     return [
         project
         for project in own_config_projects(ctx.registry, account.name)
-        if project_config_dir(account, project).is_dir()
+        if config_dir(ctx.dirs, account, project).is_dir()
     ]
 
 

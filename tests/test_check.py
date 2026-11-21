@@ -1321,7 +1321,7 @@ def own_dir_world(home: Path, dirs: Dirs) -> World:
     """Make a session of `personal` that atc run started in bar's own config dir."""
     registry = parse_registry(OWN_DIR_REGISTRY, home / "machine.yaml", home)
     world = make_world(home, dirs, registry)
-    own = world.personal / "atc-projects" / "bar"
+    own = dirs.state_dir / "projects" / "bar" / "personal"
     world.probe.existing |= {own, own / "settings.json", own / ".credentials.json"}
     world.probe.links[own / "CLAUDE.md"] = dirs.conf_d / "assets" / "AGENTS.md"
     world.env.update({"ATC_PROJECT": "bar", "CLAUDE_CONFIG_DIR": str(own)})
@@ -1331,7 +1331,7 @@ def own_dir_world(home: Path, dirs: Dirs) -> World:
 def test_a_project_dir_session_checks_the_project_dirs_settings_and_links(
     own_dir_world: World,
 ) -> None:
-    own = own_dir_world.personal / "atc-projects" / "bar"
+    own = own_dir_world.dirs.state_dir / "projects" / "bar" / "personal"
     own_dir_world.probe.writable_paths.add(own / "settings.json")
 
     assert failures(own_dir_world.run()) == [
@@ -1342,7 +1342,13 @@ def test_a_project_dir_session_checks_the_project_dirs_settings_and_links(
 def test_a_project_dir_session_is_denied_every_login_of_the_account(
     own_dir_world: World,
 ) -> None:
-    own = own_dir_world.personal / "atc-projects" / "bar" / ".credentials.json"
+    own = (
+        own_dir_world.dirs.state_dir
+        / "projects"
+        / "bar"
+        / "personal"
+        / ".credentials.json"
+    )
     main = own_dir_world.personal / ".credentials.json"
     own_dir_world.probe.readable_paths |= {own, main}
 
@@ -1355,7 +1361,13 @@ def test_a_project_dir_session_is_denied_every_login_of_the_account(
 def test_an_account_session_is_denied_the_logins_of_its_project_dirs(
     own_dir_world: World,
 ) -> None:
-    own = own_dir_world.personal / "atc-projects" / "bar" / ".credentials.json"
+    own = (
+        own_dir_world.dirs.state_dir
+        / "projects"
+        / "bar"
+        / "personal"
+        / ".credentials.json"
+    )
     del own_dir_world.env["ATC_PROJECT"], own_dir_world.env["CLAUDE_CONFIG_DIR"]
     own_dir_world.probe.readable_paths.add(own)
 
@@ -1368,9 +1380,19 @@ def test_every_settings_file_of_the_account_must_not_be_writable(
     own_dir_world: World,
 ) -> None:
     del own_dir_world.env["ATC_PROJECT"], own_dir_world.env["CLAUDE_CONFIG_DIR"]
-    own = own_dir_world.personal / "atc-projects" / "bar" / "settings.json"
+    own = (
+        own_dir_world.dirs.state_dir / "projects" / "bar" / "personal" / "settings.json"
+    )
     own_dir_world.probe.writable_paths.add(own)
 
     assert failures(own_dir_world.run()) == [
         f"the account's settings {own} is not writable"
     ]
+
+
+def test_a_peers_project_dir_must_not_be_readable(own_dir_world: World) -> None:
+    peer = own_dir_world.dirs.state_dir / "projects" / "bar" / "bravo"
+    own_dir_world.probe.existing.add(peer)
+    own_dir_world.probe.readable_paths.add(peer)
+
+    assert failures(own_dir_world.run()) == [f"{peer} is not readable (account bravo)"]

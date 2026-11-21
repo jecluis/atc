@@ -825,6 +825,7 @@ def own_dir(
     agent: Path,
     repo: Path,
     home: Path,
+    dirs: Dirs,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
     """Give ``bar`` its own config dirs, work in it, and return bravo's."""
@@ -834,21 +835,24 @@ def own_dir(
     configure(OWN_DIR_FILES, text)
     (home / ".config" / "bravo" / "claude").mkdir(parents=True)
     monkeypatch.chdir(repo)
-    return home / ".config" / "bravo" / "claude" / "atc-projects" / "bar"
+    return dirs.state_dir / "projects" / "bar" / "bravo"
 
 
 def test_run_starts_the_agent_in_the_projects_own_config_dir_synced(
-    executed: list[LaunchPlan], own_dir: Path
+    executed: list[LaunchPlan], own_dir: Path, dirs: Dirs
 ) -> None:
     plan = start(executed, ["-q"])
 
     assert plan.env["CLAUDE_CONFIG_DIR"] == str(own_dir)
     assert plan.config_dir == own_dir
     assert (own_dir.stat().st_mode & 0o777) == 0o700
+    memory = dirs.data_dir / "projects" / "bar" / "memory"
     assert json.loads((own_dir / "settings.json").read_text(encoding="utf-8")) == {
+        "autoMemoryDirectory": str(memory),
         "model": "opus",
         "sandbox": {"network": {"allowedDomains": ["bar.org"]}},
     }
+    assert memory.is_dir()
     assert "allowedDomains" in canonical(plan.fragment)
 
 
@@ -892,6 +896,7 @@ def test_run_refuses_a_config_dir_behind_a_symbolic_link(
 ) -> None:
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
+    own_dir.parent.parent.mkdir(parents=True)
     own_dir.parent.symlink_to(elsewhere)
 
     assert main(["-q"]) == CONFIG
@@ -924,10 +929,11 @@ def test_run_reports_what_it_kept_only_when_it_writes(
     assert "kept" not in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("own_dir")
 def test_print_says_a_config_dir_cannot_be_made_without_its_account_dir(
-    own_dir: Path, capsys: pytest.CaptureFixture[str]
+    home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    own_dir.parent.parent.rmdir()
+    (home / ".config" / "bravo" / "claude").rmdir()
 
     assert main(["--print"]) == OK
 

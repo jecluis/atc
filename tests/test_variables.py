@@ -74,6 +74,7 @@ def test_an_account_layer_has_every_variable_but_the_source_and_project_ones(
         "atc.conf_d": str(ctx.dirs.conf_d),
         "atc.state_dir": str(ctx.dirs.state_dir),
         "atc.runtime_dir": str(ctx.dirs.runtime_dir),
+        "atc.data_dir": str(ctx.dirs.data_dir),
         "atc.install_dir": str(ctx.install_dir),
         "atc.python_dir": str(ctx.python_dir),
         "vars.scratch_root": "/mnt/s",
@@ -356,9 +357,9 @@ def test_account_secrets_add_those_of_its_project_dirs_that_exist(
 ) -> None:
     ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
     bravo = home / ".config" / "bravo" / "claude"
-    bar = bravo / "atc-projects" / "bar"
-    baz = bravo / "atc-projects" / "baz"
-    for directory in (bar, baz, bravo / "atc-projects" / "qux"):
+    projects = ctx.dirs.state_dir / "projects"
+    bar, baz = projects / "bar" / "bravo", projects / "baz" / "bravo"
+    for directory in (bar, baz, projects / "qux" / "bravo"):
         directory.mkdir(parents=True)
         _ = (directory / ".credentials.json").write_text("{}", encoding="utf-8")
     _ = (baz / ".claude.json").write_text("{}", encoding="utf-8")
@@ -375,11 +376,34 @@ def test_account_secrets_add_those_of_its_project_dirs_that_exist(
     assert got["account.dir"] == str(bravo)
 
 
+def test_peers_add_the_other_accounts_project_dirs_and_memory_out_of_reach(
+    build_context: ContextBuilder, home: Path
+) -> None:
+    ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
+    projects = ctx.dirs.state_dir / "projects"
+    for directory in (projects / "bar" / "bravo", projects / "baz" / "bravo"):
+        directory.mkdir(parents=True)
+    bar_memory = ctx.dirs.data_dir / "projects" / "bar" / "memory"
+    baz_memory = ctx.dirs.data_dir / "projects" / "baz" / "memory"
+    bar_memory.mkdir(parents=True)
+    baz_memory.mkdir(parents=True)
+
+    got = layer_variables(ctx, ctx.registry.account("personal"))
+
+    assert got["peers.dir"] == (
+        str(home / ".config" / "bravo" / "claude"),
+        str(home / ".config" / "work"),
+        str(projects / "bar" / "bravo"),
+        str(projects / "baz" / "bravo"),
+        str(bar_memory),
+    )
+
+
 def test_project_dirs_of_a_project_that_disallows_the_account_are_not_its_own(
     build_context: ContextBuilder, home: Path
 ) -> None:
     ctx = build_context({"conf/a.json": unit()}, OWN_DIRS)
-    bar = home / ".claude" / "atc-projects" / "bar"
+    bar = ctx.dirs.state_dir / "projects" / "bar" / "personal"
     bar.mkdir(parents=True)
     _ = (bar / ".credentials.json").write_text("{}", encoding="utf-8")
 

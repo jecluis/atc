@@ -5,12 +5,8 @@ from pathlib import Path
 
 from atc.backends import backend_for
 from atc.context import BuildContext
-from atc.registry import (
-    Account,
-    Project,
-    config_dir_account,
-    own_config_projects,
-)
+from atc.projectdirs import account_dirs, memory_dir
+from atc.registry import Account, Project, own_config_projects
 from atc.sources import Source
 from atc.state import SyncState
 from atc.template import VarValue
@@ -36,6 +32,7 @@ def layer_variables(
         "atc.conf_d": str(ctx.dirs.conf_d),
         "atc.state_dir": str(ctx.dirs.state_dir),
         "atc.runtime_dir": str(ctx.dirs.runtime_dir),
+        "atc.data_dir": str(ctx.dirs.data_dir),
         "atc.install_dir": str(ctx.install_dir),
         "atc.python_dir": str(ctx.python_dir),
     }
@@ -67,7 +64,7 @@ def layer_variables(
     peers = [
         peer for peer in ctx.registry.accounts.values() if peer.name != account.name
     ]
-    variables["peers.dir"] = tuple(str(peer.dir) for peer in peers)
+    variables["peers.dir"] = _strings(_peer_dirs(ctx, account, peers))
     variables["peers.files"] = tuple(
         file
         for peer in peers
@@ -112,10 +109,34 @@ def _secrets(ctx: BuildContext, account: Account) -> tuple[Path, ...]:
     """
     backend = backend_for(account.agent, ctx.home)
     found = list(backend.secrets(account))
-    for project in own_config_projects(ctx.registry, account.name):
-        there = config_dir_account(account, project)
+    for there in account_dirs(ctx.dirs, ctx.registry, account)[1:]:
         found.extend(path for path in backend.secrets(there) if path.exists())
     return tuple(found)
+
+
+def _peer_dirs(
+    ctx: BuildContext, account: Account, peers: list[Account]
+) -> tuple[Path, ...]:
+    """
+    Give the directories that ``account``'s sessions are kept out of.
+
+    Those are every other account's directory, then their project configuration
+    directories that exist, then the auto memory directories that exist of the
+    projects with their own directories that ``account`` may not work on.
+    """
+    own = [peer.dir for peer in peers]
+    projects = [
+        there.dir
+        for peer in peers
+        for there in account_dirs(ctx.dirs, ctx.registry, peer)[1:]
+    ]
+    allowed = {p.name for p in own_config_projects(ctx.registry, account.name)}
+    memories = [
+        memory_dir(ctx.dirs, project)
+        for project in ctx.registry.projects.values()
+        if project.own_config_dir and project.name not in allowed
+    ]
+    return (*own, *projects, *(path for path in memories if path.is_dir()))
 
 
 def _strings(paths: tuple[Path, ...]) -> tuple[str, ...]:

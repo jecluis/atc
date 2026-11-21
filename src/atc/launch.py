@@ -23,14 +23,13 @@ from atc.layers import (
     session_layer,
 )
 from atc.paths import Dirs
+from atc.projectdirs import config_dir_account, config_dir_link
 from atc.registry import (
     AUTO_ACCOUNT,
     Account,
     Project,
     Registry,
     choose_account,
-    config_dir_account,
-    config_dir_link,
 )
 from atc.rules import RuleWarning, dead_rules
 from atc.sync import (
@@ -249,7 +248,7 @@ def plan_launch(
             warnings.append(f"rule check skipped for the account layer: {exc}")
     target = chosen
     if project is not None and project.own_config_dir:
-        target = config_dir_account(chosen, project)
+        target = config_dir_account(ctx.dirs, chosen, project)
     selected = backend.environment(target, _atc_environment(env, ctx, chosen, project))
     guarded = entries is not None
     if guarded:
@@ -292,7 +291,7 @@ def prepare_config_dir(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> lis
     if plan.config_dir is None or plan.project is None:
         return []
     label = f"{plan.account.name}/{plan.project.name}"
-    problem = _config_dir_problem(plan.account, plan.project)
+    problem = _config_dir_problem(ctx.dirs, plan.account, plan.project)
     if problem is not None:
         raise ConfigError(f"{label}: {problem}")
     try:
@@ -322,7 +321,7 @@ def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
     """Say what :func:`prepare_config_dir` would do, changing nothing."""
     if plan.config_dir is None or plan.project is None:
         return ""
-    problem = _config_dir_problem(plan.account, plan.project)
+    problem = _config_dir_problem(ctx.dirs, plan.account, plan.project)
     if problem is not None:
         return f"cannot be made: {problem}"
     if not plan.config_dir.is_dir():
@@ -340,11 +339,11 @@ def config_dir_state(ctx: BuildContext, plan: LaunchPlan, *, lax: bool) -> str:
     return state
 
 
-def _config_dir_problem(account: Account, project: Project) -> str | None:
+def _config_dir_problem(dirs: Dirs, account: Account, project: Project) -> str | None:
     """Say why the configuration directory of ``project`` cannot be made, if so."""
     if not account.dir.is_dir():
         return f"the account's directory {account.dir} is missing"
-    link = config_dir_link(account, project)
+    link = config_dir_link(dirs, account, project)
     return None if link is None else f"{link} {LINK_REFUSED}"
 
 
