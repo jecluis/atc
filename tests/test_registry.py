@@ -1027,7 +1027,9 @@ def test_add_extra_units_writes_the_list_and_keeps_the_rest_of_the_file(
 ) -> None:
     path = write_registry(COMMENTED)
 
-    registry = add_extra_units(path, home, "a", ["hosts/one.json", "@b/two.json"])
+    registry = add_extra_units(
+        path, home, "a", ["hosts/one.json", "@b/two.json"], kind="account"
+    )
 
     assert registry.accounts["a"].extra_units == ("hosts/one.json", "@b/two.json")
     assert load_registry(path, home) == registry
@@ -1041,9 +1043,9 @@ def test_add_extra_units_goes_after_what_the_file_holds_now(
     write_registry: RegistryWriter, home: Path
 ) -> None:
     path = write_registry(COMMENTED)
-    _ = add_extra_units(path, home, "a", ["hosts/one.json"])
+    _ = add_extra_units(path, home, "a", ["hosts/one.json"], kind="account")
 
-    registry = add_extra_units(path, home, "a", ["hosts/two.json"])
+    registry = add_extra_units(path, home, "a", ["hosts/two.json"], kind="account")
 
     assert registry.accounts["a"].extra_units == ("hosts/one.json", "hosts/two.json")
 
@@ -1054,7 +1056,7 @@ def test_add_extra_units_refuses_an_unknown_account_and_leaves_the_file(
     path = write_registry(COMMENTED)
 
     with pytest.raises(RegistryError, match=r"no account named 'ghost'; .* a, b"):
-        _ = add_extra_units(path, home, "ghost", ["x.json"])
+        _ = add_extra_units(path, home, "ghost", ["x.json"], kind="account")
 
     assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED)
 
@@ -1064,7 +1066,7 @@ def test_remove_extra_units_edits_the_list_in_place_and_keeps_its_comments(
 ) -> None:
     path = write_registry(BLOCK_LIST)
 
-    registry = remove_extra_units(path, home, "a", ["hosts/two.json"])
+    registry = remove_extra_units(path, home, "a", ["hosts/two.json"], kind="account")
 
     assert registry.accounts["a"].extra_units == ("hosts/one.json", "hosts/three.json")
     assert path.read_text(encoding="utf-8") == textwrap.dedent(BLOCK_LIST).replace(
@@ -1078,7 +1080,7 @@ def test_remove_extra_units_drops_the_key_when_none_are_left(
     path = write_registry(BLOCK_LIST)
     everything = ["hosts/one.json", "hosts/two.json", "hosts/three.json"]
 
-    registry = remove_extra_units(path, home, "a", everything)
+    registry = remove_extra_units(path, home, "a", everything, kind="account")
 
     assert registry.accounts["a"].extra_units == ()
     assert "extra-units" not in path.read_text(encoding="utf-8")
@@ -1088,9 +1090,9 @@ def test_remove_extra_units_drops_the_key_of_an_entry_in_flow_style(
     write_registry: RegistryWriter, home: Path
 ) -> None:
     path = write_registry(COMMENTED)
-    _ = add_extra_units(path, home, "b", ["hosts/one.json"])
+    _ = add_extra_units(path, home, "b", ["hosts/one.json"], kind="account")
 
-    registry = remove_extra_units(path, home, "b", ["hosts/one.json"])
+    registry = remove_extra_units(path, home, "b", ["hosts/one.json"], kind="account")
 
     assert registry.accounts["b"].extra_units == ()
     assert path.read_text(encoding="utf-8") == textwrap.dedent(COMMENTED)
@@ -1104,9 +1106,65 @@ def test_remove_extra_units_refuses_a_unit_the_account_lacks_and_leaves_the_file
     with pytest.raises(
         RegistryError, match=r"account 'a': no extra unit 'hosts/no.json'; .*one.json"
     ):
-        _ = remove_extra_units(path, home, "a", ["hosts/one.json", "hosts/no.json"])
+        _ = remove_extra_units(
+            path, home, "a", ["hosts/one.json", "hosts/no.json"], kind="account"
+        )
 
     assert path.read_text(encoding="utf-8") == textwrap.dedent(BLOCK_LIST)
+
+
+PROJECT_EXTRA = """\
+    version: 1
+    default-account: a
+    accounts:
+      a: {agent: claude, dir: /a}
+    projects:
+      bar:
+        repo: /r  # the checkout
+        extra-units:
+          - net/one.json
+          - net/two.json  # second
+"""
+
+
+def test_add_extra_units_of_a_project_writes_its_entry_alone(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_EXTRA)
+
+    registry = add_extra_units(path, home, "bar", ["net/three.json"], kind="project")
+
+    assert registry.projects["bar"].extra_units == (
+        "net/one.json",
+        "net/two.json",
+        "net/three.json",
+    )
+    assert registry.accounts["a"].extra_units == ()
+    assert "repo: /r  # the checkout\n" in path.read_text(encoding="utf-8")
+
+
+def test_remove_extra_units_of_a_project_edits_its_list_in_place(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_EXTRA)
+
+    registry = remove_extra_units(path, home, "bar", ["net/one.json"], kind="project")
+
+    assert registry.projects["bar"].extra_units == ("net/two.json",)
+    assert "net/two.json  # second" in path.read_text(encoding="utf-8")
+
+
+def test_extra_units_of_an_unknown_project_are_refused_and_the_file_kept(
+    write_registry: RegistryWriter, home: Path
+) -> None:
+    path = write_registry(PROJECT_EXTRA)
+
+    with pytest.raises(RegistryError, match=r"no project named 'ghost'; .* bar"):
+        _ = add_extra_units(path, home, "ghost", ["x.json"], kind="project")
+    with pytest.raises(RegistryError, match=r"project 'bar': no extra unit 'x.json'"):
+        _ = remove_extra_units(path, home, "bar", ["x.json"], kind="project")
+
+    assert path.read_text(encoding="utf-8") == textwrap.dedent(PROJECT_EXTRA)
 
 
 def test_set_skills_writes_the_selection_and_returns_the_registry(

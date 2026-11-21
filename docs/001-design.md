@@ -228,14 +228,14 @@ projects:
   - An account that sets both `agents-md-file` and `use-default-agents-md: true`
     gets a warning, since the flag then has no effect.
 - **Writes:** `atc account add`, `atc account rm` and `atc account units`,
-  `atc prj add` and `atc prj rm`, `atc vars set` and `atc vars rm`, and the
-  `atc skills` commands that change a selection edit the file with ruamel's
-  round-trip mode, so comments and key order survive. When `machine.yaml` is a
-  symbolic link, as into a dotfiles repository, the file it leads to is replaced
-  and the link stays. That file must be as far out of sessions' reach as
-  `config_dir`: a session that could edit the registry could point
-  `agents.claude.bin` at a program that runs outside the sandbox, or widen the
-  sandbox through `vars`. `atc check` verifies it (§10.7).
+  `atc prj add`, `atc prj rm` and `atc prj units`, `atc vars set` and
+  `atc vars rm`, and the `atc skills` commands that change a selection edit the
+  file with ruamel's round-trip mode, so comments and key order survive. When
+  `machine.yaml` is a symbolic link, as into a dotfiles repository, the file it
+  leads to is replaced and the link stays. That file must be as far out of
+  sessions' reach as `config_dir`: a session that could edit the registry could
+  point `agents.claude.bin` at a program that runs outside the sandbox, or widen
+  the sandbox through `vars`. `atc check` verifies it (§10.7).
 
 ## 6. Config sources
 

@@ -15,10 +15,12 @@ from atc.cli.options import (
     cancelled,
     current_dirs,
     current_project,
+    load_build_context,
     load_machine_registry,
     load_sources,
     worktrees_table,
 )
+from atc.cli.units import new_units
 from atc.cli.values import SYNC_NOTE, as_value, users_text, value_fault
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import ConfigError, GitError, RegistryError
@@ -33,8 +35,10 @@ from atc.registry import (
     Project,
     ProjectRemoval,
     Registry,
+    add_extra_units,
     add_project,
     project_name_problem,
+    remove_extra_units,
 )
 from atc.ui import PickChoice, Ui, need_terminal, shown
 from atc.worktree import list_worktrees
@@ -297,6 +301,91 @@ def rm(name: str) -> None:
         return
     updated = removal.write()
     ui.line(f"{name}: removed from {updated.path}")
+
+
+UNITS_NOTE = "the change takes effect at the next atc run in the project"
+
+
+@click.group(cls=rich_click.RichGroup, name="units")
+def units() -> None:
+    """Add and remove the units that this machine adds to a project's settings."""
+
+
+prj.add_command(units)
+
+
+@units.command(cls=rich_click.RichCommand, name="add")
+@click.argument("name", metavar="PROJECT")
+@click.argument("references", nargs=-1, required=True, metavar="UNIT...")
+def units_add(name: str, references: tuple[str, ...]) -> None:
+    """
+    Add extra units to PROJECT, on this machine.
+
+    Each UNIT is a unit reference, a path under a config source's conf, with
+    @source/ in front when several sources have it: net/NAME.json for the file
+    conf/net/NAME.json. It is written to the project's extra-units in
+    machine.yaml, after the ones there are, and the rest of the file stays as it
+    was, but for comments inside a list written over several lines. Extra units
+    are merged after the project's own unit, so they override it, and they reach
+    only the sessions of this project: a unit that allows a domain or excludes a
+    command from the sandbox does so for this project alone. "atc prj show"
+    lists them.
+
+    A UNIT the project has already is left as it is. Nothing is changed when a
+    UNIT does not exist, or when the project cannot be built with it for an
+    account it allows, but for settings keys Claude Code does not define, which
+    "atc src check" reports. Variables that are left undefined are named, and
+    the unit is written anyway.
+
+    The change takes effect at the next "atc run" in the project.
+    """
+    ui = Ui.default()
+    ctx = load_build_context(None)
+    for warning in (*ctx.sources.warnings, *ctx.registry.warnings):
+        ui.warning(warning)
+    found = ctx.registry.project(name)
+    added = new_units(ctx.sources, (found.unit, *found.extra_units), references)
+    if not added:
+        ui.line(f"{name}: extra units unchanged")
+        return
+    updated = replace(found, extra_units=(*found.extra_units, *added))
+    projects = {**ctx.registry.projects, name: updated}
+    trial = replace(ctx, registry=replace(ctx.registry, projects=projects))
+    needed = project_variables(trial, updated)
+    written = add_extra_units(ctx.registry.path, ctx.home, name, added, kind="project")
+    ui.line(f"{name}: extra units written to {written.path}")
+    for variable in needed:
+        ui.warning(
+            f"{variable.reference} for {variable.owner} is undefined, "
+            + f"used by {users_text(variable.users)}"
+        )
+    if needed:
+        ui.info("next, run atc vars set, which asks for them")
+    ui.info(UNITS_NOTE)
+
+
+@units.command(cls=rich_click.RichCommand, name="rm")
+@click.argument("name", metavar="PROJECT")
+@click.argument("references", nargs=-1, required=True, metavar="UNIT...")
+def units_rm(name: str, references: tuple[str, ...]) -> None:
+    """
+    Remove extra units from PROJECT, on this machine.
+
+    Each UNIT is an entry of the project's extra-units as "atc prj show" lists
+    it. It need not exist any more. It is removed from machine.yaml, and the
+    rest of the file stays as it was. An extra-units left empty goes too, with
+    the comment lines directly above it. A UNIT the project does not have is an
+    error that lists the ones it has, and nothing is changed.
+
+    The change takes effect at the next "atc run" in the project.
+    """
+    ui = Ui.default()
+    registry = load_machine_registry(ui)
+    written = remove_extra_units(
+        registry.path, Path.home(), name, references, kind="project"
+    )
+    ui.line(f"{name}: extra units written to {written.path}")
+    ui.info(UNITS_NOTE)
 
 
 def _fields(registry: Registry, project: Project) -> list[tuple[str, str]]:

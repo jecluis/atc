@@ -1,6 +1,6 @@
 """``atc account``: see and change the accounts of the machine registry."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,12 +18,13 @@ from atc.cli.options import (
     load_sources,
 )
 from atc.cli.skills import skill_choices
+from atc.cli.units import new_units
 from atc.cli.values import as_value, users_text, value_fault
 from atc.context import BuildContext, current_install_dir, current_python_dir
 from atc.errors import PathError, RegistryError, WriteError
 from atc.jsonval import JsonObject, JsonValue
 from atc.needed import Needed, needed_variables
-from atc.refs import Located, resolve_registry
+from atc.refs import resolve_registry
 from atc.registry import (
     AGENTS,
     DEFAULT_AGENTS_MD,
@@ -309,13 +310,7 @@ def units_add(name: str, references: tuple[str, ...]) -> None:
     for warning in (*ctx.sources.warnings, *ctx.registry.warnings):
         ui.warning(warning)
     found = ctx.registry.account(name)
-    have = _unit_paths(ctx.sources, (found.unit, *found.extra_units))
-    added: list[str] = []
-    for reference in references:
-        unit = _extra_unit(ctx.sources, reference)
-        if unit.path not in have:
-            have.add(unit.path)
-            added.append(reference)
+    added = new_units(ctx.sources, (found.unit, *found.extra_units), references)
     if not added:
         ui.line(f"{name}: extra units unchanged")
         return
@@ -323,7 +318,7 @@ def units_add(name: str, references: tuple[str, ...]) -> None:
     accounts = {**ctx.registry.accounts, name: updated}
     trial = replace(ctx, registry=replace(ctx.registry, accounts=accounts))
     needed = needed_variables(trial, updated)
-    written = add_extra_units(ctx.registry.path, ctx.home, name, added)
+    written = add_extra_units(ctx.registry.path, ctx.home, name, added, kind="account")
     ui.line(f"{name}: extra units written to {written.path}")
     for need in needed:
         ui.warning(f"{need.reference} is undefined, used by {users_text(need.users)}")
@@ -350,40 +345,11 @@ def units_rm(name: str, references: tuple[str, ...]) -> None:
     """
     ui = Ui.default()
     registry = load_machine_registry(ui)
-    written = remove_extra_units(registry.path, Path.home(), name, references)
+    written = remove_extra_units(
+        registry.path, Path.home(), name, references, kind="account"
+    )
     ui.line(f"{name}: extra units written to {written.path}")
     ui.info(f"next, run atc sync {name}")
-
-
-def _extra_unit(sources: Sources, reference: str) -> Located:
-    """
-    Find the unit ``reference``, to add it to an account.
-
-    Raises:
-        PathError: it is malformed, or several sources have it, or none does.
-
-    """
-    found = resolve_registry(sources, reference)
-    if found is None:
-        message = (
-            f"'{reference}': no config source has it; a unit reference is a path "
-            "under a source's conf/, such as hosts/NAME.json"
-        )
-        raise PathError(message)
-    return found
-
-
-def _unit_paths(sources: Sources, references: Iterable[str]) -> set[Path]:
-    """Give the files that ``references`` name, leaving out those that name none."""
-    paths: set[Path] = set()
-    for reference in references:
-        try:
-            found = resolve_registry(sources, reference)
-        except PathError:
-            continue
-        if found is not None:
-            paths.add(found.path)
-    return paths
 
 
 def _uses(uses: AccountUses) -> list[str]:

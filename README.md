@@ -10,10 +10,10 @@ Code is the first agent it supports.
 Its commands are `atc run`, `atc sync`, `atc check`, `atc maint`,
 `atc show account`, `atc show project`, `atc account ls`, `atc account add`,
 `atc account rm`, `atc account units add`, `atc account units rm`, `atc prj ls`,
-`atc prj show`, `atc prj add`, `atc prj rm`, `atc vars ls`, `atc vars set`,
-`atc vars rm`, `atc wt new`, `atc wt ls`, `atc wt rm`, `atc skills ls`,
-`atc skills pick`, `atc skills add`, `atc skills rm`, `atc src ls`,
-`atc src check`, `atc src pull` and `atc usage`.
+`atc prj show`, `atc prj add`, `atc prj rm`, `atc prj units add`,
+`atc prj units rm`, `atc vars ls`, `atc vars set`, `atc vars rm`, `atc wt new`,
+`atc wt ls`, `atc wt rm`, `atc skills ls`, `atc skills pick`, `atc skills add`,
+`atc skills rm`, `atc src ls`, `atc src check`, `atc src pull` and `atc usage`.
 
 ## Install
 
@@ -131,15 +131,16 @@ is specific to this machine: which accounts exist and where each one lives.
 `atc account add` creates it along with the first account, asking for what
 belongs to this machine and working out the rest from the config sources, and
 `atc account` and `atc prj` add and remove accounts and projects from then on
-(see Usage). `atc account units` adds to an account's settings on this machine
-alone. `atc vars ls` lists the variables it defines and those the units need,
-and `atc vars set` and `atc vars rm` define and remove them. It belongs to no
-config source, so it never lands in a git repository by accident. It may be a
-symbolic link, into a dotfiles repository for example: the commands that edit it
-write the file the link leads to, and the link stays. That file must then be as
-far out of sessions' reach as atc's configuration directory, since a session
-that could edit the registry could change the agent's command or widen the
-sandbox; `atc check` verifies that a session cannot write it.
+(see Usage). `atc account units` and `atc prj units` add to an account's or a
+project's settings on this machine alone. `atc vars ls` lists the variables it
+defines and those the units need, and `atc vars set` and `atc vars rm` define
+and remove them. It belongs to no config source, so it never lands in a git
+repository by accident. It may be a symbolic link, into a dotfiles repository
+for example: the commands that edit it write the file the link leads to, and the
+link stays. That file must then be as far out of sessions' reach as atc's
+configuration directory, since a session that could edit the registry could
+change the agent's command or widen the sandbox; `atc check` verifies that a
+session cannot write it.
 
 ```yaml
 version: 1
@@ -340,14 +341,14 @@ and the same checks. Whatever reads an account's settings reads them too:
 than leaving it without settings it asked for. A unit that the account's unit
 also imports contributes once, at the import, and a warning says so.
 
-A project's `extra-units` work the same way for the project's settings: they are
-merged after the project's unit, and `atc run`, `atc show project`,
-`atc src check` and `atc vars` read them. Use them for what one project needs on
-one machine and no other project should get, such as a domain in
-`sandbox.network.allowedDomains` or a command in `sandbox.excludedCommands`,
-rather than an account's extra units, which reach every session of the account.
-A project whose default unit does not exist still has a project layer when it
-has extra units, made of them alone.
+A project's `extra-units` work the same way for the project's settings, which
+`atc prj units add` writes: they are merged after the project's unit, and
+`atc run`, `atc show project`, `atc src check` and `atc vars` read them. Use
+them for what one project needs on one machine and no other project should get,
+such as a domain in `sandbox.network.allowedDomains` or a command in
+`sandbox.excludedCommands`, rather than an account's extra units, which reach
+every session of the account. A project whose default unit does not exist still
+has a project layer when it has extra units, made of them alone.
 
 ### Templates
 
@@ -1083,11 +1084,11 @@ error.
 ### `atc prj show [NAME]`
 
 Shows one project: its entry in the machine registry, with the defaults filled
-in (the account, the unit, `branch-from`), as labelled lines, and below them a
-table of its worktrees as git lists them: the path, the branch (`(detached)`
-when `HEAD` is not on a branch) and the first 7 characters of the commit. A bare
-repository is not itself a worktree and is left out. If git cannot list the
-worktrees, a warning says why and the lines are still shown.
+in (the account, the unit, its extra units, `branch-from`), as labelled lines,
+and below them a table of its worktrees as git lists them: the path, the branch
+(`(detached)` when `HEAD` is not on a branch) and the first 7 characters of the
+commit. A bare repository is not itself a worktree and is left out. If git
+cannot list the worktrees, a warning says why and the lines are still shown.
 
 `NAME` is a project of the registry. Without it, the project is the one the
 current directory is in, whether in the main checkout or in a worktree, as for
@@ -1191,6 +1192,42 @@ default, and it changes nothing, with exit status `0`. Ctrl-C changes nothing
 too, with exit status `130`. Without a terminal it is a usage error, exit status
 `2`, since nothing can be confirmed. If `machine.yaml` changes while it waits
 for the answer, nothing is written and the error exits `1`.
+
+### `atc prj units add PROJECT UNIT...`
+
+Adds extra units to the project `PROJECT` on this machine (see Extra units under
+Units). Each `UNIT` is a unit reference: for the file `conf/net/bar.json`, that
+is `net/bar.json`, with `@name/` in front when several sources have it. The
+units go after the ones there are, in the project's `extra-units` in
+`machine.yaml`, as they were typed, and the rest of the file stays as it was. In
+a list written over several lines, the comments inside it are lost, since the
+list is written anew on one line.
+
+A unit the project has already is left as it is, under any spelling, and so is
+the project's own unit. Nothing is changed when a `UNIT` does not exist, when
+several sources have it, or when the project can no longer be built with it for
+an account it allows, for instance because of a missing import or a key the
+project's settings may not contain. A settings key that Claude Code does not
+define is not among those: `atc src check` reports it. A variable that is left
+undefined does not stop it: a warning names the variable and what uses it, and
+`atc vars set` asks for it.
+
+The change takes effect at the next `atc run` in the project, which it says.
+Exit `1` on an error.
+
+### `atc prj units rm PROJECT UNIT...`
+
+Removes extra units from the project `PROJECT` on this machine. Each `UNIT` is
+an entry of its `extra-units` as `atc prj show` lists it, which need not exist
+any more, so this also repairs a project whose unit is gone from the sources.
+Each is edited out of the list in place, so the list keeps its style and the
+other units their comments, and the rest of the file stays as it was. An
+`extra-units` left empty goes too, with the comment lines directly above it. A
+`UNIT` the project does not have is an error that lists the ones it has, and
+nothing is changed.
+
+The change takes effect at the next `atc run` in the project, which it says.
+Exit `1` on an error.
 
 ### `atc vars ls`
 

@@ -1315,3 +1315,144 @@ def test_add_keeps_the_top_level_when_the_git_directory_is_elsewhere(
 
     assert status == OK
     assert load_registry(registry_file(dirs), home).projects["bar"].repo == checkout
+
+
+NET = "net/bar.json"
+NET_FILES = {
+    **FILES,
+    f"conf/{NET}": unit({"sandbox": {"network": {"allowedDomains": ["a.org"]}}}),
+    "conf/net/other.json": unit({"sandbox": {"excludedCommands": ["docker *"]}}),
+}
+REPO = Path("/src/bar")
+
+
+def test_units_add_writes_the_unit_and_says_when_it_takes_effect(
+    configure: ConfigWriter, dirs: Dirs, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO)))
+
+    assert main(["prj", "units", "add", "bar", NET]) == OK
+
+    captured = capsys.readouterr()
+    path = registry_file(dirs)
+    assert captured.out == f"bar: extra units written to {path}\n"
+    assert "next atc run in the project" in captured.err
+    assert f"bar's checkout\n    extra-units: [{NET}]\n" in path.read_text(
+        encoding="utf-8"
+    )
+    assert load_registry(path, home).projects["bar"].extra_units == (NET,)
+
+
+def test_units_add_reaches_the_project_settings(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO)))
+
+    assert main(["prj", "units", "add", "bar", NET, "net/other.json"]) == OK
+    _ = capsys.readouterr()
+    assert main(["show", "project", "bar"]) == OK
+
+    assert '"allowedDomains"' in capsys.readouterr().out
+
+
+def test_units_add_leaves_a_unit_the_project_has_already(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO, f"extra-units: [{NET}]")))
+    written = registry_file(dirs).read_text(encoding="utf-8")
+
+    assert main(["prj", "units", "add", "bar", NET, "projects/bar.json"]) == OK
+
+    assert capsys.readouterr().out == "bar: extra units unchanged\n"
+    assert registry_file(dirs).read_text(encoding="utf-8") == written
+
+
+def test_units_add_writes_nothing_when_a_unit_is_missing(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO)))
+    written = registry_file(dirs).read_text(encoding="utf-8")
+
+    assert main(["prj", "units", "add", "bar", NET, "net/no.json"]) == CONFIG
+
+    assert "'net/no.json': no config source has it" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == written
+
+
+def test_units_add_refuses_a_unit_the_project_layer_must_not_have(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refused = unit({"sandbox": {"allowUnsandboxedCommands": False}})
+    configure({**FILES, f"conf/{NET}": refused}, registry_text(project("bar", REPO)))
+    written = registry_file(dirs).read_text(encoding="utf-8")
+
+    assert main(["prj", "units", "add", "bar", NET]) == CONFIG
+
+    assert "/sandbox/allowUnsandboxedCommands" in capsys.readouterr().err
+    assert registry_file(dirs).read_text(encoding="utf-8") == written
+
+
+def test_units_add_names_the_variables_left_undefined_and_writes_the_unit(
+    configure: ConfigWriter, dirs: Dirs, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(
+        {**FILES, f"conf/{NET}": unit({"env": {"P": "{{project.vars.port}}"}})},
+        registry_text(project("bar", REPO)),
+    )
+
+    assert main(["prj", "units", "add", "bar", NET]) == OK
+
+    err = capsys.readouterr().err
+    assert f"project.vars.port for project bar is undefined, used by {NET}" in err
+    assert "atc vars set" in err
+    registry = load_registry(registry_file(dirs), home)
+    assert registry.projects["bar"].extra_units == (NET,)
+
+
+def test_units_add_of_an_unknown_project_lists_the_projects(
+    configure: ConfigWriter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO)))
+
+    assert main(["prj", "units", "add", "ghost", NET]) == CONFIG
+
+    assert "the projects are bar" in capsys.readouterr().err
+
+
+def test_units_rm_removes_a_unit_and_keeps_the_others(
+    configure: ConfigWriter, dirs: Dirs, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entry = project("bar", REPO, f"extra-units: [{NET}, net/other.json]")
+    configure(NET_FILES, registry_text(entry))
+
+    assert main(["prj", "units", "rm", "bar", NET]) == OK
+
+    captured = capsys.readouterr()
+    assert captured.out == f"bar: extra units written to {registry_file(dirs)}\n"
+    assert "next atc run in the project" in captured.err
+    registry = load_registry(registry_file(dirs), home)
+    assert registry.projects["bar"].extra_units == ("net/other.json",)
+
+
+def test_units_rm_of_the_last_unit_drops_the_key_even_when_it_is_gone(
+    configure: ConfigWriter, dirs: Dirs
+) -> None:
+    configure(FILES, registry_text(project("bar", REPO, f"extra-units: [{NET}]")))
+
+    assert main(["prj", "units", "rm", "bar", NET]) == OK
+
+    assert "extra-units" not in registry_file(dirs).read_text(encoding="utf-8")
+
+
+def test_units_rm_of_a_unit_the_project_lacks_says_it_has_none(
+    configure: ConfigWriter, dirs: Dirs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(NET_FILES, registry_text(project("bar", REPO)))
+    written = registry_file(dirs).read_text(encoding="utf-8")
+
+    assert main(["prj", "units", "rm", "bar", NET]) == CONFIG
+
+    assert f"project 'bar': no extra unit '{NET}'; it has none" in (
+        capsys.readouterr().err
+    )
+    assert registry_file(dirs).read_text(encoding="utf-8") == written
